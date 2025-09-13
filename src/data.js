@@ -67,5 +67,14 @@ export const DATA = {
     {id:'H1', name:'Heart L1', schemeId:'heart', prices:{'S':320000,'M':380000,'L':460000}}
   ],
   pages:[{key:'about',title:'Giới thiệu',body:'Trang giới thiệu. Thay nội dung của bạn.'}],
-  footer:{note:'Giao diện mô phỏng để thay nội dung và ảnh của bạn.',address:'24 ngõ 26 Kim Hoa, Đống Đa, Hà Nội',hotline:'0838 98 97 00'}
+  footer:{note:'Giao diện mô phỏng để thay nội dung và ảnh của bạn.',
+    address:'24 ngõ 26 Kim Hoa, Đống Đa, Hà Nội',
+    hotline:'0838 98 97 00',
+    socials: {
+      facebook: "https://www.facebook.com/halleybakery/",
+      instagram: "https://www.instagram.com/halley.bakery/",
+      tiktok: "https://www.tiktok.com/@halley_bakery",
+      zalo: "https://zalo.me/0838989700",
+    },
+  }
 };

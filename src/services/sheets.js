@@ -211,6 +211,9 @@ export function mapProducts(rows = [], imageIndex) {
         price,
         sizes: parseSizesCell(r.sizes ?? r.size ?? r.Sizes ?? r.Size),
         priceBySize: parsePriceBySize(r.pricebysize ?? r.priceBySize),
+        // FIX: dùng r, không phải row
+        desc: String(r.description || r.desc || "").trim(),
+        description: String(r.description || r.desc || "").trim(),
       };
     })
     .filter((p) => p.name);

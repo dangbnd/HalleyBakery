@@ -21,17 +21,22 @@ export default function ProductQuickView({ product, onClose }) {
   useEffect(() => { if (!sel && table.length) setSel(table[0].key); }, [table, sel]);
 
   const price = useMemo(() => {
-    // 1) giá theo size chọn từ priceBySize nếu có
     if (sel && product?.priceBySize && Number(product.priceBySize[sel]) > 0) {
       return Number(product.priceBySize[sel]);
     }
-    // 2) giá trong bảng hợp nhất
     const row = table.find(r => r.key === sel) || table[0];
     if (row && Number(row.price) > 0) return Number(row.price);
-    // 3) giá base
     const base = Number(product?.price);
     return Number.isFinite(base) && base > 0 ? base : null;
   }, [sel, product, table]);
+
+  // link Messenger
+  const messengerLink = useMemo(() => {
+    const envLink = import.meta.env.VITE_MESSENGER_LINK;
+    const envPage = import.meta.env.VITE_MESSENGER_PAGE;
+    const base = envLink || (envPage ? `https://m.me/${envPage}` : "");
+    return base?.startsWith("http") ? base : "";
+  }, []);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -57,7 +62,7 @@ export default function ProductQuickView({ product, onClose }) {
           <div className="flex flex-col lg:flex-row">
             {/* LEFT: Image */}
             <div className="lg:w-2/3 p-3 md:p-4">
-              <div className="relative bg-gray-50 rounded-xl overflow-hidden">
+              <div className="relative bg-gray-50 rounded-xl overflow-hidden ring-1 ring-gray-200">
                 {!!images.length && (
                   <img
                     src={images[idx]}
@@ -102,8 +107,32 @@ export default function ProductQuickView({ product, onClose }) {
 
             {/* RIGHT: Info */}
             <div className="lg:w-1/3 border-t lg:border-l lg:border-t-0 p-4 md:p-6">
-              <div className="flex items-start justify-between gap-3">
-                <h3 className="text-lg md:text-xl font-semibold">{product.name}</h3>
+              {/* Tên + Giá + Messenger + Đóng */}
+              <div className="flex items-center gap-3">
+                <h3 className="text-lg md:text-xl font-semibold truncate">{product.name}</h3>
+
+                <div className="ml-auto inline-flex items-baseline gap-2 rounded-xl bg-rose-50 text-rose-700 px-3 py-1.5 ring-1 ring-rose-200 shadow-sm">
+                  <span className="text-[10px] uppercase tracking-wider">Giá</span>
+                  <span className="text-xl font-extrabold">
+                    {Number.isFinite(price) && price > 0 ? VND.format(price) : "Liên hệ"}
+                  </span>
+                </div>
+
+                {messengerLink && (
+                  <a
+                    href={messengerLink}
+                    target="_blank"
+                    rel="noopener"
+                    aria-label="Nhắn qua Messenger"
+                    title="Nhắn qua Messenger"
+                    className="grid place-items-center h-9 w-9 rounded-full bg-[#006AFF] text-white shadow ring-1 ring-[#cfe0ff] hover:opacity-90 active:scale-95 transition"
+                  >
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
+                      <path d="M12 2C6.48 2 2 6.05 2 11.05c0 2.61 1.12 4.97 3.01 6.63v3.27l2.76-1.52c1.25.35 2.33.5 3.23.5 5.52 0 10-4.05 10-9.05S17.52 2 12 2zm.1 10.87-2.7-2.9-5.15 2.9 5.79-5.52 2.64 2.86 5.16-2.86-5.74 5.52z"/>
+                    </svg>
+                  </a>
+                )}
+
                 <button
                   className="h-9 w-9 rounded-full border grid place-items-center hover:bg-gray-50"
                   onClick={onClose}
@@ -111,23 +140,21 @@ export default function ProductQuickView({ product, onClose }) {
                 >✕</button>
               </div>
 
-              {product.category ? (
-                <div className="mt-2 text-sm text-gray-600">Danh mục: {product.category}</div>
-              ) : null}
-
+              {/* Kích thước: nhỏ hơn, 4 nút mỗi hàng */}
               {table.length > 0 && (
                 <>
-                  <div className="text-sm font-medium mt-3">Kích thước có sẵn</div>
-                  <div className="flex flex-wrap gap-2 mt-2">
+                  <div className="text-sm font-medium mt-4">Kích thước có sẵn</div>
+                  <div className="grid grid-cols-4 gap-2 mt-2">
                     {table.map(r => (
                       <button
                         key={r.key}
                         onClick={() => setSel(r.key)}
                         className={
-                          "px-3 py-1 rounded-full border text-xs " +
-                          (sel === r.key ? "bg-gray-100 border-gray-400" : "border-gray-200")
+                          "w-full min-w-0 truncate text-center px-2.5 py-[6px] rounded-full border text-xs " +
+                          (sel === r.key ? "bg-gray-900 text-white border-gray-900" : "border-gray-300 hover:bg-gray-50")
                         }
                         aria-pressed={sel===r.key}
+                        title={r.label}
                       >
                         {r.label}
                       </button>
@@ -136,23 +163,28 @@ export default function ProductQuickView({ product, onClose }) {
                 </>
               )}
 
-              <div className="mt-3 text-rose-600 font-medium">
-                {Number.isFinite(price) && price > 0 ? VND.format(price) : "Liên hệ"}
-              </div>
+              {/* Danh mục */}
+              {product.category ? (
+                <div className="mt-4 text-sm text-gray-600">
+                  Danh mục: <span className="font-medium text-gray-800">{product.category}</span>
+                </div>
+              ) : null}
 
+              {/* Tags */}
               {!!(product.tags || []).length && (
                 <div className="mt-4">
                   <div className="text-sm font-medium mb-2">Tags</div>
                   <div className="flex flex-wrap gap-2">
                     {product.tags.map((t, i) => (
-                      <span key={i} className="px-2 py-1 rounded bg-gray-100 text-gray-700 text-xs">#{t}</span>
+                      <span key={i} className="px-2 py-1 rounded-full border text-xs text-gray-700 bg-gray-50">#{t}</span>
                     ))}
                   </div>
                 </div>
               )}
 
+              {/* Mô tả */}
               {product.desc || product.description ? (
-                <div className="mt-4">
+                <div className="mt-5">
                   <div className="text-sm font-medium mb-1">Mô tả</div>
                   <p className="text-sm text-gray-700 whitespace-pre-wrap">
                     {product.desc || product.description}

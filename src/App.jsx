@@ -1,5 +1,5 @@
 // src/App.jsx
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { LS, readLS, writeLS } from "./utils.js";
 import { DATA } from "./data.js";
 import { encodeState, decodeState } from "./utils/urlState.js";
@@ -13,6 +13,9 @@ import FilterSheet from "./components/FilterSheet.jsx";
 import { ProductList } from "./components/ProductList.jsx";
 import ProductQuickView from "./components/ProductQuickView.jsx";
 import { PageViewer } from "./components/PageViewer.jsx";
+import MessageButton from "./components/MessageButton.jsx";
+import BackToTop from "./components/BackToTop.jsx";
+
 // import Login from "./components/Admin/Login.jsx";
 // import Admin from "./components/Admin/index.jsx";
 
@@ -117,6 +120,11 @@ const stripAdmin = (nodes = []) =>
   (nodes || [])
     .filter((n) => n.key !== "admin")
     .map((n) => ({ ...n, children: stripAdmin(n.children || []) }));
+
+// cuộn lên đầu trang
+function scrollTop() {
+  window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+}
 
 export default function App() {
   const [route, setRoute] = useState("home"); // 'home' | 'search' | pageKey | categoryKey
@@ -227,6 +235,14 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  /* Deep-link QuickView: mở từ URL và giữ khi refresh */
+  useEffect(() => {
+    const pid = new URL(location.href).searchParams.get("pid");
+    if (!pid || !products?.length) return;
+    const p = (products || []).find((x) => String(x.id) === pid);
+    if (p) setQuick(p);
+  }, [products]);
+
   /* đồng bộ Sheets + Drive */
   useEffect(() => {
     async function syncAll() {
@@ -250,6 +266,7 @@ export default function App() {
             price: String(r.price || r.gia || ""),
             sizes: String(r.sizes || r.size || r.Sizes || r.Size || ""),
             priceBySize: r.pricebysize ?? r.priceBySize ?? "",
+            description: String(r.description || r.desc || r.mo_ta || "").trim(),
           }),
         });
         prodRows = rows;
@@ -426,6 +443,11 @@ export default function App() {
     else if (categoryKeysFromMenu.has(key)) setActiveCat(key);
   }
 
+  // Scroll lên đầu khi đổi route hoặc đổi danh mục
+  useEffect(() => {
+    scrollTop();
+  }, [route, activeCat]);
+
   /* Ẩn Admin khỏi menu header */
   const menuPublic = useMemo(() => stripAdmin(menu), [menu]);
 
@@ -513,6 +535,20 @@ export default function App() {
     </div>
   );
 
+  /* open/close QuickView đặt đúng scope */
+  const openQuick = useCallback((p) => {
+    setQuick(p);
+    const u = new URL(location.href);
+    u.searchParams.set("pid", String(p.id));
+    window.history.pushState(null, "", u);
+  }, []);
+  const closeQuick = useCallback(() => {
+    setQuick(null);
+    const u = new URL(location.href);
+    u.searchParams.delete("pid");
+    window.history.pushState(null, "", u);
+  }, []);
+
   /* render */
   let mainContent = null;
 
@@ -549,7 +585,7 @@ export default function App() {
         <section className="max-w-6xl mx-auto p-4">
           <h2 className="text-xl font-semibold mb-2">{activeTitle}...</h2>
           <div className="text-sm text-gray-600 mb-3">{list.length} sản phẩm</div>
-          <ProductList products={list} onImageClick={setQuick} filter={filterState} />
+          <ProductList products={list} onImageClick={openQuick} filter={filterState} />
         </section>
       </>
     );
@@ -593,7 +629,7 @@ export default function App() {
                       Xem tất cả
                     </button>
                   </div>
-                  <ProductList products={items} onImageClick={setQuick} />
+                  <ProductList products={items} onImageClick={openQuick} />
                 </div>
               );
             })}
@@ -605,7 +641,7 @@ export default function App() {
               <div className="flex items-center justify-between mb-2">
                 <div className="text-sm text-gray-600">{list.length} sản phẩm</div>
               </div>
-              <ProductList products={list} onImageClick={setQuick} filter={filterState} />
+              <ProductList products={list} onImageClick={openQuick} filter={filterState} />
             </section>
           </>
         )}
@@ -631,7 +667,7 @@ export default function App() {
 
       <main>{mainContent}</main>
 
-      {quick && <ProductQuickView product={quick} onClose={() => setQuick(null)} />}
+      {quick && <ProductQuickView product={quick} onClose={closeQuick} />}
 
       <FilterSheet open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Bộ lọc">
         <Filters
@@ -643,6 +679,8 @@ export default function App() {
       </FilterSheet>
 
       <Footer data={DATA.footer} />
+      <BackToTop />
+      <MessageButton />
     </div>
   );
 }
