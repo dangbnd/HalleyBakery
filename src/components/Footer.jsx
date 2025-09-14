@@ -5,7 +5,7 @@ export function Footer({ data = {} }) {
   const brandName = data?.brand?.name || "Halley Bakery";
 
   const phone = data?.phone || data?.hotline || "0123 456 789";
-  const email = data?.email || "hello@halley.vn";
+  const email = data?.email || "halleybakery@gmail.com";
   const address = data?.address || "24 ngõ 26 Kim Hoa, Đống Đa, Hà Nội";
 
   const hours =
@@ -13,7 +13,7 @@ export function Footer({ data = {} }) {
       ? data.hours
       : [
           { d: "Thứ 2 — Thứ 6", t: "08:00 — 20:00" },
-          { d: "Thứ 7 — CN", t: "08:00 — 21:00" },
+          { d: "Thứ 7 — CN", t: "08:00 — 19:00" },
         ];
 
   const socials = {
@@ -49,6 +49,10 @@ export function Footer({ data = {} }) {
               <div className="flex items-start gap-2">
                 <PinIcon className="mt-0.5" /> <span>{address}</span>
               </div>
+              <div className="flex text-justify text-rose-600/90 font-bold">
+                  Khách hàng đi từ ngõ 2 Xã Đàn vào đường Kim Hoa, 
+                  Không đi vào ngõ 422 Lê Duẩn, đường đi rất nhỏ, rất khó đi.
+                </div>
               <div className="flex gap-2 pt-1">
                 <a
                   href={mapHref}
@@ -56,7 +60,8 @@ export function Footer({ data = {} }) {
                   rel="noopener"
                   className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
                 >
-                  <DirectionsIcon /> Chỉ đường
+                  <DirectionsIcon /> 
+                  Chỉ đường
                 </a>
                 <a
                   href={`tel:${phone.replace(/\s+/g, "")}`}
@@ -221,6 +226,13 @@ function Circle({ color, gradient, children }) {
 }
 
 /* ===== Icons ===== */
+function AttentionsIcon({ className }) {
+  return (
+    <svg viewBox="0 0 24 24" className={"h-5 w-5 text-gray-500 " + (className || "")} fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.08 4.18 2 2 0 0 1 4.06 2h3a2 2 0 0 1 2 1.72c.12.9.34 1.77.66 2.6a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.48-1.18a2 2 0 0 1 2.11-.45c.83.32 1.7.54 2.6.66A2 2 0 0 1 22 16.92z" />
+    </svg>
+  );
+}
 function PhoneIcon({ className }) {
   return (
     <svg viewBox="0 0 24 24" className={"h-5 w-5 text-gray-500 " + (className || "")} fill="none" stroke="currentColor" strokeWidth="1.8">

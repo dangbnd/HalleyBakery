@@ -4,6 +4,7 @@ export const LS = {
   TAGS: 'tags', SCHEMES: 'schemes', TYPES: 'types', LEVELS: 'levels',
   FB_URLS: 'fb_urls',
   SIZES: 'sizes',
+  ANNOUNCEMENTS: "halley_announcements",
 };
 
 const hasLS = () =>

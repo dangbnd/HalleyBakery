@@ -8,10 +8,10 @@ function Chip({ active, children, onClick, dataKey }) {
       data-key={dataKey}
       onClick={onClick}
       className={
-        "px-3 py-1.5 rounded-full border text-sm whitespace-nowrap transition " +
+        "px-2 py-1 rounded-full border text-xm md:text-[14px] whitespace-nowrap transition " +
         (active
-          ? "bg-rose-600 text-white border-rose-600 ring-2 ring-rose-300 shadow-md scale-105"
-          : "text-gray-700 hover:bg-gray-50")
+          ? "bg-rose-500 text-white border-rose-500 ring-1 ring-rose-100 shadow-md scale-100"
+          : "text-black-500 hover:bg-gray-50")
       }
       role="tab"
       aria-selected={active}
@@ -114,7 +114,7 @@ export default function CategoryBar({
 
   return (
     <section className={clsWrap}>
-      <div ref={wrapRef} className="relative max-w-6xl mx-auto px-4 py-3" role="tablist" aria-label="Danh mục">
+      <div ref={wrapRef} className="relative max-w-6xl mx-auto px-4 py-2" role="tablist" aria-label="Danh mục">
         {/* fades */}
         {hasLeft && <div className="pointer-events-none absolute left-0 top-0 h-full w-8 bg-gradient-to-r from-white to-transparent" />}
         {hasRight && <div className="pointer-events-none absolute right-0 top-0 h-full w-8 bg-gradient-to-l from-white to-transparent" />}

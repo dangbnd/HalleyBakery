@@ -415,3 +415,23 @@ export function mapSchemes(rows = []) {
     sizes: parseSizesPairs(r.sizes || ""),
   }));
 }
+
+export const mapAnnouncements = (rows = []) => {
+  const now = Date.now();
+  const toTs = s => {
+    const t = Date.parse(String(s||"").trim());
+    return Number.isFinite(t) ? t : null;
+  };
+  return rows
+    .map(r => ({
+      text: String(r.text || r.message || "").trim(),
+      active: /^(1|true|yes|x)$/i.test(String(r.active||"")),
+      order: Number(r.order || 0),
+      start: toTs(r.start || r.from),
+      end: toTs(r.end || r.until),
+    }))
+    .filter(x => x.text && x.active)
+    .filter(x => (x.start ? now >= x.start : true) && (x.end ? now <= x.end : true))
+    .sort((a,b) => a.order - b.order)
+    .map(x => x.text);
+};

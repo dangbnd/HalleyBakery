@@ -1,5 +1,5 @@
 // src/App.jsx
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { LS, readLS, writeLS } from "./utils.js";
 import { DATA } from "./data.js";
 import { encodeState, decodeState } from "./utils/urlState.js";
@@ -15,6 +15,7 @@ import ProductQuickView from "./components/ProductQuickView.jsx";
 import { PageViewer } from "./components/PageViewer.jsx";
 import MessageButton from "./components/MessageButton.jsx";
 import BackToTop from "./components/BackToTop.jsx";
+import AnnouncementTicker from "./components/AnnouncementTicker.jsx";
 
 // import Login from "./components/Admin/Login.jsx";
 // import Admin from "./components/Admin/index.jsx";
@@ -33,6 +34,7 @@ import {
   mapLevels,
   mapSizes,
   enrichProductPricing,
+  mapAnnouncements,
 } from "./services/sheets.js";
 import { fetchAllDriveImagesDeep, buildImageMap } from "./services/drive.js";
 
@@ -49,11 +51,9 @@ const normFb = (u) => {
     return u;
   }
 };
-
-// cấu hình số lượng item hiển thị ở trang chủ mỗi danh mục (fallback default)
 const HOME_LIMITS = { default: 8 };
 
-/* ======== Lấy danh mục từ cây menu dưới node 'product' ======== */
+/* ======== Menu helpers ======== */
 const titleOf = (it) => String(it.title ?? it.label ?? it.key).replace(/^"(.*)"$/, "$1");
 
 function buildTreeFromFlat(nav = []) {
@@ -92,8 +92,6 @@ function getProductCategoriesFromMenu(menu = []) {
   walk(product);
   return out;
 }
-
-/* === index các danh mục con: parentKey -> Set(childLeafKeys) === */
 function buildDescIndex(menu = []) {
   const tree = buildTreeFromFlat(menu);
   const product = findNodeByKey(tree, "product");
@@ -114,31 +112,26 @@ const inMenuCat = (catKey, selectedKey, descIdx) => {
   const set = descIdx.get(selectedKey);
   return !!(set && set.has(catKey));
 };
-
-/* ===== helper: ẩn mọi node có key 'admin' khỏi menu header ===== */
 const stripAdmin = (nodes = []) =>
   (nodes || [])
     .filter((n) => n.key !== "admin")
     .map((n) => ({ ...n, children: stripAdmin(n.children || []) }));
-
-// cuộn lên đầu trang
-function scrollTop() {
-  window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
-}
+const scrollTop = () => window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
 
 export default function App() {
-  const [route, setRoute] = useState("home"); // 'home' | 'search' | pageKey | categoryKey
+  const [route, setRoute] = useState("home");
   const [q, setQ] = useState("");
   const [quick, setQuick] = useState(null);
-  const [activeCat, setActiveCat] = useState("all"); // 'all' | categoryKey
+  const [activeCat, setActiveCat] = useState("all");     // cho trang search
+  const [homeActive, setHomeActive] = useState("all");   // scroll-spy trang chủ
   const [filterState, setFilterState] = useState(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [filtersResetKey, setFiltersResetKey] = useState(0); // remount Filters to clear UI
+  const [filtersResetKey, setFiltersResetKey] = useState(0);
 
   const [user, setUser] = useState(() => readLS(LS.AUTH, null));
   const [fbUrls, setFbUrls] = useState(() => readLS(LS.FB_URLS, []));
   const [products, setProducts] = useState(() => readLS(LS.PRODUCTS, DATA.products || []));
-  const [categories, setCategories] = useState(() => readLS(LS.CATEGORIES, DATA.categories || [])); // giữ cho Admin; CategoryBar lấy theo menu
+  const [categories, setCategories] = useState(() => readLS(LS.CATEGORIES, DATA.categories || []));
   const [menu, setMenu] = useState(() => readLS(LS.MENU, DATA.nav || []));
   const [pages, setPages] = useState(() => readLS(LS.PAGES, DATA.pages || []));
   const [tags, setTags] = useState(() => readLS(LS.TAGS, DATA.tags || []));
@@ -155,12 +148,18 @@ export default function App() {
       types: import.meta.env.VITE_SHEET_GID_TYPES,
       levels: import.meta.env.VITE_SHEET_GID_LEVELS,
       sizes: import.meta.env.VITE_SHEET_GID_SIZES,
+      announcements: import.meta.env.VITE_SHEET_GID_ANNOUNCEMENTS,
     },
   };
   const DRIVE = {
     folderId: import.meta.env.VITE_DRIVE_FOLDER_ID,
     apiKey: import.meta.env.VITE_GOOGLE_API_KEY,
   };
+
+  const [announcements, setAnnouncements] =
+    useState(() => readLS(LS.ANNOUNCEMENTS, DATA.announcements || []));
+  useEffect(() => writeLS(LS.ANNOUNCEMENTS, announcements), [announcements]);
+
   const SYNC_MS = Number(import.meta.env.VITE_SYNC_INTERVAL_MS || 600000);
 
   /* persist */
@@ -172,7 +171,7 @@ export default function App() {
   useEffect(() => writeLS(LS.TAGS, tags), [tags]);
   useEffect(() => writeLS(LS.FB_URLS, fbUrls), [fbUrls]);
 
-  /* ====== đọc URL khi vào trang / back-forward ====== */
+  /* URL -> state */
   useEffect(() => {
     const applyFromURL = () => {
       const s = decodeState(location.search);
@@ -182,7 +181,7 @@ export default function App() {
       if ((s.cat && s.cat !== "all") || s.q) setRoute("search");
       if (s.filters) {
         setFilterState(s.filters);
-        setFiltersResetKey((k) => k + 1); // reflect external state
+        setFiltersResetKey((k) => k + 1);
       }
     };
     applyFromURL();
@@ -190,7 +189,7 @@ export default function App() {
     return () => window.removeEventListener("popstate", applyFromURL);
   }, []);
 
-  /* ====== ghi state ra URL mỗi khi đổi ====== */
+  /* state -> URL */
   useEffect(() => {
     const qs = encodeState({ route, q, cat: activeCat, filters: filterState });
     const url = qs ? `?${qs}` : location.pathname;
@@ -212,7 +211,7 @@ export default function App() {
     })();
   }, []);
 
-  /* điều hướng auto theo ô tìm kiếm */
+  /* tìm kiếm -> route */
   useEffect(() => {
     if (route === "admin") return;
     const has = q.trim().length > 0;
@@ -220,7 +219,7 @@ export default function App() {
     if (!has && route === "search") setRoute(activeCat !== "all" ? activeCat : "all");
   }, [q, route, activeCat]);
 
-  /* ====== Lối tắt bí mật vào Admin ====== */
+  /* lối tắt admin */
   useEffect(() => {
     if (location.hash === "#admin") setRoute("admin");
   }, []);
@@ -235,7 +234,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  /* Deep-link QuickView: mở từ URL và giữ khi refresh */
+  /* deep-link QuickView */
   useEffect(() => {
     const pid = new URL(location.href).searchParams.get("pid");
     if (!pid || !products?.length) return;
@@ -243,7 +242,7 @@ export default function App() {
     if (p) setQuick(p);
   }, [products]);
 
-  /* đồng bộ Sheets + Drive */
+  /* đồng bộ dữ liệu */
   useEffect(() => {
     async function syncAll() {
       let prodRows, files;
@@ -281,9 +280,7 @@ export default function App() {
       const imageIndex = buildImageMap(files);
       const fromSheet = mapProducts(prodRows, imageIndex);
 
-      // === Types/levels + enrich
-      let types = [],
-        levels = [];
+      let types = [], levels = [];
       try {
         if (SHEET.gids.types) {
           const trows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.types });
@@ -330,6 +327,7 @@ export default function App() {
         loadOpt(SHEET.gids.menu, mapMenu, setMenu, LS.MENU),
         loadOpt(SHEET.gids.pages, mapPages, setPages, LS.PAGES),
         loadOpt(SHEET.gids.sizes, mapSizes, () => {}, LS.SIZES),
+        loadOpt(SHEET.gids.announcements, mapAnnouncements, setAnnouncements, LS.ANNOUNCEMENTS),
       ]);
     }
     if (SHEET.id) {
@@ -339,8 +337,8 @@ export default function App() {
     }
   }, [SHEET.id, SHEET.gid, DRIVE.folderId, DRIVE.apiKey, SYNC_MS]); // eslint-disable-line
 
+  /* lọc */
   const validNum = (n) => Number.isFinite(n) && n > 0;
-
   function applyFilters(list = []) {
     if (!filterState) return list;
 
@@ -404,7 +402,7 @@ export default function App() {
     return out;
   }
 
-  /* ======= DANH MỤC THEO MENU (nhánh 'product') ======= */
+  /* ======= danh mục ======= */
   const productCatsFromMenu = useMemo(() => getProductCategoriesFromMenu(menu), [menu]);
   const descByKey = useMemo(() => buildDescIndex(menu), [menu]);
 
@@ -416,8 +414,141 @@ export default function App() {
     () => new Set(productCatsFromMenu.map((c) => c.key)),
     [productCatsFromMenu]
   );
-  const currentKeyForBar = route === "search" ? activeCat : route === "home" ? "all" : route;
 
+  /* list theo route */
+  const baseForRoute = useMemo(() => {
+    if (route === "home" || route === "search") return products || [];
+    return (products || []).filter((p) => inMenuCat(p.category, route, descByKey));
+  }, [route, products, descByKey]);
+  const filteredForRoute = useMemo(() => applyFilters(baseForRoute), [filterState, baseForRoute]);
+
+  /* list cho search */
+  const nqVal = useMemo(() => norm(q), [q]);
+  const catTitle = useMemo(
+    () => Object.fromEntries(productCatsFromMenu.map((c) => [c.key, norm(c.title || c.key)])),
+    [productCatsFromMenu]
+  );
+  const listForSearch = useMemo(() => {
+    const base =
+      activeCat === "all"
+        ? products || []
+        : (products || []).filter((p) => inMenuCat(p.category, activeCat, descByKey));
+    if (!nqVal) return base;
+    return base.filter((p) => {
+      const name = norm(p.name);
+      const tg = (p.tags || []).map((t) => norm(t)).join(" ");
+      const cat = catTitle[p.category] || "";
+      return name.includes(nqVal) || tg.includes(nqVal) || cat.includes(nqVal);
+    });
+  }, [nqVal, products, activeCat, catTitle, descByKey]);
+
+  const customPage = useMemo(() => (pages || []).find((p) => p.key === route), [pages, route]);
+
+  /* ===== Scroll-spy mượt cho trang chủ ===== */
+  const catbarRef = useRef(null);
+  const sectionRefs = useRef({});
+  const sectionTopsRef = useRef([]);         // [{key, topAbs}]
+  const suppressSpyUntilRef = useRef(0);     // tắt spy khi scroll bằng code
+  const rafRef = useRef(0);
+
+  const homeSections = useMemo(() => {
+    if (route !== "home") return [];
+    const arr = [];
+    const sortFn = (a, b) =>
+      (b.popular || 0) - (a.popular || 0) || (b.createdAt || 0) - (a.createdAt || 0);
+    for (const cat of productCatsFromMenu) {
+      const limit = HOME_LIMITS?.[cat.key] ?? HOME_LIMITS?.default ?? 6;
+      const items = (filteredForRoute || [])
+        .filter((p) => p.category === cat.key)
+        .sort(sortFn)
+        .slice(0, limit);
+      if (items.length) arr.push({ key: cat.key, title: cat.title, items });
+    }
+    return arr;
+  }, [route, productCatsFromMenu, filteredForRoute]);
+
+  const getOffset = useCallback(() => {
+    const el = catbarRef.current;
+    if (!el) return 0;
+    const topCss = parseFloat(getComputedStyle(el).top) || 0;
+    return topCss + el.offsetHeight;
+  }, []);
+
+  const recalcSectionTops = useCallback(() => {
+    sectionTopsRef.current = homeSections.map(({ key }) => {
+      const el = sectionRefs.current[key];
+      const topAbs = el ? el.getBoundingClientRect().top + window.scrollY : 0;
+      return { key, topAbs };
+    });
+  }, [homeSections]);
+
+  useEffect(() => {
+    if (route !== "home") return;
+    // tính lại sau render và sau một nhịp để ảnh load xong
+    requestAnimationFrame(recalcSectionTops);
+    const t = setTimeout(recalcSectionTops, 300);
+    window.addEventListener("resize", recalcSectionTops);
+    window.addEventListener("load", recalcSectionTops);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("resize", recalcSectionTops);
+      window.removeEventListener("load", recalcSectionTops);
+    };
+  }, [route, recalcSectionTops]);
+
+  const scrollToSection = useCallback(
+    (key) => {
+      const rec = sectionTopsRef.current.find((x) => x.key === key);
+      const target = rec ? rec.topAbs - getOffset() - 8 : 0;
+      suppressSpyUntilRef.current = performance.now() + 800; // tắt spy 0.8s
+      window.scrollTo({ top: target, behavior: "smooth" });
+    },
+    [getOffset]
+  );
+
+  useEffect(() => {
+    if (route !== "home") return;
+    const onScroll = () => {
+      if (rafRef.current) return;
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = 0;
+        if (performance.now() < suppressSpyUntilRef.current) return;
+
+        const y = window.scrollY + getOffset() + 8;
+        const tops = sectionTopsRef.current;
+        if (!tops.length) return;
+
+        // tìm section có topAbs <= y, lấy cái lớn nhất. Không nhảy "all" khi đang ở các section.
+        let idx = -1;
+        for (let i = 0; i < tops.length; i++) {
+          if (tops[i].topAbs <= y) idx = i;
+          else break;
+        }
+        const key = idx < 0 ? "all" : tops[idx].key;
+
+        // hysteresis 40px: chỉ đổi khi qua ranh giới rõ rệt
+        if (key !== homeActive) {
+          const curIdx = tops.findIndex((t) => t.key === homeActive);
+          if (idx >= 0 && curIdx >= 0) {
+            const boundary = tops[idx].topAbs;
+            if (Math.abs(y - boundary) < 40) return;
+          }
+          setHomeActive(key);
+        }
+      });
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+    };
+  }, [route, homeActive, getOffset]);
+
+  /* ===== Navigation ===== */
   const resetSearchAndFilters = () => {
     if (q) setQ("");
     if (filterState) setFilterState(null);
@@ -427,31 +558,42 @@ export default function App() {
 
   function handlePickCategory(key) {
     resetSearchAndFilters();
+    if (route === "home") {
+      if (key === "all") {
+        suppressSpyUntilRef.current = performance.now() + 500;
+        scrollTop();
+        setHomeActive("all");
+      } else {
+        scrollToSection(key);
+        setHomeActive(key);
+      }
+      return;
+    }
     if (key === "all") {
       setActiveCat("all");
-      setRoute("search"); // hiển thị tất cả trên 1 trang
+      setRoute("search");
     } else {
       setActiveCat(key);
-      setRoute("search"); // danh sách theo danh mục trên 1 trang
+      setRoute("search");
     }
   }
 
   function navigate(key) {
     resetSearchAndFilters();
     setRoute(key);
-    if (key === "home") setActiveCat("all");
-    else if (categoryKeysFromMenu.has(key)) setActiveCat(key);
+    if (key === "home") {
+      setActiveCat("all");
+      setHomeActive("all");
+      requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+    } else if (categoryKeysFromMenu.has(key)) setActiveCat(key);
   }
 
-  // Scroll lên đầu khi đổi route hoặc đổi danh mục
   useEffect(() => {
     scrollTop();
   }, [route, activeCat]);
 
-  /* Ẩn Admin khỏi menu header */
   const menuPublic = useMemo(() => stripAdmin(menu), [menu]);
 
-  /* gợi ý */
   const suggestions = useMemo(() => {
     const query = q.trim();
     if (!query) return [];
@@ -487,55 +629,30 @@ export default function App() {
     setRoute("search");
   }
 
-  /* danh sách theo tìm kiếm */
-  const nqVal = useMemo(() => norm(q), [q]);
-  const catTitle = useMemo(
-    () => Object.fromEntries(productCatsFromMenu.map((c) => [c.key, norm(c.title || c.key)])),
-    [productCatsFromMenu]
-  );
-  const listForSearch = useMemo(() => {
-    const base =
-      activeCat === "all"
-        ? products || []
-        : (products || []).filter((p) => inMenuCat(p.category, activeCat, descByKey));
-    if (!nqVal) return base;
-    return base.filter((p) => {
-      const name = norm(p.name);
-      const tg = (p.tags || []).map((t) => norm(t)).join(" ");
-      const cat = catTitle[p.category] || "";
-      return name.includes(nqVal) || tg.includes(nqVal) || cat.includes(nqVal);
-    });
-  }, [nqVal, products, activeCat, catTitle, descByKey]);
-
-  /* danh sách theo route khi không search */
-  const baseForRoute = useMemo(() => {
-    if (route === "home" || route === "search") return products || [];
-    return (products || []).filter((p) => inMenuCat(p.category, route, descByKey));
-  }, [route, products, descByKey]);
-
-  const filteredForRoute = useMemo(() => applyFilters(baseForRoute), [filterState, baseForRoute]);
-
-  const customPage = useMemo(() => (pages || []).find((p) => p.key === route), [pages, route]);
+  const currentKeyForBar =
+    route === "home" ? homeActive : route === "search" ? activeCat : route;
 
   /* CategoryBar sticky */
   const CatBar = (
-    <div className="sticky top-[56px] md:top-[72px] z-30">
-      <div className="max-w-6xl mx-auto p-4 bg-gray-50/90 supports-[backdrop-filter]:bg-gray-50/60 backdrop-blur border rounded-xl">
-        <CategoryBar
-          categories={menuCatsWithAll}
-          currentKey={currentKeyForBar}
-          onPick={handlePickCategory}
-          onOpenFilters={() => {
-            if (route === "home") setRoute("all");
-            setFiltersOpen(true);
-          }}
-          showFilterButton
-        />
+    <div ref={catbarRef} id="hb-catbar" className="sticky top-[96px] md:top-[117px] z-30">
+      <div className="max-w-6xl mx-auto px-4">
+        <div className="bg-gray-50/50 supports-[backdrop-filter]:bg-gray-50/50 backdrop-blur border rounded-xl">
+          <CategoryBar
+            categories={menuCatsWithAll}
+            currentKey={currentKeyForBar}
+            onPick={handlePickCategory}
+            onOpenFilters={() => {
+              if (route === "home") setRoute("all");
+              setFiltersOpen(true);
+            }}
+            showFilterButton
+          />
+        </div>
       </div>
     </div>
   );
 
-  /* open/close QuickView đặt đúng scope */
+  /* QuickView */
   const openQuick = useCallback((p) => {
     setQuick(p);
     const u = new URL(location.href);
@@ -590,60 +707,55 @@ export default function App() {
       </>
     );
   } else {
-    const list = filteredForRoute;
     const isHome = route === "home";
-
     mainContent = (
       <>
-        {isHome && <Hero products={products} interval={2000} fbUrls={fbUrls} />}
+        {isHome && (
+          <Hero
+            products={products}
+            interval={2000}
+            fbUrls={fbUrls}
+            onBannerClick={(p) => {
+              setQuick(p);
+              const u = new URL(location.href);
+              u.searchParams.set("pid", String(p.id));
+              history.pushState(null, "", u);
+            }}
+          />
+        )}
         {CatBar}
 
         {isHome ? (
-          // === Landing sections theo danh mục (chỉ hiển thị danh mục có sản phẩm trực tiếp) ===
           <section className="max-w-6xl mx-auto p-4 space-y-10">
-            {productCatsFromMenu.map((cat) => {
-              const limit = HOME_LIMITS?.[cat.key] ?? HOME_LIMITS?.default ?? 6;
-              const items = (filteredForRoute || [])
-                .filter((p) => p.category === cat.key)
-                .sort(
-                  (a, b) =>
-                    (b.popular || 0) - (a.popular || 0) || (b.createdAt || 0) - (a.createdAt || 0)
-                )
-                .slice(0, limit);
-
-              if (!items.length) return null;
-
-              return (
-                <div key={cat.key}>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-lg font-semibold">{cat.title}</h3>
-                    <button
-                      className="text-rose-600 hover:underline"
-                      onClick={() => {
-                        navigate(cat.key);
-                        requestAnimationFrame(() =>
-                          window.scrollTo({ top: 0, behavior: "smooth" })
-                        );
-                      }}
-                    >
-                      Xem tất cả
-                    </button>
-                  </div>
-                  <ProductList products={items} onImageClick={openQuick} />
+            {homeSections.map(({ key, title, items }) => (
+              <div key={key} ref={(el) => (sectionRefs.current[key] = el)}>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-lg font-semibold">{title}</h3>
+                  <button
+                    className="text-rose-600 hover:underline"
+                    onClick={() => {
+                      navigate(key);
+                      requestAnimationFrame(() =>
+                        window.scrollTo({ top: 0, behavior: "smooth" })
+                      );
+                    }}
+                  >
+                    Xem tất cả
+                  </button>
                 </div>
-              );
-            })}
+                <ProductList products={items} onImageClick={openQuick} />
+              </div>
+            ))}
           </section>
         ) : (
-          // === Trang danh mục thường ===
-          <>
-            <section className="max-w-6xl mx-auto p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-sm text-gray-600">{list.length} sản phẩm</div>
+          <section className="max-w-6xl mx-auto p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm text-gray-600">
+                {filteredForRoute.length} sản phẩm
               </div>
-              <ProductList products={list} onImageClick={openQuick} filter={filterState} />
-            </section>
-          </>
+            </div>
+            <ProductList products={filteredForRoute} onImageClick={openQuick} filter={filterState} />
+          </section>
         )}
       </>
     );
@@ -653,7 +765,7 @@ export default function App() {
     <div className="bg-gray-50 min-h-screen">
       <Header
         currentKey={route}
-        navItems={menuPublic} // ← ẩn Admin trong menu
+        navItems={menuPublic}
         onNavigate={navigate}
         logoText={DATA.logoText}
         logoSrc={DATA.logoUrl}
@@ -664,11 +776,9 @@ export default function App() {
         suggestions={suggestions}
         onSuggestionSelect={handleSuggestionSelect}
       />
-
+      <AnnouncementTicker items={announcements} />
       <main>{mainContent}</main>
-
       {quick && <ProductQuickView product={quick} onClose={closeQuick} />}
-
       <FilterSheet open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Bộ lọc">
         <Filters
           key={filtersResetKey}
