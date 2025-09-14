@@ -302,8 +302,18 @@ function labelFromKey(key) {
   return { key: `${code}-${h}`, label };
 }
 
-export const mapPages = (rows = []) =>
-  rows.filter((r) => r.key).map((r) => ({ key: r.key, title: r.title || r.key, body: r.body || "" }));
+export function mapPages(rows = []) {
+  const S = (v) => String(v ?? "").trim();
+  return rows.map(r => ({
+    key: S(r.key || r.id),
+    title: S(r.title),
+    desc: S(r.desc || r.description || r.summary),   // <— thêm description
+    cover: S(r.cover || r.image || r.banner),
+    mapHref: S(r.mapHref || r.map || r.gmap),
+    phone: S((r.phone || r.hotline || "").toString().replace(/\s+/g, "")),
+    html: (r.html ?? r.content ?? r.body ?? "").toString().trim(),
+  })).filter(p => p.key);
+}
 
 export const mapMenu = (rows = []) => {
   const items = rows.filter((r) => r.key).map((r) => ({

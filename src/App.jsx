@@ -12,7 +12,7 @@ import Filters from "./components/Filters.jsx";
 import FilterSheet from "./components/FilterSheet.jsx";
 import { ProductList } from "./components/ProductList.jsx";
 import ProductQuickView from "./components/ProductQuickView.jsx";
-import { PageViewer } from "./components/PageViewer.jsx";
+import PageViewer from "./components/PageViewer.jsx";
 import MessageButton from "./components/MessageButton.jsx";
 import BackToTop from "./components/BackToTop.jsx";
 import AnnouncementTicker from "./components/AnnouncementTicker.jsx";
