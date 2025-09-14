@@ -8,6 +8,8 @@ export default function Header({
   onNavigate,
   logoText = "HALLEY BAKERY",
   logoSrc,
+  logoSrcDesktop,
+  logoSrcMobile,
   hotline,
   searchQuery = "",
   onSearchChange,
@@ -18,6 +20,8 @@ export default function Header({
   const [open, setOpen] = useState(false);
   const [showSug, setShowSug] = useState(false);
   const sugRef = useRef(null);
+  const desk = logoSrcDesktop || logoSrc;
+  const mob  = logoSrcMobile  || logoSrc;
 
   const submit = (e) => {
     e.preventDefault();
@@ -170,8 +174,12 @@ export default function Header({
       onClick={() => onNavigate?.("home")}
       aria-label="Trang chủ"
     >
-      {logoSrc ? (
-        <img src={logoSrc} alt={logoText} className="h-8 w-auto" />
+      {desk || mob ? (
+        // Chỉ tải 1 ảnh nhờ <picture>
+        <picture>
+          <source media="(min-width:768px)" srcSet={desk || mob} />
+          <img src={mob || desk} alt={logoText} className="h-8 md:h-9 w-auto" />
+        </picture>
       ) : (
         <div className="leading-tight">
           <div className="text-sm font-semibold tracking-widest">HALLEY</div>

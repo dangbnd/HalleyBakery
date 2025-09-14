@@ -1,4 +1,6 @@
 export const DATA = {
+  logoDesktop: "/brand/logo-desktop.png",
+  logoMobile:  "/brand/logo-mobile.png",
   logoText:'HALLEY BAKERY',
   hotline:'Hotline: 09xx xxx xxx',
   nav:[

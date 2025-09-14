@@ -768,6 +768,8 @@ export default function App() {
         navItems={menuPublic}
         onNavigate={navigate}
         logoText={DATA.logoText}
+        logoSrcDesktop={DATA.logoDesktop}
+        logoSrcMobile={DATA.logoMobile}
         logoSrc={DATA.logoUrl}
         hotline={DATA.hotline}
         searchQuery={q}
