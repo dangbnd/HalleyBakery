@@ -3,7 +3,6 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { LS, readLS, writeLS } from "./utils.js";
 import { DATA } from "./data.js";
 import { encodeState, decodeState } from "./utils/urlState.js";
-//import { deriveFastFields } from "./services/derive.js";
 
 import Header from "./components/Header.jsx";
 import { Footer } from "./components/Footer.jsx";
@@ -12,7 +11,6 @@ import CategoryBar from "./components/CategoryBar.jsx";
 import Filters from "./components/Filters.jsx";
 import FilterSheet from "./components/FilterSheet.jsx";
 import { ProductList } from "./components/ProductList.jsx";
-//import { ProductListVirtual as ProductList } from "./components/ProductList.virtual.jsx";
 import ProductQuickView from "./components/ProductQuickView.jsx";
 import PageViewer from "./components/PageViewer.jsx";
 import MessageButton from "./components/MessageButton.jsx";
@@ -39,9 +37,49 @@ import {
   mapAnnouncements,
 } from "./services/sheets.js";
 
-/* helpers */
+/* ---------------- helpers ---------------- */
+
+const priceMinOf = (p) => {
+  const vals = [];
+  if (Array.isArray(p?.pricing?.table)) {
+    for (const r of p.pricing.table) {
+      const n = +r?.price;
+      if (Number.isFinite(n) && n > 0) vals.push(n);
+    }
+  }
+  if (p?.priceBySize && typeof p.priceBySize === "object") {
+    for (const v of Object.values(p.priceBySize)) {
+      const n = +v;
+      if (Number.isFinite(n) && n > 0) vals.push(n);
+    }
+  }
+  const base = +p?.price;
+  if (Number.isFinite(base) && base > 0) vals.push(base);
+  return vals.length ? Math.min(...vals) : null;
+};
+
+const allPrices = (p = {}) => {
+  const vals = [];
+  if (Array.isArray(p?.pricing?.table)) {
+    for (const r of p.pricing.table) {
+      const n = Number(r?.price);
+      if (Number.isFinite(n) && n > 0) vals.push(n);
+    }
+  }
+  if (p?.priceBySize && typeof p.priceBySize === "object") {
+    for (const v of Object.values(p.priceBySize)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) vals.push(n);
+    }
+  }
+  const base = Number(p?.price);
+  if (Number.isFinite(base) && base > 0) vals.push(base);
+  return vals;
+};
+
 const norm = (s = "") =>
   s.toString().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
 const normFb = (u) => {
   try {
     const x = new URL(u);
@@ -52,9 +90,10 @@ const normFb = (u) => {
     return u;
   }
 };
+
 const HOME_LIMITS = { default: 8 };
 
-/* ======== Menu helpers ======== */
+/* -------------- Menu helpers -------------- */
 const titleOf = (it) => String(it.title ?? it.label ?? it.key).replace(/^"(.*)"$/, "$1");
 
 function buildTreeFromFlat(nav = []) {
@@ -119,6 +158,56 @@ const stripAdmin = (nodes = []) =>
     .map((n) => ({ ...n, children: stripAdmin(n.children || []) }));
 const scrollTop = () => window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
 
+/* ------------ Sort UI (count ⟷ dropdown) ------------ */
+function SortDropdown({ value = "", onChange }) {
+  const opts = [
+    ["", "Mặc định"],
+    ["price-asc", "Giá tăng dần"],
+    ["price-desc", "Giá giảm dần"],
+    ["name-asc", "Tên từ A–Z"],
+    ["name-desc", "Tên từ Z–A"],
+  ];
+
+  return (
+    <label className="inline-flex items-center gap-2 text-sm">
+      <span className="text-gray-600 hidden md:inline">Sắp xếp:</span>
+      <div className="relative">
+        <select
+          aria-label="Sắp xếp"
+          value={value}
+          onChange={(e) => onChange?.(e.target.value)}
+          className="
+            appearance-none rounded-full border border-gray-200
+            bg-white/80 pl-3 pr-8 py-1.5 text-sm shadow-sm
+            hover:bg-white transition
+            focus:outline-none focus:ring-2 focus:ring-rose-300/40 focus:border-rose-300
+          "
+        >
+          {opts.map(([v, l]) => (
+            <option key={v} value={v}>{l}</option>
+          ))}
+        </select>
+        <svg
+          className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400"
+          viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2"
+        >
+          <path d="M6 8l4 4 4-4" />
+        </svg>
+      </div>
+    </label>
+  );
+}
+
+function HeaderRow({ count, sort, onSortChange }) {
+  return (
+    <div className="flex items-center justify-between mb-2">
+      <div className="text-sm text-gray-600">{count} sản phẩm</div>
+      <SortDropdown value={sort || ""} onChange={onSortChange} />
+    </div>
+  );
+}
+
+/* =================== App =================== */
 export default function App() {
   const [route, setRoute] = useState("home");
   const [q, setQ] = useState("");
@@ -340,7 +429,6 @@ export default function App() {
   }, [SHEET.id, SHEET.gid, SYNC_MS]); // eslint-disable-line
 
   /* lọc */
-  const validNum = (n) => Number.isFinite(n) && n > 0;
   function applyFilters(list = []) {
     if (!filterState) return list;
 
@@ -352,15 +440,13 @@ export default function App() {
       levels: levelSet,
       featured,
       inStock,
-      sort,
+      sort = "",
     } = filterState;
 
     const [min, max] = price;
 
     let out = list.filter((p) => {
-      const priceOk = priceActive ? (
-        p.priceMin != null && p.priceMin >= min && p.priceMin <= max
-      ) : true;
+      const priceOk = priceActive ? allPrices(p).some((v) => v >= min && v <= max) : true;
 
       const pTagIds = (p.tags || []).map(String);
       const tagOk = !tagSet?.size || pTagIds.some((id) => tagSet.has(id));
@@ -372,10 +458,18 @@ export default function App() {
       return priceOk && tagOk && sizeOk && lvlOk && featOk && stockOk;
     });
 
-    if (sort === "price-asc") out.sort((a,b)=>(a.priceMin ?? Infinity)-(b.priceMin ?? Infinity));
-    if (sort === "price-desc") out.sort((a,b)=>(b.priceMin ?? -Infinity)-(a.priceMin ?? -Infinity));
-    if (sort === "newest") out.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    if (sort === "popular") out.sort((a, b) => (b.popular || 0) - (a.popular || 0));
+    if (sort === "price-asc")
+      out = [...out].sort((a, b) => (priceMinOf(a) ?? Infinity) - (priceMinOf(b) ?? Infinity));
+    if (sort === "price-desc")
+      out = [...out].sort((a, b) => (priceMinOf(b) ?? -Infinity) - (priceMinOf(a) ?? -Infinity));
+    if (sort === "name-asc")
+      out = [...out].sort((a, b) =>
+        String(a.name || "").localeCompare(String(b.name || ""), "vi", { sensitivity: "base" })
+      );
+    if (sort === "name-desc")
+      out = [...out].sort((a, b) =>
+        String(b.name || "").localeCompare(String(a.name || ""), "vi", { sensitivity: "base" })
+      );
 
     return out;
   }
@@ -401,7 +495,10 @@ export default function App() {
   const filteredForRoute = useMemo(() => applyFilters(baseForRoute), [filterState, baseForRoute]);
 
   /* list cho search */
-  const nqVal = useMemo(() => q.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,""), [q]);
+  const nqVal = useMemo(
+    () => q.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""),
+    [q]
+  );
   const catTitle = useMemo(
     () => Object.fromEntries(productCatsFromMenu.map((c) => [c.key, norm(c.title || c.key)])),
     [productCatsFromMenu]
@@ -413,17 +510,19 @@ export default function App() {
         : (products || []).filter((p) => inMenuCat(p.category, activeCat, descByKey));
     if (!nqVal) return base;
     return base.filter((p) => {
-      const cat = catTitle[p.category] || "";
-      return p._nName.includes(nqVal) || p._nTags.includes(nqVal) || cat.includes(nqVal);
+      const cat = norm(catTitle[p.category] || "");
+      const nameN = norm(p.name || "");
+      const tagsN = norm(Array.isArray(p.tags) ? p.tags.join(" ") : String(p.tags || ""));
+      return nameN.includes(nqVal) || tagsN.includes(nqVal) || cat.includes(nqVal);
     });
   }, [nqVal, products, activeCat, catTitle, descByKey]);
 
   const customPage = useMemo(() => (pages || []).find((p) => p.key === route), [pages, route]);
 
-  /* ===== Scroll-spy mượt cho trang chủ ===== */
+  /* ===== Scroll-spy trang chủ ===== */
   const catbarRef = useRef(null);
   const sectionRefs = useRef({});
-  const sectionTopsRef = useRef([]);    // [{key, topAbs}]
+  const sectionTopsRef = useRef([]); // [{key, topAbs}]
   const suppressSpyUntilRef = useRef(0);
   const rafRef = useRef(0);
 
@@ -502,9 +601,15 @@ export default function App() {
     };
 
     tryScroll();
-    const onHash = () => { stopped = false; tryScroll(0); };
+    const onHash = () => {
+      stopped = false;
+      tryScroll(0);
+    };
     window.addEventListener("hashchange", onHash);
-    return () => { stopped = true; window.removeEventListener("hashchange", onHash); };
+    return () => {
+      stopped = true;
+      window.removeEventListener("hashchange", onHash);
+    };
   }, [route, homeSections, recalcSectionTops, scrollToSection]);
 
   useEffect(() => {
@@ -547,7 +652,7 @@ export default function App() {
     };
   }, [route, homeActive, getOffset]);
 
-  /* ===== Navigation ===== */
+  /* -------- Navigation -------- */
   const resetSearchAndFilters = () => {
     if (q) setQ("");
     if (filterState) setFilterState(null);
@@ -642,7 +747,7 @@ export default function App() {
   const CatBar = (
     <div ref={catbarRef} id="hb-catbar" className="sticky top-[96px] md:top-[117px] z-30">
       <div className="max-w-6xl mx-auto px-4">
-        <div className="bg-gray-50/50 supports-[backdrop-filter]:bg-gray-50/50 backdrop-blur border rounded-xl">
+        <div className="relative bg-gray-50/50 supports-[backdrop-filter]:bg-gray-50/50 backdrop-blur border rounded-xl">
           <CategoryBar
             categories={menuCatsWithAll}
             currentKey={currentKeyForBar}
@@ -658,7 +763,6 @@ export default function App() {
     </div>
   );
 
-  /* QuickView */
   const openQuick = useCallback((p) => {
     setQuick(p);
     const u = new URL(location.href);
@@ -672,7 +776,7 @@ export default function App() {
     window.history.pushState(null, "", u);
   }, []);
 
-  /* render */
+  /* --------------- render --------------- */
   let mainContent = null;
 
   if (route === "admin" && typeof Admin !== "undefined" && typeof Login !== "undefined") {
@@ -701,13 +805,18 @@ export default function App() {
     const activeTitle =
       activeCat === "all"
         ? "Tất cả"
-        : getProductCategoriesFromMenu(menu).find((c) => c.key === activeCat)?.title || activeCat;
+        : getProductCategoriesFromMenu(menu).find((c) => c.key === activeCat)?.title ||
+          activeCat;
     mainContent = (
       <>
         {CatBar}
         <section className="max-w-6xl mx-auto p-4">
           <h2 className="text-xl font-semibold mb-2">{activeTitle}...</h2>
-          <div className="text-sm text-gray-600 mb-3">{list.length} sản phẩm</div>
+          <HeaderRow
+            count={list.length}
+            sort={filterState?.sort}
+            onSortChange={(v) => setFilterState((s) => ({ ...(s || {}), sort: v }))}
+          />
           <ProductList products={list} onImageClick={openQuick} filter={filterState} />
         </section>
       </>
@@ -755,11 +864,11 @@ export default function App() {
           </section>
         ) : (
           <section className="max-w-6xl mx-auto p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-sm text-gray-600">
-                {filteredForRoute.length} sản phẩm
-              </div>
-            </div>
+            <HeaderRow
+              count={filteredForRoute.length}
+              sort={filterState?.sort}
+              onSortChange={(v) => setFilterState((s) => ({ ...(s || {}), sort: v }))}
+            />
             <ProductList products={filteredForRoute} onImageClick={openQuick} filter={filterState} />
           </section>
         )}
@@ -788,7 +897,9 @@ export default function App() {
       />
       <AnnouncementTicker items={announcements} />
       <main>{mainContent}</main>
+
       {quick && <ProductQuickView product={quick} onClose={closeQuick} />}
+
       <FilterSheet open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Bộ lọc">
         <Filters
           key={filtersResetKey}

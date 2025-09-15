@@ -2,8 +2,8 @@
 
 // gviz JSON (ổn cho tab tổng quát)
 export async function fetchSheetRows({ sheetId, gid = "0" }) {
-  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&gid=${gid}&t=${Date.now()}`;
-  const txt = await fetch(url, { cache: "no-store" }).then((r) => r.text());
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&gid=${gid}`;
+  const txt = await (await import('./cache.js')).cachedText(url);
   const json = JSON.parse(txt.substring(txt.indexOf("{"), txt.lastIndexOf("}") + 1));
   const cols = json.table.cols.map((c) => (c.label || "").trim().toLowerCase());
   return (json.table.rows || []).map((r) =>
@@ -36,10 +36,9 @@ function parseCSV(text = "") {
 
 // CSV export (ổn cho tab có dấu phẩy)
 export async function fetchTabAsObjects({ sheetId, gid }) {
-  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}&t=${Date.now()}`;
-  const res = await fetch(url, { cache: "no-store" });
-  const text = await res.text();
-  const rows = parseCSV(text.replace(/^\uFEFF/, ""));
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+  const txt = await (await import('./cache.js')).cachedText(url);
+  const rows = parseCSV(txt.replace(/^\uFEFF/, ""));
   const head = (rows.shift() || []).map((s) => String(s || "").trim().toLowerCase());
   return rows
     .filter((r) => r.some((x) => String(x || "").trim() !== ""))
