@@ -9,53 +9,43 @@ const normalizeFbUrl = (u) => { try { const x = new URL(u); x.search=""; x.hash=
 
 /* FB fade + arrows (giữ nguyên) */
 function FbCarousel({ urls = [], interval = 3000, className = "", height = 340 }) {
-  const list = urls.filter(Boolean);
-  const n = list.length; if (!n) return null;
+  const list = useMemo(() => (urls||[]).filter(Boolean), [urls]);
+  const n = list.length;
+
   const wrapRef = useRef(null);
-  const [wLive, setWLive] = useState(320), [wStable, setWStable] = useState(320);
+  const [wLive,setWLive]=useState(320), [wStable,setWStable]=useState(320);
   const debRef = useRef(0);
-  useLayoutEffect(() => {
-    if (!wrapRef.current) return;
-    const ro = new ResizeObserver((ents) => {
-      const nw = Math.round(ents[0].contentRect.width);
-      if (Math.abs(nw - wLive) >= 1) setWLive(nw);
-    });
-    ro.observe(wrapRef.current);
-    return () => ro.disconnect();
-  }, [wLive]);
-  useEffect(() => {
-    clearTimeout(debRef.current);
-    debRef.current = setTimeout(() => { if (Math.abs(wStable - wLive) >= 8) setWStable(wLive); }, 150);
-    return () => clearTimeout(debRef.current);
-  }, [wLive, wStable]);
 
-  const [i, setI] = useState(0), [pause, setPause] = useState(false);
-  useEffect(() => { if (i >= n) setI(0); }, [n]);
-  useEffect(() => { if (pause || n<=1) return; const t=setInterval(()=>setI(x=>(x+1)%n), interval); return ()=>clearInterval(t); }, [pause,n,interval]);
-  const next = () => setI(x => (x+1)%n);
-  const prev = () => setI(x => (x-1+n)%n);
+  useLayoutEffect(()=>{ if(!wrapRef.current||!n) return;
+    const ro=new ResizeObserver(ents=>{ const nw=Math.round(ents[0].contentRect.width); if(Math.abs(nw-wLive)>=1) setWLive(nw); });
+    ro.observe(wrapRef.current); return ()=>ro.disconnect();
+  },[n,wLive]);
 
-  return (
-    <div ref={wrapRef} className={"relative rounded-2xl border bg-white overflow-hidden " + className}
-         style={{height}} onMouseEnter={()=>setPause(true)} onMouseLeave={()=>setPause(false)}>
-      <div className="relative h-full">
-        {list.map((u,k)=>(
-          <div key={`${k}-${u}`} className="absolute inset-0 transition-opacity duration-500"
-               style={{opacity:i===k?1:0, willChange:"opacity", contain:"layout paint",
-                       pointerEvents:i===k?"auto":"none", backfaceVisibility:"hidden"}}>
-            <FbPost url={u} width={wStable} height={height}/>
-          </div>
-        ))}
-        {n>1 && <>
-          <button aria-label="Prev" onClick={prev}
-                  className="absolute left-2 top-1/2 -translate-y-1/2 z-20 grid place-items-center h-10 w-10 rounded-full bg-white/90 ring-1 ring-gray-200 hover:bg-white shadow">‹</button>
-          <button aria-label="Next" onClick={next}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 z-20 grid place-items-center h-10 w-10 rounded-full bg-white/90 ring-1 ring-gray-200 hover:bg-white shadow">›</button>
-        </>}
-      </div>
+  useEffect(()=>{ clearTimeout(debRef.current); debRef.current=setTimeout(()=>{ if(Math.abs(wStable-wLive)>=8) setWStable(wLive); },150); return ()=>clearTimeout(debRef.current); },[wLive,wStable]);
+
+  const [i,setI]=useState(0), [pause,setPause]=useState(false);
+  useEffect(()=>{ if(i>=n) setI(0); },[n,i]);
+  useEffect(()=>{ if(pause||n<=1) return; const t=setInterval(()=>setI(x=>(x+1)%n),interval); return ()=>clearInterval(t); },[pause,n,interval]);
+
+  if(!n) return null;
+
+  const next=()=>setI(x=>(x+1)%n), prev=()=>setI(x=>(x-1+n)%n);
+
+  return (<div ref={wrapRef} className={"relative rounded-2xl border bg-white overflow-hidden "+className}
+               style={{height}} onMouseEnter={()=>setPause(true)} onMouseLeave={()=>setPause(false)}>
+    <div className="relative h-full">
+      {list.map((u,k)=>(<div key={`${k}-${u}`} className="absolute inset-0 transition-opacity duration-500"
+         style={{opacity:i===k?1:0,willChange:"opacity",contain:"layout paint",pointerEvents:i===k?"auto":"none",backfaceVisibility:"hidden"}}>
+        <FbPost url={u} width={wStable} height={height}/>
+      </div>))}
+      {n>1 && (<>
+        <button aria-label="Prev" onClick={prev} className="absolute left-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-white/90 ring-1 ring-gray-200">‹</button>
+        <button aria-label="Next" onClick={next} className="absolute right-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-white/90 ring-1 ring-gray-200">›</button>
+      </>)}
     </div>
-  );
+  </div>);
 }
+
 
 /* ===== Hero: thêm onBannerClick ===== */
 export function Hero({ products = [], interval = 2000, fbUrls = [], onBannerClick }) {

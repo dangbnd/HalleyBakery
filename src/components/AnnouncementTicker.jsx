@@ -11,7 +11,6 @@ export default function AnnouncementTicker({ items = [], speed = 80 }) {
         .filter(Boolean),
     [items]
   );
-  if (!texts.length) return null;
 
   const wrapRef = useRef(null);
   const trackRef = useRef(null);
@@ -54,6 +53,8 @@ export default function AnnouncementTicker({ items = [], speed = 80 }) {
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repeat, texts.join("|")]);
+  
+  if (!texts.length) return null;
 
   return (
     // Dưới header (56/72px), thấp hơn CategoryBar để không đè.

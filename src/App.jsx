@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { LS, readLS, writeLS } from "./utils.js";
 import { DATA } from "./data.js";
 import { encodeState, decodeState } from "./utils/urlState.js";
+//import { deriveFastFields } from "./services/derive.js";
 
 import Header from "./components/Header.jsx";
 import { Footer } from "./components/Footer.jsx";
@@ -11,6 +12,7 @@ import CategoryBar from "./components/CategoryBar.jsx";
 import Filters from "./components/Filters.jsx";
 import FilterSheet from "./components/FilterSheet.jsx";
 import { ProductList } from "./components/ProductList.jsx";
+//import { ProductListVirtual as ProductList } from "./components/ProductList.virtual.jsx";
 import ProductQuickView from "./components/ProductQuickView.jsx";
 import PageViewer from "./components/PageViewer.jsx";
 import MessageButton from "./components/MessageButton.jsx";
@@ -36,7 +38,6 @@ import {
   enrichProductPricing,
   mapAnnouncements,
 } from "./services/sheets.js";
-import { fetchAllDriveImagesDeep, buildImageMap } from "./services/drive.js";
 
 /* helpers */
 const norm = (s = "") =>
@@ -122,8 +123,8 @@ export default function App() {
   const [route, setRoute] = useState("home");
   const [q, setQ] = useState("");
   const [quick, setQuick] = useState(null);
-  const [activeCat, setActiveCat] = useState("all");     // cho trang search
-  const [homeActive, setHomeActive] = useState("all");   // scroll-spy trang chủ
+  const [activeCat, setActiveCat] = useState("all");
+  const [homeActive, setHomeActive] = useState("all");
   const [filterState, setFilterState] = useState(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filtersResetKey, setFiltersResetKey] = useState(0);
@@ -150,10 +151,6 @@ export default function App() {
       sizes: import.meta.env.VITE_SHEET_GID_SIZES,
       announcements: import.meta.env.VITE_SHEET_GID_ANNOUNCEMENTS,
     },
-  };
-  const DRIVE = {
-    folderId: import.meta.env.VITE_DRIVE_FOLDER_ID,
-    apiKey: import.meta.env.VITE_GOOGLE_API_KEY,
   };
 
   const [announcements, setAnnouncements] =
@@ -192,9 +189,19 @@ export default function App() {
   /* state -> URL */
   useEffect(() => {
     const qs = encodeState({ route, q, cat: activeCat, filters: filterState });
-    const url = qs ? `?${qs}` : location.pathname;
-    window.history.replaceState(null, "", url);
-  }, [route, q, activeCat, filterState]);
+    const base = qs ? `?${qs}` : location.pathname;
+    if (route === "home" && homeActive && homeActive !== "all") {
+      const u = new URL(location.href);
+      u.search = base.startsWith("?") ? base : "";
+      u.hash = `#${homeActive}`;
+      window.history.replaceState(null, "", u);
+    } else {
+      const u = new URL(location.href);
+      u.search = base.startsWith("?") ? base : "";
+      u.hash = "";
+      window.history.replaceState(null, "", u);
+    }
+  }, [route, q, activeCat, filterState, homeActive]);
 
   /* FB urls */
   useEffect(() => {
@@ -242,12 +249,12 @@ export default function App() {
     if (p) setQuick(p);
   }, [products]);
 
-  /* đồng bộ dữ liệu */
+  /* đồng bộ dữ liệu — chỉ đọc Sheet, không quét Drive */
   useEffect(() => {
     async function syncAll() {
-      let prodRows, files;
-      const tabsEnv = (import.meta.env?.VITE_PRODUCT_TABS || "").trim();
+      let prodRows;
 
+      const tabsEnv = (import.meta.env?.VITE_PRODUCT_TABS || "").trim();
       if (tabsEnv) {
         const tabs = readProductTabsFromEnv();
         const rows = await fetchProductsFromTabs({
@@ -269,16 +276,11 @@ export default function App() {
           }),
         });
         prodRows = rows;
-        files = await fetchAllDriveImagesDeep(DRIVE);
       } else {
-        [prodRows, files] = await Promise.all([
-          fetchSheetRows({ sheetId: SHEET.id, gid: SHEET.gids.products || "0" }),
-          fetchAllDriveImagesDeep(DRIVE),
-        ]);
+        prodRows = await fetchSheetRows({ sheetId: SHEET.id, gid: SHEET.gids.products || "0" });
       }
 
-      const imageIndex = buildImageMap(files);
-      const fromSheet = mapProducts(prodRows, imageIndex);
+      const fromSheet = mapProducts(prodRows, null);
 
       let types = [], levels = [];
       try {
@@ -335,7 +337,7 @@ export default function App() {
       const t = setInterval(syncAll, SYNC_MS);
       return () => clearInterval(t);
     }
-  }, [SHEET.id, SHEET.gid, DRIVE.folderId, DRIVE.apiKey, SYNC_MS]); // eslint-disable-line
+  }, [SHEET.id, SHEET.gid, SYNC_MS]); // eslint-disable-line
 
   /* lọc */
   const validNum = (n) => Number.isFinite(n) && n > 0;
@@ -355,28 +357,10 @@ export default function App() {
 
     const [min, max] = price;
 
-    const pricesOf = (p) => {
-      const out = [];
-      if (Array.isArray(p?.pricing?.table)) {
-        for (const r of p.pricing.table) {
-          const n = Number(r.price);
-          if (validNum(n)) out.push(n);
-        }
-      }
-      if (p?.priceBySize && typeof p.priceBySize === "object") {
-        for (const v of Object.values(p.priceBySize)) {
-          const n = Number(v);
-          if (validNum(n)) out.push(n);
-        }
-      }
-      const n = Number(p?.price);
-      if (validNum(n)) out.push(n);
-      return out;
-    };
-
     let out = list.filter((p) => {
-      const pv = pricesOf(p);
-      const priceOk = priceActive ? pv.some((v) => v >= min && v <= max) : true;
+      const priceOk = priceActive ? (
+        p.priceMin != null && p.priceMin >= min && p.priceMin <= max
+      ) : true;
 
       const pTagIds = (p.tags || []).map(String);
       const tagOk = !tagSet?.size || pTagIds.some((id) => tagSet.has(id));
@@ -388,14 +372,8 @@ export default function App() {
       return priceOk && tagOk && sizeOk && lvlOk && featOk && stockOk;
     });
 
-    const minPrice = (p) => {
-      const pv = pricesOf(p);
-      return pv.length ? Math.min(...pv) : null;
-    };
-
-    if (sort === "price-asc") out.sort((a, b) => (minPrice(a) ?? Infinity) - (minPrice(b) ?? Infinity));
-    if (sort === "price-desc")
-      out.sort((a, b) => (minPrice(b) ?? -Infinity) - (minPrice(a) ?? -Infinity));
+    if (sort === "price-asc") out.sort((a,b)=>(a.priceMin ?? Infinity)-(b.priceMin ?? Infinity));
+    if (sort === "price-desc") out.sort((a,b)=>(b.priceMin ?? -Infinity)-(a.priceMin ?? -Infinity));
     if (sort === "newest") out.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     if (sort === "popular") out.sort((a, b) => (b.popular || 0) - (a.popular || 0));
 
@@ -423,7 +401,7 @@ export default function App() {
   const filteredForRoute = useMemo(() => applyFilters(baseForRoute), [filterState, baseForRoute]);
 
   /* list cho search */
-  const nqVal = useMemo(() => norm(q), [q]);
+  const nqVal = useMemo(() => q.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,""), [q]);
   const catTitle = useMemo(
     () => Object.fromEntries(productCatsFromMenu.map((c) => [c.key, norm(c.title || c.key)])),
     [productCatsFromMenu]
@@ -435,10 +413,8 @@ export default function App() {
         : (products || []).filter((p) => inMenuCat(p.category, activeCat, descByKey));
     if (!nqVal) return base;
     return base.filter((p) => {
-      const name = norm(p.name);
-      const tg = (p.tags || []).map((t) => norm(t)).join(" ");
       const cat = catTitle[p.category] || "";
-      return name.includes(nqVal) || tg.includes(nqVal) || cat.includes(nqVal);
+      return p._nName.includes(nqVal) || p._nTags.includes(nqVal) || cat.includes(nqVal);
     });
   }, [nqVal, products, activeCat, catTitle, descByKey]);
 
@@ -447,8 +423,8 @@ export default function App() {
   /* ===== Scroll-spy mượt cho trang chủ ===== */
   const catbarRef = useRef(null);
   const sectionRefs = useRef({});
-  const sectionTopsRef = useRef([]);         // [{key, topAbs}]
-  const suppressSpyUntilRef = useRef(0);     // tắt spy khi scroll bằng code
+  const sectionTopsRef = useRef([]);    // [{key, topAbs}]
+  const suppressSpyUntilRef = useRef(0);
   const rafRef = useRef(0);
 
   const homeSections = useMemo(() => {
@@ -482,9 +458,18 @@ export default function App() {
     });
   }, [homeSections]);
 
+  const scrollToSection = useCallback(
+    (key) => {
+      const rec = sectionTopsRef.current.find((x) => x.key === key);
+      const target = rec ? rec.topAbs - getOffset() - 8 : 0;
+      suppressSpyUntilRef.current = performance.now() + 800;
+      window.scrollTo({ top: target, behavior: "smooth" });
+    },
+    [getOffset]
+  );
+
   useEffect(() => {
     if (route !== "home") return;
-    // tính lại sau render và sau một nhịp để ảnh load xong
     requestAnimationFrame(recalcSectionTops);
     const t = setTimeout(recalcSectionTops, 300);
     window.addEventListener("resize", recalcSectionTops);
@@ -496,15 +481,31 @@ export default function App() {
     };
   }, [route, recalcSectionTops]);
 
-  const scrollToSection = useCallback(
-    (key) => {
-      const rec = sectionTopsRef.current.find((x) => x.key === key);
-      const target = rec ? rec.topAbs - getOffset() - 8 : 0;
-      suppressSpyUntilRef.current = performance.now() + 800; // tắt spy 0.8s
-      window.scrollTo({ top: target, behavior: "smooth" });
-    },
-    [getOffset]
-  );
+  useEffect(() => {
+    if (route !== "home") return;
+
+    const keyFromHash = () => decodeURIComponent(location.hash.replace(/^#/, ""));
+    let stopped = false;
+
+    const tryScroll = (tries = 0) => {
+      const key = keyFromHash();
+      if (!key) return;
+      const el = sectionRefs.current[key];
+      if (el) {
+        recalcSectionTops();
+        suppressSpyUntilRef.current = performance.now() + 1000;
+        scrollToSection(key);
+        setHomeActive(key);
+        return;
+      }
+      if (!stopped && tries < 60) setTimeout(() => tryScroll(tries + 1), 100);
+    };
+
+    tryScroll();
+    const onHash = () => { stopped = false; tryScroll(0); };
+    window.addEventListener("hashchange", onHash);
+    return () => { stopped = true; window.removeEventListener("hashchange", onHash); };
+  }, [route, homeSections, recalcSectionTops, scrollToSection]);
 
   useEffect(() => {
     if (route !== "home") return;
@@ -518,7 +519,6 @@ export default function App() {
         const tops = sectionTopsRef.current;
         if (!tops.length) return;
 
-        // tìm section có topAbs <= y, lấy cái lớn nhất. Không nhảy "all" khi đang ở các section.
         let idx = -1;
         for (let i = 0; i < tops.length; i++) {
           if (tops[i].topAbs <= y) idx = i;
@@ -526,7 +526,6 @@ export default function App() {
         }
         const key = idx < 0 ? "all" : tops[idx].key;
 
-        // hysteresis 40px: chỉ đổi khi qua ranh giới rõ rệt
         if (key !== homeActive) {
           const curIdx = tops.findIndex((t) => t.key === homeActive);
           if (idx >= 0 && curIdx >= 0) {
@@ -558,23 +557,30 @@ export default function App() {
 
   function handlePickCategory(key) {
     resetSearchAndFilters();
+
     if (route === "home") {
       if (key === "all") {
-        suppressSpyUntilRef.current = performance.now() + 500;
         scrollTop();
         setHomeActive("all");
+        const u = new URL(location.href);
+        u.hash = "";
+        history.replaceState(null, "", u);
       } else {
-        scrollToSection(key);
-        setHomeActive(key);
+        setActiveCat(key);
+        setRoute(key);
+        const u = new URL(location.href);
+        u.hash = "";
+        history.replaceState(null, "", u);
       }
       return;
     }
+
     if (key === "all") {
       setActiveCat("all");
       setRoute("search");
     } else {
       setActiveCat(key);
-      setRoute("search");
+      setRoute(key);
     }
   }
 
@@ -606,7 +612,7 @@ export default function App() {
       5
     );
     const cat = top(
-      (productCatsFromMenu || [])
+      (getProductCategoriesFromMenu(menu) || [])
         .filter((c) => norm(c.title || c.key).includes(nq))
         .map((c) => ({ type: "danh mục", label: c.title || c.key, key: c.key })),
       5
@@ -618,7 +624,7 @@ export default function App() {
       5
     );
     return [...cat, ...prod, ...tgs].slice(0, 10);
-  }, [q, products, productCatsFromMenu, tags]);
+  }, [q, products, menu, tags]);
 
   function handleSuggestionSelect(s) {
     if (s.type === "danh mục" && s.key) {
@@ -695,7 +701,7 @@ export default function App() {
     const activeTitle =
       activeCat === "all"
         ? "Tất cả"
-        : productCatsFromMenu.find((c) => c.key === activeCat)?.title || activeCat;
+        : getProductCategoriesFromMenu(menu).find((c) => c.key === activeCat)?.title || activeCat;
     mainContent = (
       <>
         {CatBar}
@@ -719,7 +725,7 @@ export default function App() {
               setQuick(p);
               const u = new URL(location.href);
               u.searchParams.set("pid", String(p.id));
-              history.pushState(null, "", u);
+              window.history.pushState(null, "", u);
             }}
           />
         )}
@@ -774,7 +780,9 @@ export default function App() {
         hotline={DATA.hotline}
         searchQuery={q}
         onSearchChange={setQ}
-        onSearchSubmit={(qq) => setRoute(qq.trim() ? "search" : activeCat !== "all" ? activeCat : "all")}
+        onSearchSubmit={(qq) =>
+          setRoute(qq.trim() ? "search" : activeCat !== "all" ? activeCat : "all")
+        }
         suggestions={suggestions}
         onSuggestionSelect={handleSuggestionSelect}
       />
