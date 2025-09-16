@@ -8,6 +8,8 @@ const VND = new Intl.NumberFormat("vi-VN", {
   maximumFractionDigits: 0,
 });
 
+const toDigits = (s) => String(s || "").match(/\d+/)?.[0] || "";
+
 export default function ProductQuickView({ product, onClose }) {
   const [idx, setIdx] = useState(0);
 
@@ -18,19 +20,28 @@ export default function ProductQuickView({ product, onClose }) {
   );
 
   const [sel, setSel] = useState(table[0]?.key || null);
-  useEffect(() => { if (!sel && table.length) setSel(table[0].key); }, [table, sel]);
+
+  // Reset khi đổi sản phẩm hoặc size hiện tại không còn
+  useEffect(() => {
+    const first = table[0]?.key ?? null;
+    if (!table.find((r) => r.key === sel)) setSel(first);
+    setIdx(0);
+  }, [product?.id, table]); // eslint-disable-line
+
+  useEffect(() => {
+    if (!sel && table.length) setSel(table[0].key);
+  }, [table, sel]);
 
   const price = useMemo(() => {
     if (sel && product?.priceBySize && Number(product.priceBySize[sel]) > 0) {
       return Number(product.priceBySize[sel]);
     }
-    const row = table.find(r => r.key === sel) || table[0];
+    const row = table.find((r) => r.key === sel) || table[0];
     if (row && Number(row.price) > 0) return Number(row.price);
     const base = Number(product?.price);
     return Number.isFinite(base) && base > 0 ? base : null;
   }, [sel, product, table]);
 
-  // link Messenger
   const messengerLink = useMemo(() => {
     const envLink = import.meta.env.VITE_MESSENGER_LINK;
     const envPage = import.meta.env.VITE_MESSENGER_PAGE;
@@ -42,7 +53,7 @@ export default function ProductQuickView({ product, onClose }) {
     const onKey = (e) => {
       if (e.key === "Escape") onClose?.();
       if (e.key === "ArrowRight" && images.length) setIdx((i) => (i + 1) % images.length);
-      if (e.key === "ArrowLeft"  && images.length) setIdx((i) => (i - 1 + images.length) % images.length);
+      if (e.key === "ArrowLeft" && images.length) setIdx((i) => (i - 1 + images.length) % images.length);
     };
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
@@ -76,12 +87,16 @@ export default function ProductQuickView({ product, onClose }) {
                       className="absolute left-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-white/90 border grid place-items-center"
                       onClick={() => setIdx((i) => (i - 1 + images.length) % images.length)}
                       aria-label="Ảnh trước"
-                    >‹</button>
+                    >
+                      ‹
+                    </button>
                     <button
                       className="absolute right-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-white/90 border grid place-items-center"
                       onClick={() => setIdx((i) => (i + 1) % images.length)}
                       aria-label="Ảnh sau"
-                    >›</button>
+                    >
+                      ›
+                    </button>
                   </>
                 )}
               </div>
@@ -128,7 +143,7 @@ export default function ProductQuickView({ product, onClose }) {
                     className="grid place-items-center h-9 w-9 rounded-full bg-[#006AFF] text-white shadow ring-1 ring-[#cfe0ff] hover:opacity-90 active:scale-95 transition"
                   >
                     <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
-                      <path d="M12 2C6.48 2 2 6.05 2 11.05c0 2.61 1.12 4.97 3.01 6.63v3.27l2.76-1.52c1.25.35 2.33.5 3.23.5 5.52 0 10-4.05 10-9.05S17.52 2 12 2zm.1 10.87-2.7-2.9-5.15 2.9 5.79-5.52 2.64 2.86 5.16-2.86-5.74 5.52z"/>
+                      <path d="M12 2C6.48 2 2 6.05 2 11.05c0 2.61 1.12 4.97 3.01 6.63v3.27l2.76-1.52c1.25.35 2.33.5 3.23.5 5.52 0 10-4.05 10-9.05S17.52 2 12 2zm.1 10.87-2.7-2.9-5.15 2.9 5.79-5.52 2.64 2.86 5.16-2.86-5.74 5.52z" />
                     </svg>
                   </a>
                 )}
@@ -137,26 +152,31 @@ export default function ProductQuickView({ product, onClose }) {
                   className="h-9 w-9 rounded-full border grid place-items-center hover:bg-gray-50"
                   onClick={onClose}
                   aria-label="Đóng"
-                >✕</button>
+                >
+                  ✕
+                </button>
               </div>
 
-              {/* Kích thước: nhỏ hơn, 4 nút mỗi hàng */}
+              {/* Kích thước */}
               {table.length > 0 && (
                 <>
                   <div className="text-sm font-medium mt-4">Kích thước có sẵn</div>
                   <div className="grid grid-cols-4 gap-2 mt-2">
-                    {table.map(r => (
+                    {table.map((r) => (
                       <button
                         key={r.key}
                         onClick={() => setSel(r.key)}
                         className={
                           "w-full min-w-0 truncate text-center px-2.5 py-[6px] rounded-full border text-xs " +
-                          (sel === r.key ? "bg-gray-900 text-white border-gray-900" : "border-gray-300 hover:bg-gray-50")
+                          (sel === r.key
+                            ? "bg-orange-700 text-white border-orange-500 shadow-sm"
+                            : "border-gray-300 hover:bg-orange-100")
                         }
-                        aria-pressed={sel===r.key}
+                        aria-pressed={sel === r.key}
                         title={r.label}
                       >
-                        {r.label}
+                        <span className="hidden md:inline">{r.label}</span>
+                        <span className="md:hidden text-sx">{toDigits(r.label) || r.label} cm</span>
                       </button>
                     ))}
                   </div>
@@ -176,7 +196,12 @@ export default function ProductQuickView({ product, onClose }) {
                   <div className="text-sm font-medium mb-2">Tags</div>
                   <div className="flex flex-wrap gap-2">
                     {product.tags.map((t, i) => (
-                      <span key={i} className="px-2 py-1 rounded-full border text-xs text-gray-700 bg-gray-50">#{t}</span>
+                      <span
+                        key={i}
+                        className="px-2 py-1 rounded-full border text-xs text-gray-700 bg-gray-50"
+                      >
+                        #{t}
+                      </span>
                     ))}
                   </div>
                 </div>

@@ -29,8 +29,8 @@ export function SizeSelector({ sizes = [], value, onChange, className = "" }) {
             className={
               "min-w-0 w-full truncate text-center rounded-full border " + btnBase + " " +
               (selected
-                ? "bg-gray-900 text-white border-gray-900"
-                : "bg-white text-gray-800 border-gray-300 hover:bg-gray-50")
+                ? "bg-orange-700 text-white border-orange-700 shadow-sm"
+                : "bg-white text-gray-800 border-gray-300 hover:bg-orange-100")
             }
           >
             {s.label}

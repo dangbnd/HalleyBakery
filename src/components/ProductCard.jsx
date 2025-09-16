@@ -1,8 +1,11 @@
+// src/components/ProductCard.jsx
 import React, { useMemo, useState, useEffect } from "react";
 import ProductImage from "./ProductImage.jsx";
 import { SizeSelector } from "./SizeSelector.jsx";
 import { PriceTag } from "./PriceTag.jsx";
 import { sizeOptions, pickDefaultSize, priceFor } from "../lib/pricing.js";
+
+const toDigits = (s) => String(s || "").match(/\d+/)?.[0] || "";
 
 export default function ProductCard({ p, onImageClick, filter }) {
   const options = useMemo(() => sizeOptions(p), [p]);
@@ -11,8 +14,27 @@ export default function ProductCard({ p, onImageClick, filter }) {
 
   const price = useMemo(() => priceFor(p, sel), [p, sel]);
 
+  // Build responsive labels: mobile "Sz12", desktop "Size 12cm"
+  const sizeItems = useMemo(
+    () =>
+      options.map(({ id, label }) => {
+        const d = toDigits(label);
+        return {
+          id,
+          // JSX label works with SizeSelector since it renders children
+          label: (
+            <>
+              <span className="hidden text-[13.5px] md:inline">{label}</span>
+              <span className="md:hidden text-sx">{d || label} cm</span>
+            </>
+          ),
+        };
+      }),
+    [options]
+  );
+
   return (
-    <article className="group rounded-2xl border bg-white overflow-hidden">
+    <article id={`prod-${p?.id}`} className="group rounded-2xl border bg-white overflow-hidden">
       <button
         type="button"
         className="relative block aspect-[1/1] w-full overflow-hidden"
@@ -28,9 +50,9 @@ export default function ProductCard({ p, onImageClick, filter }) {
           <PriceTag value={price} className="text-rose-600 text-sm font-semibold shrink-0" />
         </div>
 
-        {options.length > 0 && (
+        {sizeItems.length > 0 && (
           <SizeSelector
-            sizes={options.map(({ id, label }) => ({ id, label }))}
+            sizes={sizeItems}
             value={sel}
             onChange={setSel}
             className="mt-2"
