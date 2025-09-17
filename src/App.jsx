@@ -83,48 +83,66 @@ const inMenuCat = (catKey, selectedKey, descIdx) => selectedKey === "all" || cat
 const stripAdmin = (nodes = []) => (nodes || []).filter((n) => n.key !== "admin").map((n) => ({ ...n, children: stripAdmin(n.children || []) }));
 const scrollTop = () => window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
 
-/* ------------ Header row (count + tags + sort) ------------ */
-function HeaderRow({ count, sort, onSortChange, activeTags = [], onClearTag, onClearAll }) {
+/* ------------ Sort UI (count ⟷ dropdown) ------------ */
+function SortDropdown({ value = "", onChange }) {
+  const opts = [
+    ["", "Mặc định"],
+    ["price-asc", "Giá tăng dần"],
+    ["price-desc", "Giá giảm dần"],
+    ["name-asc", "Tên từ A–Z"],
+    ["name-desc", "Tên từ Z–A"],
+  ];
+
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-      <div className="flex items-center gap-2">
-        <div className="text-sm text-gray-600">{count} sản phẩm</div>
-        {activeTags.map((t) => (
-          <button
-            key={t}
-            onClick={() => onClearTag?.(t)}
-            className="px-2 py-1 rounded-full border text-xs bg-gray-100 hover:bg-gray-200"
-            title="Bỏ tag này"
-          >
-            #{t} ✕
-          </button>
-        ))}
-        {!!activeTags.length && (
-          <button
-            onClick={() => onClearAll?.()}
-            className="px-2 py-1 rounded-full border text-xs hover:bg-gray-100"
-            title="Xóa tất cả lọc theo tag"
-          >
-            Xóa lọc tag
-          </button>
-        )}
+    <label className="inline-flex items-center gap-2 text-sm">
+      <span className="text-gray-600 hidden md:inline">Sắp xếp:</span>
+      <div className="relative">
+        <select
+          aria-label="Sắp xếp"
+          value={value}
+          onChange={(e) => onChange?.(e.target.value)}
+          className="appearance-none rounded-full border border-gray-200 bg-white/80 pl-3 pr-8 py-1.5 text-sm shadow-sm hover:bg-white transition focus:outline-none focus:ring-2 focus:ring-rose-300/40 focus:border-rose-300"
+        >
+          {opts.map(([v, l]) => (<option key={v} value={v}>{l}</option>))}
+        </select>
+        <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 8l4 4 4-4" /></svg>
       </div>
-      <label className="inline-flex items-center gap-2 text-sm">
-        <span className="text-gray-600 hidden md:inline">Sắp xếp:</span>
-        <div className="relative">
-          <select
-            aria-label="Sắp xếp" value={sort || ""} onChange={(e) => onSortChange?.(e.target.value)}
-            className="appearance-none rounded-full border border-gray-200 bg-white/80 pl-3 pr-8 py-1.5 text-sm shadow-sm hover:bg-white focus:outline-none focus:ring-2 focus:ring-rose-300/40 focus:border-rose-300"
-          >
-            <option value="">Mặc định</option>
-            <option value="price-asc">Giá tăng dần</option>
-            <option value="price-desc">Giá giảm dần</option>
-            <option value="name-asc">Tên từ A–Z</option>
-            <option value="name-desc">Tên từ Z–A</option>
-          </select>
-          <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 8l4 4 4-4" /></svg>
-        </div>
-      </label>
+    </label>
+  );
+}
+
+function HeaderRow({ count, sort, onSortChange }) {
+  return (
+    <div className="flex items-center justify-between mb-2">
+      <div className="text-sm text-gray-600">{count} sản phẩm</div>
+      <SortDropdown value={sort || ""} onChange={onSortChange} />
+    </div>
+  );
+}
+
+/* Chip tag đặt DƯỚI HeaderRow */
+function ActiveFilters({ filterState, clearTag }) {
+  const tags = [...(filterState?.tags || new Set())];
+  if (!tags.length) return null;
+  return (
+    <div className="mb-3 flex flex-wrap gap-2">
+      {tags.map((t) => (
+        <button
+          key={t}
+          onClick={() => clearTag(t)}
+          className="px-2 py-1 rounded-full border text-xs bg-gray-100 hover:bg-gray-200"
+          title="Bỏ tag này"
+        >
+          #{t} ✕
+        </button>
+      ))}
+      <button
+        onClick={() => clearTag("*")}
+        className="px-2 py-1 rounded-full border text-xs hover:bg-gray-100"
+        title="Xóa tất cả lọc theo tag"
+      >
+        Xóa lọc tag
+      </button>
     </div>
   );
 }
@@ -408,7 +426,11 @@ export default function App() {
     const t = setTimeout(recalcSectionTops, 300);
     window.addEventListener("resize", recalcSectionTops);
     window.addEventListener("load", recalcSectionTops);
-    return () => { clearTimeout(t); window.removeEventListener("resize", recalcSectionTops); window.removeEventListener("load", recalcSectionTops); };
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("resize", recalcSectionTops);
+      window.removeEventListener("load", recalcSectionTops);
+    };
   }, [route, recalcSectionTops]);
 
   useEffect(() => {
@@ -474,7 +496,7 @@ export default function App() {
 
   const menuPublic = useMemo(() => stripAdmin(menu), [menu]);
 
-  /* gợi ý search: KHÔNG còn tag */
+  /* gợi ý search (không chứa tag) */
   const suggestions = useMemo(() => {
     const query = q.trim(); if (!query) return [];
     const nq = norm(query); const top = (arr, n) => arr.slice(0, n);
@@ -495,7 +517,7 @@ export default function App() {
       <div className="max-w-6xl mx-auto px-4">
         <div className="relative bg-gray-50/50 supports-[backdrop-filter]:bg-gray-50/50 backdrop-blur border rounded-xl">
           <CategoryBar
-            categories={ [{ key: "all", title: "Tất cả" }, ...getProductCategoriesFromMenu(menu)] }
+            categories={menuCatsWithAll}
             currentKey={currentKeyForBar}
             onPick={handlePickCategory}
             onOpenFilters={() => { if (route === "home") setRoute("all"); setFiltersOpen(true); }}
@@ -514,14 +536,14 @@ export default function App() {
     setQuick(null); const u = new URL(location.href); u.searchParams.delete("pid"); window.history.pushState(null, "", u);
   }, []);
 
-  /* click tag từ QuickView: KHÔNG đụng search box */
+  /* click tag từ QuickView */
   const handlePickTagFromQuickView = useCallback((tag) => {
     const t = String(tag || ""); if (!t) return;
     setQ(""); setFilterState((st) => ({ ...(st || {}), tags: new Set([t]) }));
     setActiveCat("all"); setRoute("search"); closeQuick(); scrollTop();
   }, [closeQuick]);
 
-  /* clear tag ngay trên HeaderRow */
+  /* clear tag chips */
   const clearTag = (t) => {
     setFilterState((st) => {
       if (!st?.tags?.size) return st;
@@ -535,7 +557,6 @@ export default function App() {
 
   /* --------------- render --------------- */
   let mainContent = null;
-  const activeTagsArr = useMemo(() => [...(filterState?.tags || new Set())], [filterState]);
 
   if (customPage) {
     mainContent = <PageViewer page={customPage} />;
@@ -555,10 +576,8 @@ export default function App() {
             count={list.length}
             sort={filterState?.sort}
             onSortChange={(v) => setFilterState((s) => ({ ...(s || {}), sort: v }))}
-            activeTags={activeTagsArr}
-            onClearTag={(t) => clearTag(t)}
-            onClearAll={() => clearTag("*")}
           />
+          <ActiveFilters filterState={filterState} clearTag={clearTag} />
           <ProductList products={list} onImageClick={openQuick} filter={filterState} />
         </section>
       </>
@@ -600,10 +619,8 @@ export default function App() {
               count={list.length}
               sort={filterState?.sort}
               onSortChange={(v) => setFilterState((s) => ({ ...(s || {}), sort: v }))}
-              activeTags={activeTagsArr}
-              onClearTag={(t) => clearTag(t)}
-              onClearAll={() => clearTag("*")}
             />
+            <ActiveFilters filterState={filterState} clearTag={clearTag} />
             <ProductList products={list} onImageClick={openQuick} filter={filterState} />
           </section>
         )}
@@ -615,7 +632,7 @@ export default function App() {
     <div className="bg-gray-50 min-h-screen">
       <Header
         currentKey={route}
-        navItems={stripAdmin(menu)}
+        navItems={menuPublic}
         onNavigate={navigate}
         logoText={DATA.logoText}
         logoSrcDesktop={DATA.logoDesktop}
@@ -624,7 +641,9 @@ export default function App() {
         hotline={DATA.hotline}
         searchQuery={q}
         onSearchChange={setQ}
-        onSearchSubmit={(qq) => setRoute(qq.trim() ? "search" : activeCat !== "all" ? activeCat : "all")}
+        onSearchSubmit={(qq) =>
+          setRoute(qq.trim() ? "search" : activeCat !== "all" ? activeCat : "all")
+        }
         suggestions={suggestions}
         onSuggestionSelect={handleSuggestionSelect}
       />
