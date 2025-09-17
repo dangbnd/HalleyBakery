@@ -8,39 +8,51 @@ const VND = new Intl.NumberFormat("vi-VN", {
   maximumFractionDigits: 0,
 });
 
-const toDigits = (s) => String(s || "").match(/\d+/)?.[0] || "";
+const onlyDigits = (s) => String(s || "").match(/\d+/)?.[0] || "";
 
-export default function ProductQuickView({ product, onClose }) {
-  const [idx, setIdx] = useState(0);
+// Gom size → giá từ pricing.table | priceBySize | price
+function buildSizeRows(product = {}) {
+  const rows = [];
+  const table = Array.isArray(product?.pricing?.table) ? product.pricing.table : [];
+  const pbs =
+    product?.priceBySize && typeof product.priceBySize === "object"
+      ? product.priceBySize
+      : null;
 
-  const images = Array.isArray(product?.images) ? product.images : [];
-  const table = useMemo(
-    () => (Array.isArray(product?.pricing?.table) ? product.pricing.table : []),
-    [product]
-  );
-
-  const [sel, setSel] = useState(table[0]?.key || null);
-
-  // Reset khi đổi sản phẩm hoặc size hiện tại không còn
-  useEffect(() => {
-    const first = table[0]?.key ?? null;
-    if (!table.find((r) => r.key === sel)) setSel(first);
-    setIdx(0);
-  }, [product?.id, table]); // eslint-disable-line
-
-  useEffect(() => {
-    if (!sel && table.length) setSel(table[0].key);
-  }, [table, sel]);
-
-  const price = useMemo(() => {
-    if (sel && product?.priceBySize && Number(product.priceBySize[sel]) > 0) {
-      return Number(product.priceBySize[sel]);
+  if (table.length) {
+    for (const r of table) {
+      const key = r.key ?? r.size ?? r.label ?? "";
+      const label =
+        r.label ??
+        r.size ??
+        (onlyDigits(key) ? `Size ${onlyDigits(key)}cm` : String(key));
+      const price = Number(pbs?.[key] ?? r.price);
+      if (Number.isFinite(price) && price > 0) rows.push({ key, label, price });
     }
-    const row = table.find((r) => r.key === sel) || table[0];
-    if (row && Number(row.price) > 0) return Number(row.price);
-    const base = Number(product?.price);
-    return Number.isFinite(base) && base > 0 ? base : null;
-  }, [sel, product, table]);
+  } else if (pbs) {
+    for (const k of Object.keys(pbs)) {
+      const price = Number(pbs[k]);
+      if (Number.isFinite(price) && price > 0) {
+        const label = onlyDigits(k) ? `Size ${onlyDigits(k)}cm` : `Size ${k}`;
+        rows.push({ key: k, label, price });
+      }
+    }
+  } else if (Number.isFinite(+product?.price) && +product.price > 0) {
+    rows.push({ key: "base", label: "Giá", price: +product.price });
+  }
+
+  rows.sort(
+    (a, b) =>
+      (parseFloat(onlyDigits(a.label)) || 0) -
+      (parseFloat(onlyDigits(b.label)) || 0)
+  );
+  return rows;
+}
+
+export default function ProductQuickView({ product, onClose, onPickTag }) {
+  const [idx, setIdx] = useState(0);
+  const images = Array.isArray(product?.images) ? product.images : [];
+  const sizeRows = useMemo(() => buildSizeRows(product), [product]);
 
   const messengerLink = useMemo(() => {
     const envLink = import.meta.env.VITE_MESSENGER_LINK;
@@ -52,14 +64,17 @@ export default function ProductQuickView({ product, onClose }) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") onClose?.();
-      if (e.key === "ArrowRight" && images.length) setIdx((i) => (i + 1) % images.length);
-      if (e.key === "ArrowLeft" && images.length) setIdx((i) => (i - 1 + images.length) % images.length);
+      if (e.key === "ArrowRight" && images.length)
+        setIdx((i) => (i + 1) % images.length);
+      if (e.key === "ArrowLeft" && images.length)
+        setIdx((i) => (i - 1 + images.length) % images.length);
     };
     document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
+      document.body.style.overflow = prev || "";
     };
   }, [images.length, onClose]);
 
@@ -85,7 +100,9 @@ export default function ProductQuickView({ product, onClose }) {
                   <>
                     <button
                       className="absolute left-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-white/90 border grid place-items-center"
-                      onClick={() => setIdx((i) => (i - 1 + images.length) % images.length)}
+                      onClick={() =>
+                        setIdx((i) => (i - 1 + images.length) % images.length)
+                      }
                       aria-label="Ảnh trước"
                     >
                       ‹
@@ -113,7 +130,11 @@ export default function ProductQuickView({ product, onClose }) {
                       onClick={() => setIdx(i)}
                       aria-label={`Ảnh ${i + 1}`}
                     >
-                      <img src={u} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                      <img
+                        src={u}
+                        alt=""
+                        className="absolute inset-0 w-full h-full object-cover"
+                      />
                     </button>
                   ))}
                 </div>
@@ -122,16 +143,11 @@ export default function ProductQuickView({ product, onClose }) {
 
             {/* RIGHT: Info */}
             <div className="lg:w-1/3 border-t lg:border-l lg:border-t-0 p-4 md:p-6">
-              {/* Tên + Giá + Messenger + Đóng */}
+              {/* Header */}
               <div className="flex items-center gap-3">
-                <h3 className="text-lg md:text-xl font-semibold truncate">{product.name}</h3>
-
-                <div className="ml-auto inline-flex items-baseline gap-2 rounded-xl bg-rose-50 text-rose-700 px-3 py-1.5 ring-1 ring-rose-200 shadow-sm">
-                  <span className="text-[10px] uppercase tracking-wider">Giá</span>
-                  <span className="text-xl font-extrabold">
-                    {Number.isFinite(price) && price > 0 ? VND.format(price) : "Liên hệ"}
-                  </span>
-                </div>
+                <h3 className="text-lg md:text-xl font-semibold truncate">
+                  {product.name}
+                </h3>
 
                 {messengerLink && (
                   <a
@@ -140,9 +156,15 @@ export default function ProductQuickView({ product, onClose }) {
                     rel="noopener"
                     aria-label="Nhắn qua Messenger"
                     title="Nhắn qua Messenger"
-                    className="grid place-items-center h-9 w-9 rounded-full bg-[#006AFF] text-white shadow ring-1 ring-[#cfe0ff] hover:opacity-90 active:scale-95 transition"
+                    className="ml-auto grid place-items-center h-9 w-9 rounded-full bg-[#006AFF] text-white shadow ring-1 ring-[#cfe0ff] hover:opacity-90 active:scale-95 transition"
                   >
-                    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="24"
+                      height="24"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
                       <path d="M12 2C6.48 2 2 6.05 2 11.05c0 2.61 1.12 4.97 3.01 6.63v3.27l2.76-1.52c1.25.35 2.33.5 3.23.5 5.52 0 10-4.05 10-9.05S17.52 2 12 2zm.1 10.87-2.7-2.9-5.15 2.9 5.79-5.52 2.64 2.86 5.16-2.86-5.74 5.52z" />
                     </svg>
                   </a>
@@ -157,36 +179,34 @@ export default function ProductQuickView({ product, onClose }) {
                 </button>
               </div>
 
-              {/* Kích thước */}
-              {table.length > 0 && (
-                <>
-                  <div className="text-sm font-medium mt-4">Kích thước có sẵn</div>
-                  <div className="grid grid-cols-4 gap-2 mt-2">
-                    {table.map((r) => (
-                      <button
-                        key={r.key}
-                        onClick={() => setSel(r.key)}
-                        className={
-                          "w-full min-w-0 truncate text-center px-2.5 py-[6px] rounded-full border text-xs " +
-                          (sel === r.key
-                            ? "bg-orange-700 text-white border-orange-500 shadow-sm"
-                            : "border-gray-300 hover:bg-orange-100")
-                        }
-                        aria-pressed={sel === r.key}
-                        title={r.label}
-                      >
-                        <span className="hidden md:inline">{r.label}</span>
-                        <span className="md:hidden text-sx">{toDigits(r.label) || r.label} cm</span>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
+              {/* Sizes + price */}
+              <div className="mt-4">
+                <div className="text-sm font-medium">Kích thước có sẵn</div>
 
-              {/* Danh mục */}
+                <div className="qv-sizes mt-2">
+                  <div className="qv-grid">
+                    {sizeRows.map(({ key, label, price }) => {
+                      const text =
+                        label ||
+                        (/\d/.test(String(key)) ? `Size ${key}cm` : `Size ${key}`);
+                      return (
+                        <div key={key} className="qv-chip">
+                          <span className="qv-label">{text}</span>
+                          <span className="qv-price">{VND.format(price)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Category */}
               {product.category ? (
                 <div className="mt-4 text-sm text-gray-600">
-                  Danh mục: <span className="font-medium text-gray-800">{product.category}</span>
+                  Danh mục:{" "}
+                  <span className="font-medium text-gray-800">
+                    {product.category}
+                  </span>
                 </div>
               ) : null}
 
@@ -196,18 +216,22 @@ export default function ProductQuickView({ product, onClose }) {
                   <div className="text-sm font-medium mb-2">Tags</div>
                   <div className="flex flex-wrap gap-2">
                     {product.tags.map((t, i) => (
-                      <span
+                      <button
+                        type="button"
                         key={i}
-                        className="px-2 py-1 rounded-full border text-xs text-gray-700 bg-gray-50"
+                        onClick={() => { onPickTag?.(t); onClose?.(); }}
+                        className="px-2 py-1 rounded-full border text-xs text-gray-700 bg-gray-50 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-rose-400 cursor-pointer"
+                        aria-label={`Lọc theo ${t}`}
+                        title={`Lọc theo ${t}`}
                       >
                         #{t}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* Mô tả */}
+              {/* Description */}
               {product.desc || product.description ? (
                 <div className="mt-5">
                   <div className="text-sm font-medium mb-1">Mô tả</div>

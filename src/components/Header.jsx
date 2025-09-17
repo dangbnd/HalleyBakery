@@ -1,6 +1,7 @@
 // src/components/Header.jsx
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import CascadingMenu from "./CascadingMenu.jsx";
 
 export default function Header({
   currentKey = "home",
@@ -254,7 +255,32 @@ export default function Header({
       <div className="hidden md:block">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
           {Logo}
-          <DesktopMenu items={navItems} />
+          <div className="flex items-center gap-2">
+            {navItems.map((it) => {
+              const active = currentKey === it.key;
+              const base =
+                "px-3 py-2 rounded-lg " +
+                (active ? "bg-rose-100 text-rose-700" : "hover:bg-gray-100");
+
+              if (it.children?.length) {
+                return (
+                  <CascadingMenu
+                    key={it.key}
+                    data={it.children}
+                    triggerLabel={it.title ?? it.label ?? it.key}
+                     mode="both"
+                    activeKey={currentKey} 
+                    onPick={(node) => onNavigate?.(node.key)}
+                  />
+                );
+              }
+              return (
+                <button key={it.key} className={base} onClick={() => onNavigate?.(it.key)}>
+                  {it.title ?? it.label ?? it.key}
+                </button>
+              );
+            })}
+          </div>
           <div className="flex-1 max-w-md ml-auto">{Search}</div>
           {/* {hotline ? (
             <a href={`tel:${hotline}`} className="hidden lg:inline text-sm text-gray-600">
@@ -270,11 +296,13 @@ export default function Header({
           <div className="fixed inset-0 z-[1000]">
             <div className="absolute inset-0 bg-black/40" onClick={() => setOpen(false)} />
             <aside
-              className="absolute inset-y-0 left-0 w-[88%] max-w-xs bg-white shadow-xl rounded-r-2xl p-3
-                         translate-x-0 animate-[slideIn_.18s_ease-out]"
+              className="absolute inset-y-0 left-0 w-[88%] max-w-xs bg-white shadow-xl rounded-r-2xl
+                        translate-x-0 animate-[slideIn_.18s_ease-out] h-[100dvh] flex flex-col"
             >
               <style>{`@keyframes slideIn{from{transform:translateX(-100%)}to{transform:translateX(0)}}`}</style>
-              <div className="flex items-center justify-between mb-2">
+
+              {/* header */}
+              <div className="shrink-0 px-3 py-2 flex items-center justify-between border-b">
                 <div className="font-medium">Menu</div>
                 <button
                   aria-label="Đóng"
@@ -284,8 +312,16 @@ export default function Header({
                   ✕
                 </button>
               </div>
-              <MobileTree items={navItems} close={() => setOpen(false)} />
+
+              {/* body scrollable */}
+              <div
+                className="flex-1 min-h-0 overflow-y-auto p-3"
+                style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
+              >
+                <MobileTree items={navItems} close={() => setOpen(false)} />
+              </div>
             </aside>
+
           </div>,
           document.body
         )}

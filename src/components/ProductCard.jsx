@@ -34,7 +34,11 @@ export default function ProductCard({ p, onImageClick, filter }) {
   );
 
   return (
-    <article id={`prod-${p?.id}`} className="group rounded-2xl border bg-white overflow-hidden">
+    <article 
+      id={`prod-${p?.id}`}
+      className="group rounded-2xl border bg-white overflow-hidden"
+      style={{ contentVisibility: "auto", containIntrinsicSize: "300px 380px" }}
+    >
       <button
         type="button"
         className="relative block aspect-[1/1] w-full overflow-hidden"

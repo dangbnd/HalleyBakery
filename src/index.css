@@ -3,3 +3,60 @@
 @tailwind utilities;
 
 :root { color-scheme: light; }
+
+/* ----- QuickView sizes (responsive theo khối phải) ----- */
+.qv-sizes { container-type: inline-size; }
+
+/* Mặc định: 2 cột cho màn nhỏ */
+.qv-grid {
+  display: grid;
+  gap: .5rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* Tăng cột theo bề rộng container (khối phải), không phụ thuộc toàn trang */
+@container (width >= 380px) { .qv-grid { grid-template-columns: repeat(3, 1fr); } }
+@container (width >= 520px) { .qv-grid { grid-template-columns: repeat(4, 1fr); } }
+@container (width >= 720px) { .qv-grid { grid-template-columns: repeat(5, 1fr); } }
+@container (width >= 960px) { .qv-grid { grid-template-columns: repeat(6, 1fr); } }
+
+/* Tuỳ theo tỉ lệ màn hình: landscape cho thêm 1 cột nếu đủ rộng */
+@media (orientation: landscape) {
+  @container (width >= 520px) { .qv-grid { grid-template-columns: repeat(5, 1fr); } }
+  @container (width >= 720px) { .qv-grid { grid-template-columns: repeat(6, 1fr); } }
+  @container (width >= 960px) { .qv-grid { grid-template-columns: repeat(7, 1fr); } }
+}
+
+/* Ô chip fill toàn bộ ô lưới → nhìn cân đối, label bên trái, giá bên phải */
+.qv-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .2rem;
+  min-width: 0;               /* cho phép truncate */
+  padding: 4px 5px;
+  border: 1px solid #e5e7eb;
+  border-radius: 9999px;
+  background: #fff;
+  color: #111827;
+}
+
+/* Nhãn nhỏ gọn, cho phép cắt bớt */
+.qv-label {
+  font-size: 13px;
+  line-height: 1.2;
+  overflow: visible;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Giá luôn 1 dòng, dễ đọc */
+.qv-price {
+  white-space: nowrap;
+  padding: 2px 5px;
+  font-size: 14px;
+  border-radius: 9999px;
+  background: #e11d48;
+  color: #fff;
+  font-weight: 700;
+}
