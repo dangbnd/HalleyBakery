@@ -9,3 +9,6 @@ createRoot(document.getElementById('root')).render(
     <App />
   </ErrorBoundary>
 )
+window.__ENV = { ...import.meta.env };
+if (typeof window !== 'undefined') window.__ENV = { ...import.meta.env };
+

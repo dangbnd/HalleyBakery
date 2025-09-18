@@ -173,15 +173,19 @@ function parsePriceBySize(input = "") {
   return out;
 }
 
+// src/services/sheets.js
 export function mapProducts(rows = [], imageIndex) {
   const norm = (s) =>
     String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
   const parseImages = (s) =>
-    String(s || "").split(/\s*[|,\n]\s*/).filter(Boolean).map(normalizeImageUrl);
+    String(s || "")
+      .split(/\s*[|,\n]\s*/)
+      .filter(Boolean)
+      .map(normalizeImageUrl);
 
   const byName = (name) => {
-    if (!imageIndex) return [];
+    if (!imageIndex?.map) return [];
     const k = norm(name);
     const exact = imageIndex.map.get(k) || [];
     if (exact.length) return exact;
@@ -193,29 +197,45 @@ export function mapProducts(rows = [], imageIndex) {
 
   return rows
     .map((r) => {
-      let images = parseImages(r.images);
-      if (!images.length && r.name) images = byName(r.name);
+      // tên linh hoạt: name | title | ten | "Tên" | ...
+      const rawName =
+        r.name ||
+        r.title ||
+        r.ten ||
+        r.Ten ||
+        r.NAME ||
+        r.Title ||
+        r["Tên"] ||
+        r["Ten"] ||
+        r["Tên sản phẩm"] ||
+        r["ten_san_pham"];
+      const name = String(rawName || "").trim();
 
-      const nPrice = Number(String(r.price || "").replace(/[^\d.]/g, ""));
+      let images =
+        parseImages(r.images || r.image || r.hinh || r.hinhanh || r.img || r["hình ảnh"]);
+      if (!images.length && name) images = byName(name);
+
+      const nPrice = Number(String(r.price || r.gia || r["giá"] || "").replace(/[^\d.]/g, ""));
       const price = Number.isFinite(nPrice) && nPrice > 0 ? nPrice : null;
 
       return {
-        id: makeStableId(r),
-        name: r.name || "",
-        category: String(r.category || "").trim(),
+        id: makeStableId({ ...r, name }),
+        name,
+        category:
+          String(r.category || r.danh_muc || r["danh mục"] || r.loai || r.type || "").trim(),
         typeId: r.typeid || r.type || "",
         images,
         banner: /^(1|true|yes|x)$/i.test(r.banner || ""),
-        tags: String(r.tags || "").split(/\s*,\s*/).filter(Boolean),
+        tags: String(r.tags || r.tag || r["nhãn"] || "").split(/\s*,\s*/).filter(Boolean),
         price,
         sizes: parseSizesCell(r.sizes ?? r.size ?? r.Sizes ?? r.Size),
         priceBySize: parsePriceBySize(r.pricebysize ?? r.priceBySize),
-        // FIX: dùng r, không phải row
-        desc: String(r.description || r.desc || "").trim(),
-        description: String(r.description || r.desc || "").trim(),
+        desc: String(r.description || r.desc || r.mota || r["mô tả"] || "").trim(),
+        description: String(r.description || r.desc || r.mota || r["mô tả"] || "").trim(),
       };
     })
-    .filter((p) => p.name);
+    // Giữ lại sản phẩm có tên sau chuẩn hóa
+    .filter((p) => !!p.name);
 }
 
 // Sizes meta (không dedupe theo code; key = `${code}-${height}`)
