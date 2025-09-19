@@ -1,23 +1,10 @@
 // src/services/sheets.multi.js
 
-/* -------------------------------------------------------
-   Multi-tab loader for product sheets (robust version)
-   - VITE_PRODUCT_TABS supports commas or newlines
-     Format per item:  <gid>:<label>
-   - Example:
-     VITE_PRODUCT_TABS=1320694377:100k,1704842938:Basic
-     or
-     VITE_PRODUCT_TABS="1320694377:100k
-                         1704842938:Basic"
-------------------------------------------------------- */
-
-/** Parse env VITE_PRODUCT_TABS → [{ gid, key }] */
+/* ---------- Parse env multi-tab ---------- */
 export function readProductTabsFromEnv() {
   const raw0 = String(import.meta.env?.VITE_PRODUCT_TABS || "");
-  // cắt khoảng trắng và NHÁY bọc 2 đầu
-  const raw = raw0.trim().replace(/^['"]|['"]$/g, "");
+  const raw = raw0.trim().replace(/^['"]|['"]$/g, ""); // bỏ nháy bọc
 
-  // cho phép xuống dòng hoặc dấu phẩy
   const tokens = raw
     .replace(/\r\n?/g, "\n")
     .split(/[\n,]+/)
@@ -26,19 +13,32 @@ export function readProductTabsFromEnv() {
 
   const tabs = [];
   for (const tok of tokens) {
-    const m = tok.match(/^(\d+)\s*:\s*(.+)$/);  // <gid>:<label>
+    const m = tok.match(/^(\d+)\s*:\s*(.+)$/); // <gid>:<label>
     if (!m) continue;
     tabs.push({ gid: m[1], key: m[2].trim() });
   }
   return tabs;
 }
 
+/* ---------- Ảnh Drive → thumbnail ---------- */
+export function normalizeImageUrl(u, max = 700) {
+  if (!u) return "";
+  const s = String(u).trim();
+  const m =
+    s.match(/\/file\/d\/([A-Za-z0-9_-]+)/) ||
+    s.match(/\/d\/([A-Za-z0-9_-]+)/) ||
+    s.match(/[?&]id=([A-Za-z0-9_-]+)/) ||
+    s.match(/uc\?[^#?]*id=([A-Za-z0-9_-]+)/);
+  if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w${max}`;
+  if (/^https?:\/\//i.test(s)) return s;
+  const base = (import.meta.env.VITE_IMAGE_BASE || "/images/").replace(/\/+$/, "") + "/";
+  return encodeURI(base + s.replace(/^\/+/, ""));
+}
 
-/** Read a Google Sheet tab using the GViz endpoint */
-/** Read a Google Sheet tab using the GViz endpoint */
+/* ---------- GViz fetch + chuẩn hoá cột ---------- */
 async function fetchGViz({ sheetId, gid }) {
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&gid=${gid}&t=${Date.now()}`;
-  const txt = await fetch(url, { cache: "no-store" }).then((r) => r.text());
+  const txt = await fetch(url, { cache: "no-store" }).then(r => r.text());
 
   let json;
   try {
@@ -52,12 +52,12 @@ async function fetchGViz({ sheetId, gid }) {
 
   const rawCols = (json.table?.cols || []).map((c, i) => (c?.label || c?.id || `col_${i}`).toString());
 
-  // chuẩn hóa tên cột: bỏ dấu, lower-case, thay khoảng trắng bằng "_"
-  const normKey = (s="") =>
-    s.toString().normalize("NFD").replace(/[\u0300-\u036f]/g,"")
-     .toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_|_$/g,"");
+  const normKey = (s = "") =>
+    s.toString()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase().replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_|_$/g, "");
 
-  // ánh xạ synonym -> key chuẩn app dùng
   const alias = {
     ten: "name", name: "name", title: "name",
     gia: "price", price: "price",
@@ -71,10 +71,7 @@ async function fetchGViz({ sheetId, gid }) {
     tag: "tags", tags: "tags"
   };
 
-  const cols = rawCols.map((c) => {
-    const nk = normKey(c);
-    return alias[nk] || nk || c;
-  });
+  const cols = rawCols.map((c) => alias[normKey(c)] || normKey(c) || c);
 
   const rows = (json.table?.rows || []).map((r) => {
     const o = {};
@@ -85,34 +82,31 @@ async function fetchGViz({ sheetId, gid }) {
   return rows;
 }
 
+/* ---------- util ---------- */
 function slugify(s = "") {
-  return s
-    .toString()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
+  return s.toString()
+    .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)+/g, "");
 }
 
-/**
- * Load products from multiple tabs.
- * Each record gets:
- *  - _tab_gid: gid string
- *  - _tab_key: label from env
- *  - category: keep existing category/type or fallback to tab label
- *  - _id: stable dedup id
- */
+/* ---------- Load nhiều tab sản phẩm ---------- */
 export async function fetchProductsFromTabs({ sheetId, tabs, normalize }) {
   if (!Array.isArray(tabs) || !tabs.length) return [];
 
-  // Fetch all tabs in parallel
+  // tải song song các tab
   const lists = await Promise.all(
     tabs.map(async (t) => {
       const rows = await fetchGViz({ sheetId, gid: t.gid });
       return rows.map((r) => {
+        // chuẩn hoá ảnh NGAY tại đây nếu muốn nhỏ hơn
+        const images = String(r.images || r.image || "")
+          .split(/[|,\n]/).map(s => s.trim()).filter(Boolean)
+          .map(u => normalizeImageUrl(u, 700));
+
         const base = {
           ...r,
+          images,
           _tab_gid: t.gid,
           _tab_key: t.key,
           category: r.category || r.type || t.key,
@@ -121,29 +115,22 @@ export async function fetchProductsFromTabs({ sheetId, tabs, normalize }) {
       });
     })
   );
-  // Flatten and de-duplicate  ✅ include _tab_gid to avoid cross-tab collisions
+
+  // gộp + chống trùng giữa các tab: id__gid
   const flat = lists.flat();
   const seen = new Set();
   const out = [];
 
   for (const p of flat) {
-    const rawId =
-      p.id ?? p.ID ?? p.sku ?? p.SKU ?? p.code ?? p.slug ?? "";
-
-    let k;
-    if (String(rawId).trim()) {
-      // id của từng tab có thể trùng nhau -> gắn gid
-      k = `${String(rawId).trim()}__${p._tab_gid}`;
-    } else {
-      const base = String(p.name || p.title || "");
-      k = `${slugify(base)}-${p._tab_gid}`;
-    }
+    const rawId = p.id ?? p.ID ?? p.sku ?? p.SKU ?? p.code ?? p.slug ?? "";
+    const k = String(rawId).trim()
+      ? `${String(rawId).trim()}__${p._tab_gid}`
+      : `${slugify(String(p.name || p.title || ""))}-${p._tab_gid}`;
 
     if (!seen.has(k)) {
       seen.add(k);
       out.push({ ...p, _id: k });
     }
   }
-
-return out;
+  return out;
 }
