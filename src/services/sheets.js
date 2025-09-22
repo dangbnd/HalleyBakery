@@ -232,6 +232,13 @@ export function mapProducts(rows = [], imageIndex) {
         priceBySize: parsePriceBySize(r.pricebysize ?? r.priceBySize),
         desc: String(r.description || r.desc || r.mota || r["mô tả"] || "").trim(),
         description: String(r.description || r.desc || r.mota || r["mô tả"] || "").trim(),
+        // chỉ nhận số; ô trống/không hợp lệ => undefined (không ưu tiên)
+        order: (() => {
+          const raw = String(r.order ?? "").trim();
+          if (!raw) return undefined;
+          const n = Number(raw);
+          return Number.isFinite(n) ? n : undefined;
+        })(),
       };
     })
     // Giữ lại sản phẩm có tên sau chuẩn hóa

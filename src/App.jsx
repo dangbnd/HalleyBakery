@@ -326,7 +326,18 @@ export default function App() {
 
   /* lọc */
   function applyFilters(list = []) {
-    if (!filterState) return list;
+    if (!filterState) {
+      // mặc định vẫn ưu tiên theo 'order'
+      return [...list].sort((a,b) => {
+        const oa = Number.isFinite(a?.order) ? a.order : Infinity;
+        const ob = Number.isFinite(b?.order) ? b.order : Infinity;
+        if (oa !== ob) return oa - ob;
+        // phụ: mới trước cũ, rồi theo tên
+        return (b.createdAt || 0) - (a.createdAt || 0) ||
+          String(a.name||"").localeCompare(String(b.name||""), "vi", {sensitivity:"base"});
+      });
+    }
+      
     const { price = [0, Number.MAX_SAFE_INTEGER], priceActive = false, tags: tagSet, sizes: sizeSet,
       levels: levelSet, featured, inStock, sort = "" } = filterState;
     const [min, max] = price;
@@ -341,6 +352,17 @@ export default function App() {
       const stockOk = !inStock || p.inStock !== false;
       return priceOk && tagOk && sizeOk && lvlOk && featOk && stockOk;
     });
+
+    // nếu user không chọn sort ⇒ áp thứ tự 'order'
+    if (!sort) {
+      out = [...out].sort((a,b) => {
+        const oa = Number.isFinite(a?.order) ? a.order : Infinity;
+        const ob = Number.isFinite(b?.order) ? b.order : Infinity;
+        if (oa !== ob) return oa - ob;
+        return (b.createdAt || 0) - (a.createdAt || 0) ||
+          String(a.name||"").localeCompare(String(b.name||""), "vi", {sensitivity:"base"});
+      });
+    }
 
     if (sort === "price-asc") out = [...out].sort((a, b) => (priceMinOf(a) ?? Infinity) - (priceMinOf(b) ?? Infinity));
     if (sort === "price-desc") out = [...out].sort((a, b) => (priceMinOf(b) ?? -Infinity) - (priceMinOf(a) ?? -Infinity));
