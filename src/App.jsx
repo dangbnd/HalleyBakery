@@ -54,6 +54,13 @@ const HOME_LIMITS = { default: 8 };
 
 const cmpNameNatural = (a = "", b = "") =>
   String(a || "").localeCompare(String(b || ""), "vi", { numeric: true, sensitivity: "base" });
+const cmpDefault = (a, b) => {
+  const ao = Number.isFinite(+a?.order);
+  const bo = Number.isFinite(+b?.order);
+  if (ao && bo && +a.order !== +b.order) return +a.order - +b.order;
+  if (ao !== bo) return ao ? -1 : 1;            // có order đứng trước
+  return cmpNameNatural(a.name, b.name);        // không có order ⇒ theo tên
+};
 
 /* -------------- Menu helpers -------------- */
 const titleOf = (it) => String(it.title ?? it.label ?? it.key).replace(/^"(.*)"$/, "$1");
@@ -331,13 +338,13 @@ export default function App() {
   function applyFilters(list = []) {
     if (!filterState) {
       // mặc định vẫn ưu tiên theo 'order'
-      return [...list].sort((a, b) => {
+      return [...list].sort(cmpDefault); /* => {
         const oa = Number.isFinite(a?.order) ? a.order : Infinity;
         const ob = Number.isFinite(b?.order) ? b.order : Infinity;
         if (oa !== ob) return oa - ob;
         if ((b.createdAt || 0) !== (a.createdAt || 0)) return (b.createdAt || 0) - (a.createdAt || 0);
         return cmpNameNatural(a.name, b.name);  // dùng natural sort
-      });
+      }); */
     }
       
     const { price = [0, Number.MAX_SAFE_INTEGER], priceActive = false, tags: tagSet, sizes: sizeSet,
@@ -357,13 +364,13 @@ export default function App() {
 
     // nếu user không chọn sort ⇒ áp thứ tự 'order'
     if (!sort) {
-      out = [...out].sort((a,b) => {
+      out = [...out].sort(cmpDefault);/*  => {
         const oa = Number.isFinite(a?.order) ? a.order : Infinity;
         const ob = Number.isFinite(b?.order) ? b.order : Infinity;
         if (oa !== ob) return oa - ob;
         return (b.createdAt || 0) - (a.createdAt || 0) ||
           String(a.name||"").localeCompare(String(b.name||""), "vi", {sensitivity:"base"});
-      });
+      }); */
     }
 
     if (sort === "price-asc") out = [...out].sort((a, b) => (priceMinOf(a) ?? Infinity) - (priceMinOf(b) ?? Infinity));
