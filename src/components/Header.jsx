@@ -2,6 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import CascadingMenu from "./CascadingMenu.jsx";
+import { cdn } from "../utils/img.js";
+
 
 export default function Header({
   currentKey = "home",
@@ -19,10 +21,11 @@ export default function Header({
   onSuggestionSelect,
 }) {
   const [open, setOpen] = useState(false);
+  const [limit, setLimit] = useState(5);
   const [showSug, setShowSug] = useState(false);
   const sugRef = useRef(null);
   const desk = logoSrcDesktop || logoSrc;
-  const mob  = logoSrcMobile  || logoSrc;
+  const mob = logoSrcMobile || logoSrc;
 
   const submit = (e) => {
     e.preventDefault();
@@ -30,7 +33,12 @@ export default function Header({
     setShowSug(false);
   };
 
-  // close suggestions when clicking outside
+  // reset số lượng hiển thị khi danh sách gợi ý đổi
+  useEffect(() => {
+    setLimit(5);
+  }, [suggestions]);
+
+  // đóng dropdown khi click ra ngoài
   useEffect(() => {
     const onDoc = (e) => {
       if (!sugRef.current) return;
@@ -40,7 +48,7 @@ export default function Header({
     return () => document.removeEventListener("click", onDoc);
   }, []);
 
-  // lock scroll when menu open
+  // khóa scroll khi mở mobile menu
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = open ? "hidden" : prev || "";
@@ -60,26 +68,24 @@ export default function Header({
             "px-3 py-2 rounded-lg " +
             (active ? "bg-rose-100 text-rose-700" : "hover:bg-gray-100");
 
-            return hasChildren ? (
-              <div key={it.key} className="relative group">
-                <button className={base} type="button">{getTitle(it)}</button>
-                <div className="absolute left-0 top-full mt-1 hidden group-hover:block z-50">
-                  <div className="min-w-[240px] bg-white border rounded-lg shadow p-2">
-                    {it.children.map((ch) => (
-                      <DesktopMenuItem key={ch.key} item={ch} />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <button
-                key={it.key}
-                className={base}
-                onClick={() => onNavigate?.(it.key)}
-              >
+          return hasChildren ? (
+            <div key={it.key} className="relative group">
+              <button className={base} type="button">
                 {getTitle(it)}
               </button>
-            );
+              <div className="absolute left-0 top-full mt-1 hidden group-hover:block z-50">
+                <div className="min-w-[240px] bg-white border rounded-lg shadow p-2">
+                  {it.children.map((ch) => (
+                    <DesktopMenuItem key={ch.key} item={ch} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <button key={it.key} className={base} onClick={() => onNavigate?.(it.key)}>
+              {getTitle(it)}
+            </button>
+          );
         })}
       </nav>
     );
@@ -170,13 +176,8 @@ export default function Header({
 
   /* -------------------- Logo & Search -------------------- */
   const Logo = (
-    <button
-      className="flex items-center gap-2"
-      onClick={() => onNavigate?.("home")}
-      aria-label="Trang chủ"
-    >
+    <button className="flex items-center gap-2" onClick={() => onNavigate?.("home")} aria-label="Trang chủ">
       {desk || mob ? (
-        // Chỉ tải 1 ảnh nhờ <picture>
         <picture>
           <source media="(min-width:768px)" srcSet={desk || mob} />
           <img src={mob || desk} alt={logoText} className="h-8 md:h-9 w-auto" />
@@ -189,6 +190,9 @@ export default function Header({
       )}
     </button>
   );
+
+  // ảnh nhỏ ưu tiên cho product suggestions
+  const thumbOf = (s) => s.thumb || s.image || s.img || "";
 
   const Search = (
     <form onSubmit={submit} className="relative w-full" ref={sugRef} autoComplete="off">
@@ -210,21 +214,55 @@ export default function Header({
       </button>
 
       {showSug && suggestions?.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full max-h-72 overflow-auto rounded-lg border bg-white shadow">
-          {suggestions.map((s, i) => (
+        <div className="absolute z-50 mt-1 w-full max-h-80 overflow-auto rounded-lg border bg-white shadow">
+          <ul className="divide-y">
+            {suggestions.slice(0, limit).map((s, i) => (
+              <li key={i}>
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-3 px-3 py-2 hover:bg-gray-50 text-left"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    onSuggestionSelect?.(s);
+                    setShowSug(false);
+                  }}
+                >
+                  {/* avatar nhỏ */}
+                  {s.type === "product" && thumbOf(s) ? (
+                    <img
+                      src={cdn(s.thumb || "", { w: 64, h: 64, q: 65 })}
+                      width="32" height="32"
+                      className="h-8 w-8 rounded object-cover flex-none"
+                      loading="lazy" decoding="async"
+                    />
+                  ) : (
+                    <div className="h-8 w-8 rounded bg-gray-100 grid place-items-center text-xs text-gray-500 flex-none">
+                      {s.type === "category" ? "DM" : "SP"}
+                    </div>
+                  )}
+
+                  <div className="min-w-0">
+                    <div className="text-sm truncate">{s.label}</div>
+                    <div className="text-[11px] text-gray-500">
+                      {s.type === "category" ? "danh mục" : "sản phẩm"}
+                    </div>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+
+          {/* nút hiển thị thêm */}
+          {suggestions.length - limit > 0 && (
             <button
-              key={i}
               type="button"
-              onClick={() => {
-                onSuggestionSelect?.(s);
-                setShowSug(false);
-              }}
-              className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-50"
+              className="w-full px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 border-t"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setLimit((n) => Math.min(n + 10, suggestions.length))}
             >
-              <span className="text-gray-500 mr-2">{s.type}</span>
-              <span>{s.label}</span>
+              Hiển thị thêm {suggestions.length - limit}…
             </button>
-          ))}
+          )}
         </div>
       )}
     </form>
@@ -268,8 +306,8 @@ export default function Header({
                     key={it.key}
                     data={it.children}
                     triggerLabel={it.title ?? it.label ?? it.key}
-                     mode="both"
-                    activeKey={currentKey} 
+                    mode="both"
+                    activeKey={currentKey}
                     onPick={(node) => onNavigate?.(node.key)}
                   />
                 );
@@ -321,7 +359,6 @@ export default function Header({
                 <MobileTree items={navItems} close={() => setOpen(false)} />
               </div>
             </aside>
-
           </div>,
           document.body
         )}

@@ -1,9 +1,10 @@
-// src/components/ProductCard.jsx
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useCallback } from "react";
 import ProductImage from "./ProductImage.jsx";
 import { SizeSelector } from "./SizeSelector.jsx";
 import { PriceTag } from "./PriceTag.jsx";
 import { sizeOptions, pickDefaultSize, priceFor } from "../lib/pricing.js";
+import { cdn, firstImg, prefetchImage } from "../utils/img.js";
+import { usePrefetchOnView } from "../hooks/usePrefetchOnView.js";
 
 const toDigits = (s) => String(s || "").match(/\d+/)?.[0] || "";
 
@@ -14,18 +15,24 @@ export default function ProductCard({ p, onImageClick, filter }) {
 
   const price = useMemo(() => priceFor(p, sel), [p, sel]);
 
-  // Build responsive labels: mobile "Sz12", desktop "Size 12cm"
+  const srcBase = firstImg(p);
+  const prefetch = useCallback(() => {
+    // ảnh list và quickview tương lai
+    prefetchImage(cdn(srcBase, { w: 480, h: 480, q: 70 }));
+    prefetchImage(cdn(srcBase, { w: 960, q: 62 }));
+  }, [srcBase]);
+  const prefetchRef = usePrefetchOnView(prefetch, "600px");
+
   const sizeItems = useMemo(
     () =>
       options.map(({ id, label }) => {
         const d = toDigits(label);
         return {
           id,
-          // JSX label works with SizeSelector since it renders children
           label: (
             <>
               <span className="hidden text-[13.5px] md:inline">{label}</span>
-              <span className="md:hidden text-sx">{d || label} cm</span>
+              <span className="md:hidden text-xs">{d || label} cm</span>
             </>
           ),
         };
@@ -34,7 +41,8 @@ export default function ProductCard({ p, onImageClick, filter }) {
   );
 
   return (
-    <article 
+    <article
+      ref={prefetchRef}
       id={`prod-${p?.id}`}
       className="group rounded-2xl border bg-white overflow-hidden"
       style={{ contentVisibility: "auto", containIntrinsicSize: "300px 380px" }}
@@ -45,22 +53,23 @@ export default function ProductCard({ p, onImageClick, filter }) {
         onClick={() => onImageClick?.(p)}
         aria-label={p?.name}
       >
-        <ProductImage product={p} className="absolute inset-0 w-full h-full object-cover" />
+        <ProductImage
+          product={p}
+          className="absolute inset-0 w-full h-full object-cover"
+        />
       </button>
 
       <div className="p-3">
         <div className="flex items-baseline justify-between gap-2">
           <div className="text-sm font-medium truncate">{p?.name}</div>
-          <PriceTag value={price} className="text-rose-600 text-sm font-semibold shrink-0" />
+          <PriceTag
+            value={price}
+            className="text-rose-600 text-sm font-semibold shrink-0"
+          />
         </div>
 
         {sizeItems.length > 0 && (
-          <SizeSelector
-            sizes={sizeItems}
-            value={sel}
-            onChange={setSel}
-            className="mt-2"
-          />
+          <SizeSelector sizes={sizeItems} value={sel} onChange={setSel} className="mt-2" />
         )}
       </div>
     </article>
