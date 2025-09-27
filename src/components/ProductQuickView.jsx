@@ -1,6 +1,8 @@
 // src/components/ProductQuickView.jsx
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import ProductImage, { getImageUrls } from "./ProductImage.jsx";
+import { cdn, prefetchImage } from "../utils/img.js";
 
 const VND = new Intl.NumberFormat("vi-VN", {
   style: "currency",
@@ -9,6 +11,15 @@ const VND = new Intl.NumberFormat("vi-VN", {
 });
 
 const onlyDigits = (s) => String(s || "").match(/\d+/)?.[0] || "";
+
+// CDN resize + nén WebP cho thumbnail
+const cdnThumb = (raw = "", w = 96, h = 96, q = 65) => {
+  if (!raw) return "";
+  const https = String(raw).replace(/^http:\/\//i, "https://");
+  const noProto = https.replace(/^https?:\/\//i, "");
+  const url = encodeURIComponent(noProto);
+  return `https://images.weserv.nl/?url=${url}&w=${w}&h=${h}&fit=cover&output=webp&q=${q}`;
+};
 
 // Gom size → giá từ pricing.table | priceBySize | price
 function buildSizeRows(product = {}) {
@@ -23,9 +34,7 @@ function buildSizeRows(product = {}) {
     for (const r of table) {
       const key = r.key ?? r.size ?? r.label ?? "";
       const label =
-        r.label ??
-        r.size ??
-        (onlyDigits(key) ? `Size ${onlyDigits(key)}cm` : String(key));
+        r.label ?? r.size ?? (onlyDigits(key) ? `Size ${onlyDigits(key)}cm` : String(key));
       const price = Number(pbs?.[key] ?? r.price);
       if (Number.isFinite(price) && price > 0) rows.push({ key, label, price });
     }
@@ -43,15 +52,14 @@ function buildSizeRows(product = {}) {
 
   rows.sort(
     (a, b) =>
-      (parseFloat(onlyDigits(a.label)) || 0) -
-      (parseFloat(onlyDigits(b.label)) || 0)
+      (parseFloat(onlyDigits(a.label)) || 0) - (parseFloat(onlyDigits(b.label)) || 0)
   );
   return rows;
 }
 
 export default function ProductQuickView({ product, onClose, onPickTag }) {
   const [idx, setIdx] = useState(0);
-  const images = Array.isArray(product?.images) ? product.images : [];
+  const images = useMemo(() => getImageUrls(product), [product]);
   const sizeRows = useMemo(() => buildSizeRows(product), [product]);
 
   const messengerLink = useMemo(() => {
@@ -61,13 +69,12 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
     return base?.startsWith("http") ? base : "";
   }, []);
 
+  // phím tắt + khóa scroll
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") onClose?.();
-      if (e.key === "ArrowRight" && images.length)
-        setIdx((i) => (i + 1) % images.length);
-      if (e.key === "ArrowLeft" && images.length)
-        setIdx((i) => (i - 1 + images.length) % images.length);
+      if (e.key === "ArrowRight" && images.length) setIdx((i) => (i + 1) % images.length);
+      if (e.key === "ArrowLeft" && images.length) setIdx((i) => (i - 1 + images.length) % images.length);
     };
     document.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
@@ -77,6 +84,26 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
       document.body.style.overflow = prev || "";
     };
   }, [images.length, onClose]);
+
+  // prefetch 1–2 ảnh tiếp theo để chuyển nhanh
+  useEffect(() => {
+    const nexts = [images[(idx + 1) % images.length], images[(idx + 2) % images.length]].filter(Boolean);
+    for (const u of nexts) prefetchImage(cdn(u, { w: 960, q: 62 }));
+  }, [idx, images]);
+
+  useEffect(() => {
+    const link = document.createElement("link");
+    link.rel = "preload";
+    link.as = "image";
+    link.href = images[idx];      // nếu dùng CDN thumb riêng, thay bằng URL 960px
+    document.head.appendChild(link);
+    return () => document.head.removeChild(link);
+  }, [idx, images]);
+
+  useEffect(() => {
+    const nexts = [images[(idx+1)%images.length], images[(idx+2)%images.length]].filter(Boolean);
+    for (const u of nexts) prefetchImage(cdn(u,{w:960,q:62}));
+  }, [idx, images]);
 
   if (!product) return null;
 
@@ -90,19 +117,22 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
             <div className="lg:w-2/3 p-3 md:p-4">
               <div className="relative bg-gray-50 rounded-xl overflow-hidden ring-1 ring-gray-200">
                 {!!images.length && (
-                  <img
-                    src={images[idx]}
-                    alt={product.name}
+                  <ProductImage
+                    product={product}
+                    index={idx}
                     className="w-full h-[60vh] md:h-[70vh] object-contain"
+                    priority
+                    w={960}       // ảnh ~960px, webp q~62
+                    h={0}
+                    q={62}
+                    lqip={false}
                   />
                 )}
                 {images.length > 1 && (
                   <>
                     <button
                       className="absolute left-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-white/90 border grid place-items-center"
-                      onClick={() =>
-                        setIdx((i) => (i - 1 + images.length) % images.length)
-                      }
+                      onClick={() => setIdx((i) => (i - 1 + images.length) % images.length)}
                       aria-label="Ảnh trước"
                     >
                       ‹
@@ -131,9 +161,13 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
                       aria-label={`Ảnh ${i + 1}`}
                     >
                       <img
-                        src={u}
+                        src={cdnThumb(u, 96, 96, 65)}
                         alt=""
                         className="absolute inset-0 w-full h-full object-cover"
+                        loading="lazy"
+                        decoding="async"
+                        width="96"
+                        height="96"
                       />
                     </button>
                   ))}
@@ -158,13 +192,7 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
                     title="Nhắn qua Messenger"
                     className="ml-auto grid place-items-center h-9 w-9 rounded-full bg-[#006AFF] text-white shadow ring-1 ring-[#cfe0ff] hover:opacity-90 active:scale-95 transition"
                   >
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="24"
-                      height="24"
-                      fill="currentColor"
-                      aria-hidden="true"
-                    >
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
                       <path d="M12 2C6.48 2 2 6.05 2 11.05c0 2.61 1.12 4.97 3.01 6.63v3.27l2.76-1.52c1.25.35 2.33.5 3.23.5 5.52 0 10-4.05 10-9.05S17.52 2 12 2zm.1 10.87-2.7-2.9-5.15 2.9 5.79-5.52 2.64 2.86 5.16-2.86-5.74 5.52z" />
                     </svg>
                   </a>
@@ -186,9 +214,7 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
                 <div className="qv-sizes mt-2">
                   <div className="qv-grid">
                     {sizeRows.map(({ key, label, price }) => {
-                      const text =
-                        label ||
-                        (/\d/.test(String(key)) ? `Size ${key}cm` : `Size ${key}`);
+                      const text = label || (/\d/.test(String(key)) ? `Size ${key}cm` : `Size ${key}`);
                       return (
                         <div key={key} className="qv-chip">
                           <span className="qv-label">{text}</span>
@@ -204,9 +230,7 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
               {product.category ? (
                 <div className="mt-4 text-sm text-gray-600">
                   Danh mục:{" "}
-                  <span className="font-medium text-gray-800">
-                    {product.category}
-                  </span>
+                  <span className="font-medium text-gray-800">{product.category}</span>
                 </div>
               ) : null}
 
