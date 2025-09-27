@@ -1,5 +1,5 @@
 // src/App.jsx
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from "react";
 import { LS, readLS, writeLS } from "./utils.js";
 import { DATA } from "./data.js";
 import { encodeState, decodeState } from "./utils/urlState.js";
@@ -17,17 +17,45 @@ import MessageButton from "./components/MessageButton.jsx";
 import BackToTop from "./components/BackToTop.jsx";
 import AnnouncementTicker from "./components/AnnouncementTicker.jsx";
 
-// import Login from "./components/Admin/Login.jsx";
-// import Admin from "./components/Admin/index.jsx";
-
 import { readProductTabsFromEnv, fetchProductsFromTabs } from "./services/sheets.multi.js";
 import {
   fetchSheetRows, fetchTabAsObjects, fetchFbUrls,
   mapProducts, mapCategories, mapTags, mapMenu, mapPages,
   mapTypes, mapLevels, mapSizes, enrichProductPricing, mapAnnouncements,
 } from "./services/sheets.js";
+import { tagKey } from "./utils/tagKey.js";
+import { useDebounced } from "./hooks/useDebounced.js";
 
 /* ---------------- helpers ---------------- */
+
+// === SEARCH HELPERS ===
+const lower = (s = "") => String(s).toLowerCase();
+
+// Tách từ Unicode (giữ dấu). Có fallback nếu môi trường không hỗ trợ \p{L}
+const words = (s = "") => {
+  const str = lower(s);
+  try {
+    return str.match(/\p{L}+/gu) || [];
+  } catch {
+    const cleaned = str.normalize("NFC").replace(/[^a-z0-9\u00C0-\u024F\u1E00-\u1EFF]+/g, " ");
+    return cleaned.trim() ? cleaned.trim().split(/\s+/) : [];
+  }
+};
+
+// Bỏ dấu để fallback “không dấu”
+const fold = (s = "") =>
+  lower(s)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d");
+
+const hasDiacritics = (s = "") => lower(s) !== fold(s);
+
+const primaryImage = (p = {}) => {
+  if (Array.isArray(p.images) && p.images.length) return p.images[0];
+  if (typeof p.images === "string" && p.images) return p.images.split(",")[0].trim();
+  return p.image || p.thumbnail || "";
+};
 
 const priceMinOf = (p) => {
   const vals = [];
@@ -58,8 +86,8 @@ const cmpDefault = (a, b) => {
   const ao = Number.isFinite(+a?.order);
   const bo = Number.isFinite(+b?.order);
   if (ao && bo && +a.order !== +b.order) return +a.order - +b.order;
-  if (ao !== bo) return ao ? -1 : 1;            // có order đứng trước
-  return cmpNameNatural(a.name, b.name);        // không có order ⇒ theo tên
+  if (ao !== bo) return ao ? -1 : 1;
+  return cmpNameNatural(a.name, b.name);
 };
 
 /* -------------- Menu helpers -------------- */
@@ -131,7 +159,15 @@ function HeaderRow({ count, sort, onSortChange }) {
 }
 
 /* Chip tag đặt DƯỚI HeaderRow */
-function ActiveFilters({ filterState, clearTag }) {
+function ActiveFilters({ filterState, clearTag, masterTags = [] }) {
+  const labels = filterState?.tagLabels || {};
+  const pretty = (slug) => {
+    if (labels[slug]) return labels[slug];
+    const hit = masterTags.find(
+      (t) => tagKey(t?.key ?? t?.label ?? t?.name ?? t?.id ?? "") === slug
+    );
+    return hit?.label ?? hit?.name ?? hit?.title ?? hit?.key ?? slug.replace(/-/g, " ");
+  };
   const tags = [...(filterState?.tags || new Set())];
   if (!tags.length) return null;
   return (
@@ -143,7 +179,7 @@ function ActiveFilters({ filterState, clearTag }) {
           className="px-2 py-1 rounded-full border text-xs bg-gray-100 hover:bg-gray-200"
           title="Bỏ tag này"
         >
-          #{t} ✕
+          #{pretty(t)} ✕
         </button>
       ))}
       <button
@@ -161,6 +197,9 @@ function ActiveFilters({ filterState, clearTag }) {
 export default function App() {
   const [route, setRoute] = useState("home");
   const [q, setQ] = useState("");
+  const qDeb = useDebounced(q, 200);
+  const qDef = useDeferredValue(qDeb);
+  const [limit, setLimit] = useState(9999);
   const [quick, setQuick] = useState(null);
   const [activeCat, setActiveCat] = useState("all");
   const [homeActive, setHomeActive] = useState("all");
@@ -205,6 +244,11 @@ export default function App() {
   useEffect(() => writeLS(LS.PAGES, pages), [pages]);
   useEffect(() => writeLS(LS.TAGS, tags), [tags]);
   useEffect(() => writeLS(LS.FB_URLS, fbUrls), [fbUrls]);
+  useEffect(() => {
+    setLimit(24);
+    const t = setTimeout(() => setLimit(9999), 150);
+    return () => clearTimeout(t);
+  }, [qDef]);
 
   /* URL -> state */
   useEffect(() => {
@@ -336,25 +380,18 @@ export default function App() {
 
   /* lọc */
   function applyFilters(list = []) {
-    if (!filterState) {
-      // mặc định vẫn ưu tiên theo 'order'
-      return [...list].sort(cmpDefault); /* => {
-        const oa = Number.isFinite(a?.order) ? a.order : Infinity;
-        const ob = Number.isFinite(b?.order) ? b.order : Infinity;
-        if (oa !== ob) return oa - ob;
-        if ((b.createdAt || 0) !== (a.createdAt || 0)) return (b.createdAt || 0) - (a.createdAt || 0);
-        return cmpNameNatural(a.name, b.name);  // dùng natural sort
-      }); */
-    }
-      
+    if (!filterState) return [...list].sort(cmpDefault);
+
     const { price = [0, Number.MAX_SAFE_INTEGER], priceActive = false, tags: tagSet, sizes: sizeSet,
       levels: levelSet, featured, inStock, sort = "" } = filterState;
     const [min, max] = price;
 
     let out = list.filter((p) => {
       const priceOk = priceActive ? allPrices(p).some((v) => v >= min && v <= max) : true;
-      const pTags = (p.tags || []).map(String);
-      const tagOk = !tagSet?.size || pTags.some((id) => tagSet.has(id));
+      const pTags = (p.tags || []).map((t) =>
+        tagKey(typeof t === "string" ? t : (t?.id ?? t?.label ?? ""))
+      );
+      const tagOk = !tagSet?.size || pTags.some((k) => tagSet.has(k));
       const sizeOk = !sizeSet?.size || (p.sizes || []).some((s) => sizeSet.has(String(s)));
       const lvlOk = !levelSet?.size || (p.level && levelSet.has(String(p.level)));
       const featOk = !featured || !!p.banner;
@@ -362,23 +399,33 @@ export default function App() {
       return priceOk && tagOk && sizeOk && lvlOk && featOk && stockOk;
     });
 
-    // nếu user không chọn sort ⇒ áp thứ tự 'order'
-    if (!sort) {
-      out = [...out].sort(cmpDefault);/*  => {
-        const oa = Number.isFinite(a?.order) ? a.order : Infinity;
-        const ob = Number.isFinite(b?.order) ? b.order : Infinity;
-        if (oa !== ob) return oa - ob;
-        return (b.createdAt || 0) - (a.createdAt || 0) ||
-          String(a.name||"").localeCompare(String(b.name||""), "vi", {sensitivity:"base"});
-      }); */
-    }
-
+    if (!sort) out = [...out].sort(cmpDefault);
     if (sort === "price-asc") out = [...out].sort((a, b) => (priceMinOf(a) ?? Infinity) - (priceMinOf(b) ?? Infinity));
     if (sort === "price-desc") out = [...out].sort((a, b) => (priceMinOf(b) ?? -Infinity) - (priceMinOf(a) ?? -Infinity));
     if (sort === "name-asc")  out = [...out].sort((a,b)=> cmpNameNatural(a.name, b.name));
     if (sort === "name-desc") out = [...out].sort((a,b)=> cmpNameNatural(b.name, a.name));
     return out;
   }
+
+  const params = new URLSearchParams(window.location.search);
+  const view = params.get("view") || "";
+  const cat  = params.get("cat")  || "";
+
+  // tránh ReferenceError khi filter chưa khai báo ở scope này
+  const F = typeof filter === "undefined" ? {} : filter;
+
+  const listKey = `${view}|${cat}|${(F.tags || []).join(",")}|${F.q || ""}`;
+
+  // hiệu ứng loading khi key đổi
+  const [loading, setLoading] = useState(false);
+  const [booted, setBooted] = useState(false);
+
+  useEffect(() => {
+    if (!booted) { setBooted(true); return; }     // lần đầu: không bật loading
+    setLoading(true);                              // chỉ khi đổi danh mục
+    const id = setTimeout(() => setLoading(false), 240);
+    return () => clearTimeout(id);
+  }, [listKey, booted]);
 
   /* ======= danh mục ======= */
   const productCatsFromMenu = useMemo(() => getProductCategoriesFromMenu(menu), [menu]);
@@ -397,17 +444,54 @@ export default function App() {
   /* list cho search */
   const nqVal = useMemo(() => q.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""), [q]);
   const catTitle = useMemo(() => Object.fromEntries(productCatsFromMenu.map((c) => [c.key, norm(c.title || c.key)])), [productCatsFromMenu]);
+
+  const searchIndex = useMemo(() => {
+    const byId = new Map();
+    const tokenMap  = new Map();
+    const tokenMapF = new Map();
+    for (const p of products || []) {
+      const cat = catTitle[p.category] || p.category || "";
+      const bag = [p.name || "", Array.isArray(p.tags) ? p.tags.join(" ") : String(p.tags || ""), cat].join(" ");
+      const T  = new Set(words(bag));
+      const TF = new Set(words(fold(bag)));
+      byId.set(p.id, { p, T, TF });
+      for (const t of T)  { if (!tokenMap.has(t))  tokenMap.set(t, new Set());  tokenMap.get(t).add(p.id); }
+      for (const t of TF) { if (!tokenMapF.has(t)) tokenMapF.set(t, new Set()); tokenMapF.get(t).add(p.id); }
+    }
+    return { byId, tokenMap, tokenMapF };
+  }, [products, catTitle]);
+
   const listForSearch = useMemo(() => {
-    const base =
-      activeCat === "all" ? products || [] : (products || []).filter((p) => inMenuCat(p.category, activeCat, descByKey));
-    if (!nqVal) return base;
-    return base.filter((p) => {
-      const cat = norm(catTitle[p.category] || "");
-      const nameN = norm(p.name || "");
-      const tagsN = norm(Array.isArray(p.tags) ? p.tags.join(" ") : String(p.tags || ""));
-      return nameN.includes(nqVal) || tagsN.includes(nqVal) || cat.includes(nqVal);
+    const base = activeCat === "all"
+      ? (products || [])
+      : (products || []).filter((p) => inMenuCat(p.category, activeCat, descByKey));
+
+    const qTrim = q.trim();
+    if (!qTrim) return base;
+
+    // GIỮ DẤU + theo TỪ
+    const qTokens = words(qTrim);
+    const strict = base.filter((p) => {
+      const nameToks = words(p.name || "");
+      const tagToks  = words(Array.isArray(p.tags) ? p.tags.join(" ") : String(p.tags || ""));
+      const catToks  = words((catTitle[p.category] || p.category || ""));
+      const hay = new Set([...nameToks, ...tagToks, ...catToks]);
+      return qTokens.every((t) => hay.has(t));
     });
-  }, [nqVal, products, activeCat, catTitle, descByKey]);
+    if (strict.length || hasDiacritics(qTrim)) return strict;
+
+    // Fallback KHÔNG DẤU
+    const qNF = words(fold(qTrim));
+    return base.filter((p) => {
+      const nameToks = words(fold(p.name || ""));
+      const tagToks  = words(fold(Array.isArray(p.tags) ? p.tags.join(" ") : String(p.tags || "")));
+      const catToks  = words(fold(catTitle[p.category] || p.category || ""));
+      const hay = new Set([...nameToks, ...tagToks, ...catToks]);
+      return qNF.every((t) => hay.has(t));
+    });
+  }, [q, products, activeCat, catTitle, descByKey]);
+
+  const listCapped = useMemo(() => listForSearch.slice(0, limit), [listForSearch, limit]);
 
   const customPage = useMemo(() => (pages || []).find((p) => p.key === route), [pages, route]);
 
@@ -527,18 +611,53 @@ export default function App() {
 
   const menuPublic = useMemo(() => stripAdmin(menu), [menu]);
 
-  /* gợi ý search (không chứa tag) */
+  // Gợi ý: danh mục + sản phẩm
   const suggestions = useMemo(() => {
-    const query = q.trim(); if (!query) return [];
-    const nq = norm(query); const top = (arr, n) => arr.slice(0, n);
-    const prod = top((products || []).filter((p) => norm(p.name).includes(nq)).map((p) => ({ type: "sản phẩm", label: p.name, id: p.id })), 5);
-    const cat = top((getProductCategoriesFromMenu(menu) || []).filter((c) => norm(c.title || c.key).includes(nq)).map((c) => ({ type: "danh mục", label: c.title || c.key, key: c.key })), 5);
-    return [...cat, ...prod].slice(0, 10);
+    const query = q.trim().toLowerCase();
+    if (!query) return [];
+
+    const cats = getProductCategoriesFromMenu(menu)
+      .filter(c => (c.title || c.key || "").toLowerCase().includes(query))
+      .map(c => ({ type: "category", label: c.title || c.key, key: c.key }));
+
+    const prods = (products || [])
+      .filter(p =>
+        (p.name || "").toLowerCase().includes(query) ||
+        String(p.tags || "").toLowerCase().includes(query)
+      )
+      .slice(0, 50)
+      .map(p => ({
+        type: "product",
+        label: p.name,
+        pid: String(p.id),
+        thumb: primaryImage(p),
+        product: p,
+      }));
+
+    return [...cats, ...prods];
   }, [q, products, menu]);
 
   function handleSuggestionSelect(s) {
-    if (s.type === "danh mục" && s.key) { handlePickCategory(s.key); return; }
-    setQ(s.label); setRoute("search");
+    if (s?.type === "category" && s.key) {
+      handlePickCategory(s.key);
+      return;
+    }
+    if (s?.type === "product") {
+      const p =
+        s.product ||
+        (s.pid ? (products || []).find(x => String(x.id) === String(s.pid)) : null);
+
+      if (p) {
+        setQuick(p);
+        const u = new URL(location.href);
+        u.searchParams.set("pid", String(p.id));
+        window.history.pushState(null, "", u);
+        if (route !== "search") setRoute("search");
+      }
+      return;
+    }
+    setQ(s?.label || "");
+    setRoute("search");
   }
 
   const currentKeyForBar = route === "home" ? homeActive : route === "search" ? activeCat : route;
@@ -569,9 +688,24 @@ export default function App() {
 
   /* click tag từ QuickView */
   const handlePickTagFromQuickView = useCallback((tag) => {
-    const t = String(tag || ""); if (!t) return;
-    setQ(""); setFilterState((st) => ({ ...(st || {}), tags: new Set([t]) }));
-    setActiveCat("all"); setRoute("search"); closeQuick(); scrollTop();
+    const raw  = String(tag || "").trim();
+    const slug = tagKey(raw);
+    if (!slug) return;
+    setQ("");
+    setFilterState((st) => {
+      const prev = st || {};
+      const tags = new Set(prev.tags || []);
+      tags.add(slug);
+      return {
+        ...prev,
+        tags,
+        tagLabels: { ...(prev.tagLabels || {}), [slug]: raw },
+      };
+    });
+    setActiveCat("all");
+    setRoute("search");
+    closeQuick();
+    scrollTop();
   }, [closeQuick]);
 
   /* clear tag chips */
@@ -579,12 +713,19 @@ export default function App() {
     setFilterState((st) => {
       if (!st?.tags?.size) return st;
       const next = new Set(st.tags);
-      if (t === "*") next.clear(); else next.delete(t);
-      const res = { ...(st || {}), tags: next };
-      if (next.size === 0) delete res.tags;
+      const labels = { ...(st.tagLabels || {}) };
+      if (t === "*") { next.clear(); for (const k in labels) delete labels[k]; }
+      else { next.delete(t); delete labels[t]; }
+      const res = { ...(st || {}), tags: next, tagLabels: labels };
+      if (next.size === 0) { delete res.tags; delete res.tagLabels; }
       return res;
     });
   };
+
+  const filtered = useMemo(() => {
+    const base = route === "search" ? listForSearch : baseForRoute;
+    return applyFilters(base);
+  }, [route, listForSearch, baseForRoute, filterState]);
 
   /* --------------- render --------------- */
   let mainContent = null;
@@ -592,30 +733,28 @@ export default function App() {
   if (customPage) {
     mainContent = <PageViewer page={customPage} />;
   } else if (route === "search") {
-    const base = listForSearch;
-    const list = applyFilters(base);
-    const activeTitle =
-      activeCat === "all"
-        ? "Tất cả"
-        : getProductCategoriesFromMenu(menu).find((c) => c.key === activeCat)?.title || activeCat;
+    const list = filtered;
     mainContent = (
       <>
         {CatBar}
         <section className="max-w-6xl mx-auto p-4">
-          <h2 className="text-xl font-semibold mb-2">{activeTitle}...</h2>
           <HeaderRow
             count={list.length}
             sort={filterState?.sort}
             onSortChange={(v) => setFilterState((s) => ({ ...(s || {}), sort: v }))}
           />
-          <ActiveFilters filterState={filterState} clearTag={clearTag} />
-          <ProductList products={list} onImageClick={openQuick} filter={filterState} />
+          <ActiveFilters filterState={filterState} clearTag={clearTag} masterTags={tags} />
+          <ProductList
+            products={listCapped} 
+            onImageClick={openQuick} 
+            filter={filterState} 
+          />
         </section>
       </>
     );
   } else {
     const isHome = route === "home";
-    const list = filteredForRoute;
+    const list = filtered;
     mainContent = (
       <>
         {isHome && (
@@ -651,8 +790,12 @@ export default function App() {
               sort={filterState?.sort}
               onSortChange={(v) => setFilterState((s) => ({ ...(s || {}), sort: v }))}
             />
-            <ActiveFilters filterState={filterState} clearTag={clearTag} />
-            <ProductList products={list} onImageClick={openQuick} filter={filterState} />
+            <ActiveFilters filterState={filterState} clearTag={clearTag} masterTags={tags} />
+            <ProductList 
+              products={list}
+              onImageClick={openQuick}
+              filter={filterState}
+            />
           </section>
         )}
       </>
