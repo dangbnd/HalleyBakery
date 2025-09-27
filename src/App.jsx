@@ -407,26 +407,6 @@ export default function App() {
     return out;
   }
 
-  const params = new URLSearchParams(window.location.search);
-  const view = params.get("view") || "";
-  const cat  = params.get("cat")  || "";
-
-  // tránh ReferenceError khi filter chưa khai báo ở scope này
-  const F = typeof filter === "undefined" ? {} : filter;
-
-  const listKey = `${view}|${cat}|${(F.tags || []).join(",")}|${F.q || ""}`;
-
-  // hiệu ứng loading khi key đổi
-  const [loading, setLoading] = useState(false);
-  const [booted, setBooted] = useState(false);
-
-  useEffect(() => {
-    if (!booted) { setBooted(true); return; }     // lần đầu: không bật loading
-    setLoading(true);                              // chỉ khi đổi danh mục
-    const id = setTimeout(() => setLoading(false), 240);
-    return () => clearTimeout(id);
-  }, [listKey, booted]);
-
   /* ======= danh mục ======= */
   const productCatsFromMenu = useMemo(() => getProductCategoriesFromMenu(menu), [menu]);
   const descByKey = useMemo(() => buildDescIndex(menu), [menu]);
@@ -744,11 +724,7 @@ export default function App() {
             onSortChange={(v) => setFilterState((s) => ({ ...(s || {}), sort: v }))}
           />
           <ActiveFilters filterState={filterState} clearTag={clearTag} masterTags={tags} />
-          <ProductList
-            products={listCapped} 
-            onImageClick={openQuick} 
-            filter={filterState} 
-          />
+          <ProductList products={listCapped} onImageClick={openQuick} filter={filterState} />
         </section>
       </>
     );
@@ -791,11 +767,7 @@ export default function App() {
               onSortChange={(v) => setFilterState((s) => ({ ...(s || {}), sort: v }))}
             />
             <ActiveFilters filterState={filterState} clearTag={clearTag} masterTags={tags} />
-            <ProductList 
-              products={list}
-              onImageClick={openQuick}
-              filter={filterState}
-            />
+            <ProductList products={list} onImageClick={openQuick} filter={filterState} />
           </section>
         )}
       </>

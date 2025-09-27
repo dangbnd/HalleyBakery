@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef  } from "react";
+import { useMemo, useState } from "react";
 
 const FALLBACK =
   "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'><rect width='100%' height='100%' fill='%23f3f4f6'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='16' fill='%239ca3af'>Không tải được ảnh</text></svg>";
@@ -55,9 +55,6 @@ export default function ProductImage({
   const urls = getImageUrls(product);
   const primaryRaw = urls[index] || urls[0] || "";
   const [altIdx, setAltIdx] = useState(0);
-  const [loaded, setLoaded] = useState(false);
-  const loadedRef = useRef(false);
-  const handleLoad = () => { if (!loadedRef.current) { loadedRef.current = true; setLoaded(true); }};
 
   const cands = useMemo(() => candidatesFor(primaryRaw, w, h, q), [primaryRaw, w, h, q]);
   const cur = cands[altIdx] || "";
@@ -88,29 +85,25 @@ export default function ProductImage({
   }
 
   return (
-      <div className={"relative w-full h-full"}>
-      {!loaded && <div className="absolute inset-0 bg-gray-100" aria-hidden="true" />}
-        <img
-          src={cur}
-          srcSet={srcset}
-          sizes="(max-width:1024px) 90vw, 960px"
-          alt={product?.name || ""}
-          className={className }
-          style={
-            lqip
-              ? { backgroundImage: `url(${cdn(primaryRaw, 24, 24, 20)})`, backgroundSize: "cover", backgroundPosition: "center" }
-              : undefined
-          }
-          loading={priority ? "eager" : "lazy"}
-          fetchpriority={priority ? "high" : "low"}
-          decoding="async"
-          referrerPolicy="no-referrer"
-          data-next={cur}
-          onLoad={handleLoad}
-          onError={onErr}
-          width={w}
-          height={h || w}
-        />
-    </div>
+    <img
+      src={cur}
+      srcSet={srcset}
+      sizes="(max-width:1024px) 90vw, 960px"
+      alt={product?.name || ""}
+      className={className}
+      style={
+        lqip
+          ? { backgroundImage: `url(${cdn(primaryRaw, 24, 24, 20)})`, backgroundSize: "cover", backgroundPosition: "center" }
+          : undefined
+      }
+      loading={priority ? "eager" : "lazy"}
+      fetchpriority={priority ? "high" : "low"}
+      decoding="async"
+      referrerPolicy="no-referrer"
+      data-next={cur}
+      onError={onErr}
+      width={w}
+      height={h || w}
+    />
   );
 }

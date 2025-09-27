@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import CascadingMenu from "./CascadingMenu.jsx";
 import { cdn } from "../utils/img.js";
-import { prefetchImage } from "../utils/img.js";
+
 
 export default function Header({
   currentKey = "home",
@@ -220,7 +220,6 @@ export default function Header({
               <li key={i}>
                 <button
                   type="button"
-                  onMouseEnter={() => { if (s.type==="product" && s.thumb) prefetchImage(cdn(s.thumb,{w:480,h:480})); }}
                   className="w-full flex items-center gap-3 px-3 py-2 hover:bg-gray-50 text-left"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => {

@@ -1,9 +1,9 @@
 import React, { useMemo, useState, useEffect, useCallback } from "react";
-import ProductImage, { getImageUrls } from "./ProductImage.jsx";
+import ProductImage from "./ProductImage.jsx";
 import { SizeSelector } from "./SizeSelector.jsx";
 import { PriceTag } from "./PriceTag.jsx";
 import { sizeOptions, pickDefaultSize, priceFor } from "../lib/pricing.js";
-import { cdn, prefetchImage } from "../utils/img.js";
+import { cdn, firstImg, prefetchImage } from "../utils/img.js";
 import { usePrefetchOnView } from "../hooks/usePrefetchOnView.js";
 
 const toDigits = (s) => String(s || "").match(/\d+/)?.[0] || "";
@@ -15,8 +15,9 @@ export default function ProductCard({ p, onImageClick, filter }) {
 
   const price = useMemo(() => priceFor(p, sel), [p, sel]);
 
-  const srcBase = getImageUrls(p)[0] || "";
+  const srcBase = firstImg(p);
   const prefetch = useCallback(() => {
+    // ảnh list và quickview tương lai
     prefetchImage(cdn(srcBase, { w: 480, h: 480, q: 70 }));
     prefetchImage(cdn(srcBase, { w: 960, q: 62 }));
   }, [srcBase]);
@@ -45,7 +46,6 @@ export default function ProductCard({ p, onImageClick, filter }) {
       id={`prod-${p?.id}`}
       className="group rounded-2xl border bg-white overflow-hidden"
       style={{ contentVisibility: "auto", containIntrinsicSize: "300px 380px" }}
-      data-card
     >
       <button
         type="button"
@@ -56,10 +56,6 @@ export default function ProductCard({ p, onImageClick, filter }) {
         <ProductImage
           product={p}
           className="absolute inset-0 w-full h-full object-cover"
-          index={0}
-          w={600}
-          q={70}
-          lqip={false}
         />
       </button>
 
