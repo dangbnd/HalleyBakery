@@ -12,3 +12,6 @@ createRoot(document.getElementById('root')).render(
 window.__ENV = { ...import.meta.env };
 if (typeof window !== 'undefined') window.__ENV = { ...import.meta.env };
 
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js"));
+}

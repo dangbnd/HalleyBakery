@@ -1,4 +1,17 @@
+import { tagKey, toTagArray } from "../utils/tagKey.js";
+
 /* ===================== Fetch helpers ===================== */
+function makeUid(r) {
+  const rawId = (r.id || r.key || "").toString().trim();
+  const base = rawId || (r.name || r.ten || "").toString().trim();
+  const type = (r.typeid || r.type || "").toString().trim();
+  const name = (r.name || r.ten || "").toString().trim();
+  // prefer explicit id; else slug of name
+  const baseKey = rawId ? tagKey(rawId) : tagKey(name);
+  // prefix with type to avoid cross-sheet collisions
+  const pref = type ? tagKey(type) + "-" : "";
+  return (pref + baseKey) || tagKey(name) || String(Date.now());
+}
 
 // gviz JSON (ổn cho tab tổng quát)
 export async function fetchSheetRows({ sheetId, gid = "0" }) {
@@ -226,7 +239,7 @@ export function mapProducts(rows = [], imageIndex) {
         typeId: r.typeid || r.type || "",
         images,
         banner: /^(1|true|yes|x)$/i.test(r.banner || ""),
-        tags: String(r.tags || r.tag || r["nhãn"] || "").split(/\s*,\s*/).filter(Boolean),
+        tags: toTagArray(r.tags ?? r.tag ?? r["nhãn"]),
         price,
         sizes: parseSizesCell(r.sizes ?? r.size ?? r.Sizes ?? r.Size),
         priceBySize: parsePriceBySize(r.pricebysize ?? r.priceBySize),
@@ -291,13 +304,16 @@ export function mapSizes(rows = []) {
 export const mapCategories = (rows = []) =>
   rows.filter((r) => r.key).map((r) => ({ key: r.key, title: r.title || r.key }));
 
-export const mapTags = (rows = []) =>
-  rows
-    .filter((r) => r.id || r.label)
-    .map((r) => ({
-      id: r.id || (r.label || "").toLowerCase().replace(/\s+/g, "-"),
-      label: r.label || r.id,
-    }));
+export function mapTags(rows = []) {
+  return rows
+    .map(r => {
+      const raw  = String(r.label ?? r.name ?? r.key ?? r.tag ?? "").trim();
+      if (!raw) return null;
+      const slug = tagKey(raw);               // không dấu, dùng để lọc
+      return { key: slug, label: raw };       // HIỂN THỊ dùng label có dấu
+    })
+    .filter(Boolean);
+}
 
 export function mapLevels(rows = []) {
   const parsePricesObj = (v) => {
@@ -308,7 +324,7 @@ export function mapLevels(rows = []) {
   };
   return rows
     .map(r => ({
-      id: r.id || r.key || r.name,
+      id: makeUid(r),
       name: r.name || r.title,
       schemeId: r.schemeid || r.schemeId || "",
       prices: parsePricesObj(r.prices || r.priceTable || r.price_by_size)

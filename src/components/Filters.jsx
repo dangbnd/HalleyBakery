@@ -1,24 +1,28 @@
+// src/components/Filters.jsx
 import { useEffect, useMemo, useState } from "react";
+import { tagKey } from "../utils/tagKey.js";
 
 export default function Filters({ products = [], tags = [], onChange, className = "" }) {
   /* ---------- TAGS ---------- */
-  const normTag = (t) => {
-    if (typeof t === "string") return { id: t, label: t };
-    const id = t?.id ?? t?.key ?? t?.value ?? t?.label ?? JSON.stringify(t);
-    const label = t?.label ?? t?.name ?? String(id);
-    return { id: String(id), label: String(label) };
+   const normTag = (t) => {
+    if (typeof t === "string") return { id: tagKey(t), label: t };
+    const rawId = t?.id ?? t?.key ?? t?.value ?? t?.label ?? JSON.stringify(t);
+    const label = t?.label ?? t?.name ?? String(rawId);
+    return { id: tagKey(rawId), label: String(label) };
   };
 
   // Lấy tag từ sản phẩm khi sheet trống hoặc muốn gộp
   const derivedProductTags = useMemo(() => {
-    const s = new Set();
+    const m = new Map();
     for (const p of products || []) {
       for (const t of p.tags || []) {
-        const id = typeof t === "string" ? t.trim() : String(t?.id ?? t?.label ?? "").trim();
-        if (id && id !== "#VALUE!") s.add(id);
+        const raw = typeof t === "string" ? t.trim() : String(t?.id ?? t?.label ?? "").trim();
+        if (!raw || raw === "#VALUE!") continue;
+        const id = tagKey(raw);
+        if (!m.has(id)) m.set(id, { id, label: raw });
       }
     }
-    return [...s].map((id) => ({ id, label: id }));
+    return Array.from(m.values()).sort((a, b) => a.label.localeCompare(b.label, "vi"));
   }, [products]);
 
   // Gộp: sheet + từ products, loại trùng và #VALUE!
@@ -220,7 +224,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
       </section>
 
       {/* TAGS */}
-      <section className="mb-5 rounded-xl border bg-white/80 shadow-sm p-4">
+      {/* <section className="mb-5 rounded-xl border bg-white/80 shadow-sm p-4">
         <div className="flex items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2">
             <div className="h-6 w-6 rounded-md bg-sky-100 grid place-items-center text-sky-600">#</div>
@@ -246,6 +250,53 @@ export default function Filters({ products = [], tags = [], onChange, className 
                 }
               >
                 {x.label}
+              </button>
+            );
+          })}
+        </div>
+      </section> */}
+
+      {/* TAGS */}
+      <section className="mb-5 rounded-xl border bg-white/80 shadow-sm p-4">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2">
+            <div className="h-6 w-6 rounded-md bg-sky-100 grid place-items-center text-sky-600">#</div>
+            <h3 className="text-sm font-semibold">Tag</h3>
+          </div>
+        </div>
+
+        <input
+          value={qTag}
+          onChange={(e) => setQTag(e.target.value)}
+          placeholder="Tìm tag…"
+          className="rounded-full border px-3 py-1.5 text-xs w-full mb-2"
+        />
+
+        <div className="max-h-44 overflow-auto flex flex-wrap gap-2">
+          {filteredTags.map((t) => {
+            // t.key = slug không dấu; t.label = nhãn có dấu
+            const on = tagSet.has(t.key);
+            return (
+              <button
+                key={t.key}
+                onClick={() => {
+                  const next = new Set(tagSet);
+                  on ? next.delete(t.key) : next.add(t.key);
+                  setTagSet(next); // nếu bạn vẫn giữ state cục bộ
+
+                  // báo lên App để lọc + lưu nhãn hiển thị
+                  onChange?.((prev) => ({
+                    ...(prev || {}),
+                    tags: next,
+                    tagLabels: { ...(prev?.tagLabels || {}), [t.key]: t.label },
+                  }));
+                }}
+                className={
+                  "px-3 py-1.5 rounded-full text-xs border transition " +
+                  (on ? "bg-rose-50 border-rose-300 text-rose-700" : "border-gray-200 hover:bg-gray-50")
+                }
+              >
+                {t.label}
               </button>
             );
           })}
