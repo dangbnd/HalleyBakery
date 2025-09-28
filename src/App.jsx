@@ -340,6 +340,7 @@ export default function App() {
 
   useEffect(() => {
     const has = q.trim().length > 0;
+
     if (has) {
       if (activeCat !== "all") setActiveCat("all");
       if (route !== "search") setRoute("search");
@@ -433,6 +434,7 @@ export default function App() {
   function applyFilters(list = []) {
     //if (!filterState) return [...list].sort(cmpDefault);
     if (!filterState) return [...list].sort(cmpGrid);
+
     const { price = [0, Number.MAX_SAFE_INTEGER], priceActive = false, tags: tagSet, sizes: sizeSet,
       levels: levelSet, featured, inStock, sort = "" } = filterState;
     const [min, max] = price;
@@ -516,6 +518,7 @@ export default function App() {
     /* const base = activeCat === "all"
      ? (products || [])
      : (products || []).filter((p) => inMenuCat(p.category, activeCat, descByKey)); */
+
     const base = products || [];
 
     const qTrim = q.trim();
