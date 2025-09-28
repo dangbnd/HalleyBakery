@@ -263,9 +263,16 @@ export default function App() {
       const s = decodeState(location.search);
       if (s.q) setQ(s.q);
       if (s.cat) setActiveCat(s.cat);
-      if (s.view) setRoute(s.view);
-      if ((s.cat && s.cat !== "all") || s.q) setRoute("search");
-      if (s.filters) { setFilterState(s.filters); setFiltersResetKey((k) => k + 1); }
+      if (s.view) {
+     setRoute(s.view);                            // ví dụ 'love'
+    } else if (s.q && s.q.trim()) {
+      setRoute("search");                          // chỉ vào search khi có query
+    } else if (s.cat && s.cat !== "all") {
+      setRoute(s.cat);                             // deep-link theo cat nếu không có 'view'
+    } else {
+      setRoute("home");                            // mặc định
+    }
+        if (s.filters) { setFilterState(s.filters); setFiltersResetKey((k) => k + 1); }
     };
     applyFromURL();
     window.addEventListener("popstate", applyFromURL);
