@@ -1,24 +1,28 @@
+// src/components/Filters.jsx
 import { useEffect, useMemo, useState } from "react";
+import { tagKey } from "../utils/tagKey.js";
 
 export default function Filters({ products = [], tags = [], onChange, className = "" }) {
   /* ---------- TAGS ---------- */
-  const normTag = (t) => {
-    if (typeof t === "string") return { id: t, label: t };
-    const id = t?.id ?? t?.key ?? t?.value ?? t?.label ?? JSON.stringify(t);
-    const label = t?.label ?? t?.name ?? String(id);
-    return { id: String(id), label: String(label) };
+   const normTag = (t) => {
+    if (typeof t === "string") return { id: tagKey(t), label: t };
+    const rawId = t?.id ?? t?.key ?? t?.value ?? t?.label ?? JSON.stringify(t);
+    const label = t?.label ?? t?.name ?? String(rawId);
+    return { id: tagKey(rawId), label: String(label) };
   };
 
   // Lấy tag từ sản phẩm khi sheet trống hoặc muốn gộp
   const derivedProductTags = useMemo(() => {
-    const s = new Set();
+    const m = new Map();
     for (const p of products || []) {
       for (const t of p.tags || []) {
-        const id = typeof t === "string" ? t.trim() : String(t?.id ?? t?.label ?? "").trim();
-        if (id && id !== "#VALUE!") s.add(id);
+        const raw = typeof t === "string" ? t.trim() : String(t?.id ?? t?.label ?? "").trim();
+        if (!raw || raw === "#VALUE!") continue;
+        const id = tagKey(raw);
+        if (!m.has(id)) m.set(id, { id, label: raw });
       }
     }
-    return [...s].map((id) => ({ id, label: id }));
+    return Array.from(m.values()).sort((a, b) => a.label.localeCompare(b.label, "vi"));
   }, [products]);
 
   // Gộp: sheet + từ products, loại trùng và #VALUE!
