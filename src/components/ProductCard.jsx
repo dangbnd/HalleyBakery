@@ -17,6 +17,7 @@ export default function ProductCard({ p, onImageClick, filter }) {
 
   const srcBase = getImageUrls(p)[0] || "";
   const prefetch = useCallback(() => {
+
     prefetchImage(cdn(srcBase, { w: 480, h: 480, q: 70 }));
     prefetchImage(cdn(srcBase, { w: 960, q: 62 }));
   }, [srcBase]);

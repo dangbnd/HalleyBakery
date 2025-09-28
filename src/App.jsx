@@ -289,11 +289,12 @@ export default function App() {
 
   /* tìm kiếm -> route */
   useEffect(() => {
-    if (route === "admin") return;
     const has = q.trim().length > 0;
-    if (has && route !== "search") setRoute("search");
-    if (!has && route === "search") setRoute(activeCat !== "all" ? activeCat : "all");
-  }, [q, route, activeCat]);
+    if (has) {
+      if (activeCat !== "all") setActiveCat("all");
+      if (route !== "search") setRoute("search");
+    }
+  }, [q]);
 
   /* admin shortcuts */
   useEffect(() => { if (location.hash === "#admin") setRoute("admin"); }, []);
@@ -462,9 +463,7 @@ export default function App() {
   }, [products, catTitle]);
 
   const listForSearch = useMemo(() => {
-    const base = activeCat === "all"
-      ? (products || [])
-      : (products || []).filter((p) => inMenuCat(p.category, activeCat, descByKey));
+    const base = products || [];
 
     const qTrim = q.trim();
     if (!qTrim) return base;
@@ -489,7 +488,7 @@ export default function App() {
       const hay = new Set([...nameToks, ...tagToks, ...catToks]);
       return qNF.every((t) => hay.has(t));
     });
-  }, [q, products, activeCat, catTitle, descByKey]);
+  }, [q, products, catTitle]);
 
   const listCapped = useMemo(() => listForSearch.slice(0, limit), [listForSearch, limit]);
 
@@ -744,11 +743,7 @@ export default function App() {
             onSortChange={(v) => setFilterState((s) => ({ ...(s || {}), sort: v }))}
           />
           <ActiveFilters filterState={filterState} clearTag={clearTag} masterTags={tags} />
-          <ProductList
-            products={listCapped} 
-            onImageClick={openQuick} 
-            filter={filterState} 
-          />
+          <ProductList products={listCapped} onImageClick={openQuick} filter={filterState} />
         </section>
       </>
     );
@@ -791,11 +786,7 @@ export default function App() {
               onSortChange={(v) => setFilterState((s) => ({ ...(s || {}), sort: v }))}
             />
             <ActiveFilters filterState={filterState} clearTag={clearTag} masterTags={tags} />
-            <ProductList 
-              products={list}
-              onImageClick={openQuick}
-              filter={filterState}
-            />
+            <ProductList products={list} onImageClick={openQuick} filter={filterState} />
           </section>
         )}
       </>
