@@ -172,11 +172,17 @@ export default function Header({
           {has && (
             <button
               type="button"
-              className="px-2 text-gray-600"
-              aria-label="Toggle children"
               onClick={toggle}
+              aria-label={opened ? "Thu gọn" : "Mở rộng"}
+              className="ml-1 h-8 w-6 grid place-items-center text-gray-500 hover:text-gray-700"
             >
-              {opened ? "▾" : "▸"}
+              <svg
+                viewBox="0 0 20 20"
+                className={`h-3.5 w-3.5 transition-transform duration-200 ${opened ? "rotate-90" : "rotate-0"}`}
+                fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+              >
+                <polyline points="7 5 12 10 7 15" />
+              </svg>
             </button>
           )}
         </div>
