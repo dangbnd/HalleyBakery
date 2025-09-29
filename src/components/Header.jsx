@@ -33,6 +33,11 @@ export default function Header({
     setShowSug(false);
   };
 
+  const isProducts = (it) => {
+    const t = String(getTitle(it) || "").toLowerCase();
+    return it.key === "products" || it.key === "product" || t.includes("sản phẩm");
+  };
+
   // reset số lượng hiển thị khi danh sách gợi ý đổi
   useEffect(() => {
     setLimit(5);
@@ -125,14 +130,15 @@ export default function Header({
     return (
       <nav className="flex flex-col gap-1">
         {items.map((it) => (
-          <MobileNode key={it.key} item={it} close={close} />
+        <MobileNode key={it.key} item={it} close={close} depth={0} />
         ))}
       </nav>
     );
   }
-  function MobileNode({ item, close }) {
-    const [opened, setOpened] = useState(false);
+  function MobileNode({ item, close, depth = 0 }) {
     const has = item.children?.length > 0;
+    const defaultOpen = has && depth === 0 && isProducts(item); // auto mở cấp 1 của “Sản phẩm”
+    const [opened, setOpened] = useState(defaultOpen);
     const active = currentKey === item.key;
     const btn =
       "flex-1 text-left px-3 py-2 rounded-lg " +
@@ -178,7 +184,7 @@ export default function Header({
         {has && opened && (
           <div className="pl-3 ml-3 border-l">
             {item.children.map((ch) => (
-              <MobileNode key={ch.key} item={ch} close={close} />
+            <MobileNode key={ch.key} item={ch} close={close} depth={depth + 1} />
             ))}
           </div>
         )}
