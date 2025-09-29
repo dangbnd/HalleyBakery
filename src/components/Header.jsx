@@ -138,31 +138,43 @@ export default function Header({
       "flex-1 text-left px-3 py-2 rounded-lg " +
       (active ? "bg-rose-100 text-rose-700" : "hover:bg-gray-100");
 
+    const toggle = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setOpened((v) => !v);
+    };
+
+    const go = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onNavigate?.(item.key);
+      close?.();
+    };
+
     return (
       <div>
         <div className="flex items-center">
           <button
+            type="button"
             className={btn}
-            onClick={() => {
-              if (has) setOpened((v) => !v);
-              else {
-                onNavigate?.(item.key);
-                close?.();
-              }
-            }}
+            onClick={has ? toggle : go}
+            aria-expanded={has ? opened : undefined}
           >
             {getTitle(item)}
           </button>
+
           {has && (
             <button
+              type="button"
               className="px-2 text-gray-600"
               aria-label="Toggle children"
-              onClick={() => setOpened((v) => !v)}
+              onClick={toggle}
             >
               {opened ? "▾" : "▸"}
             </button>
           )}
         </div>
+
         {has && opened && (
           <div className="pl-3 ml-3 border-l">
             {item.children.map((ch) => (
@@ -277,6 +289,7 @@ export default function Header({
         <div className="flex items-center gap-2">
           {Logo}
           <button
+            type="button"
             aria-label="Mở menu"
             aria-expanded={open}
             onClick={() => setOpen(true)}
@@ -344,6 +357,7 @@ export default function Header({
               <div className="shrink-0 px-3 py-2 flex items-center justify-between border-b">
                 <div className="font-medium">Menu</div>
                 <button
+                  type="button"
                   aria-label="Đóng"
                   className="h-8 w-8 grid place-items-center rounded-full hover:bg-gray-100"
                   onClick={() => setOpen(false)}
