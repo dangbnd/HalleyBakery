@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } f
 import { LS, readLS, writeLS } from "./utils.js";
 import { DATA } from "./data.js";
 import { encodeState, decodeState } from "./utils/urlState.js";
+import { pidOf } from "./utils/pid.js";
 
 import Header from "./components/Header.jsx";
 import { Footer } from "./components/Footer.jsx";
@@ -281,10 +282,16 @@ export default function App() {
 
   /* state -> URL */
   useEffect(() => {
-    const qs = encodeState({ route, q, cat: activeCat, filters: filterState });
-    const base = qs ? `?${qs}` : location.pathname;
     const u = new URL(location.href);
-    u.search = base.startsWith("?") ? base : "";
+    // Xóa các key do app quản lý, GIỮ các key khác (pid, v.v.)
+    ["view", "q", "cat", "filters"].forEach((k) => u.searchParams.delete(k));
+    // Gộp lại các key mới từ state
+    const qs = encodeState({ route, q, cat: activeCat, filters: filterState });
+    if (qs) {
+      const add = new URLSearchParams(qs);
+      add.forEach((v, k) => u.searchParams.set(k, v));
+    }
+    // hash cho home
     if (route === "home" && homeActive && homeActive !== "all") u.hash = `#${homeActive}`;
     else u.hash = "";
     window.history.replaceState(null, "", u);
@@ -364,10 +371,32 @@ export default function App() {
 
   /* deep-link QuickView */
   useEffect(() => {
-    const pid = new URL(location.href).searchParams.get("pid");
-    if (!pid || !products?.length) return;
-    const p = (products || []).find((x) => String(x.id) === pid);
-    if (p) setQuick(p);
+    const syncFromURL = () => {
+      const url = new URL(location.href);
+      const pid = url.searchParams.get("pid");
+      if (!pid) { setQuick(null); return; }
+
+      const found = (products || []).find(p =>
+        pid === pidOf(p) || String(p.id) === pid // hỗ trợ link cũ chỉ có id
+      );
+      setQuick(found || null);
+    };
+
+    syncFromURL();                       // lần đầu
+    window.addEventListener("popstate", syncFromURL); // back/forward
+    return () => window.removeEventListener("popstate", syncFromURL);
+  }, [products]);
+
+  // back/forward: đồng bộ quick với ?pid
+  useEffect(() => {
+    const onPop = () => {
+      const pid = new URL(location.href).searchParams.get("pid");
+      if (!pid) return setQuick(null);
+      const p = (products || []).find(x => String(x.id) === String(pid));
+      setQuick(p || null);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
   }, [products]);
 
   /* đồng bộ dữ liệu */
@@ -743,10 +772,15 @@ export default function App() {
 
   const openQuick = useCallback((p) => {
     setQuick(p);
-    const u = new URL(location.href); u.searchParams.set("pid", String(p.id)); window.history.pushState(null, "", u);
+    const u = new URL(location.href); 
+    u.searchParams.set("pid",  pidOf(p));
+    window.history.pushState(null, "", u);
   }, []);
   const closeQuick = useCallback(() => {
-    setQuick(null); const u = new URL(location.href); u.searchParams.delete("pid"); window.history.pushState(null, "", u);
+    setQuick(null); 
+    const u = new URL(location.href); 
+    u.searchParams.delete("pid"); 
+    window.history.pushState(null, "", u);
   }, []);
 
   /* click tag từ QuickView */
@@ -889,6 +923,7 @@ export default function App() {
 
       {quick && (
         <ProductQuickView
+          key={pidOf(quick)}
           product={quick}
           onClose={closeQuick}
           onPickTag={handlePickTagFromQuickView}

@@ -68,7 +68,8 @@ async function fetchGViz({ sheetId, gid }) {
     danh_muc: "category", category: "category",
     loai: "type", type: "type", typeid: "typeId", type_id: "typeId",
     banner: "banner",
-    tag: "tags", tags: "tags"
+    tag: "tags", tags: "tags",
+    order: "order", sapxep: "order", thu_tu: "order", thutu: "order", sort: "order"
   };
 
   const cols = rawCols.map((c) => alias[normKey(c)] || normKey(c) || c);

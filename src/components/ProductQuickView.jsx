@@ -61,6 +61,7 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
   const [idx, setIdx] = useState(0);
   const images = useMemo(() => getImageUrls(product), [product]);
   const sizeRows = useMemo(() => buildSizeRows(product), [product]);
+  useEffect(() => { setIdx(0); }, [product?.id]);
 
   const messengerLink = useMemo(() => {
     const envLink = import.meta.env.VITE_MESSENGER_LINK;

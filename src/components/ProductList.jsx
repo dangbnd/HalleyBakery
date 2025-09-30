@@ -1,6 +1,7 @@
 // src/components/ProductList.jsx
 import React, { useEffect } from "react";
 import ProductCard from "./ProductCard.jsx";
+import { pidOf } from "../utils/pid.js";
 
 export default function ProductList({ products = [], onImageClick, filter }) {
   // Prefetch ảnh khi card sắp vào viewport
@@ -26,8 +27,8 @@ export default function ProductList({ products = [], onImageClick, filter }) {
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-      {products.map((p, i) => (
-        <div key={(p.id ?? p.code ?? p.name) + "-" + i} data-card>
+      {products.map((p) => (
+        <div key={pidOf(p)} data-card>    
           <ProductCard p={p} onImageClick={onImageClick} filter={filter} />
         </div>
       ))}
