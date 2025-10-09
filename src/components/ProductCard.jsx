@@ -31,7 +31,7 @@ export default function ProductCard({ p, onImageClick, filter }) {
           label: (
             <>
               <span className="hidden text-[13.5px] md:inline">{label}</span>
-              <span className="md:hidden text-xs">{d || label} cm</span>
+              <span className="md:hidden text-[11px]">{d || label} cm</span>
             </>
           ),
         };
