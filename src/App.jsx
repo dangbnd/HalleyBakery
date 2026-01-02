@@ -129,6 +129,59 @@ const inMenuCat = (catKey, selectedKey, descIdx) => selectedKey === "all" || cat
 const stripAdmin = (nodes = []) => (nodes || []).filter((n) => n.key !== "admin").map((n) => ({ ...n, children: stripAdmin(n.children || []) }));
 const scrollTop = () => window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
 
+// --------- Admin mode & Hiển thị giá theo từng sản phẩm ---------
+const isAdminPath = () =>
+  typeof window !== "undefined" && window.location.pathname.startsWith("/admin");
+
+const getMode = (user) => {
+  const adminPath = isAdminPath();
+  const logged = !!user;
+  const canSeeAdminOnly = adminPath && logged;
+  const canSeePrice = canSeeAdminOnly; // chỉ /admin + login mới thấy full giá
+  return { adminPath, logged, canSeeAdminOnly, canSeePrice };
+};
+
+const normVis = (v) => String(v || "public").trim().toLowerCase();
+
+const sanitizeProductsForMode = (list = [], mode) => {
+  const arr = Array.isArray(list) ? list : [];
+  const m = mode || { canSeeAdminOnly: false, canSeePrice: false };
+
+  // 1) Lọc sản phẩm theo visibility
+  const filtered = arr.filter((p) => {
+    const vis = normVis(p?.visibility);
+    if (vis === "hidden") return false;
+    if (!m.canSeeAdminOnly && vis === "admin") return false;
+    return true;
+  });
+
+  // 2) Admin mode: giữ nguyên giá
+  if (m.canSeePrice) return filtered;
+
+  // 3) Guest mode: chỉ hiện giá nếu product.priceVisibility cho phép
+  return filtered.map((p) => {
+    const pvRaw = (p?.priceVisibility ?? p?.pricevisibility ?? p?.showPrice ?? p?.showprice ?? "")
+      .toString()
+      .trim()
+      .toLowerCase();
+
+    const allowPrice =
+      pvRaw === "public" ||
+      pvRaw === "show" ||
+      pvRaw === "true" ||
+      pvRaw === "1" ||
+      pvRaw === "yes";
+
+    if (allowPrice) return p;
+
+    // Mặc định: giấu giá cho khách
+    const pricing = p?.pricing ? { ...p.pricing, table: [] } : p?.pricing;
+    return { ...p, price: null, priceBySize: {}, pricing };
+  });
+};
+// ----------------------------------------------------------------
+
+
 /* ------------ Sort UI (count ⟷ dropdown) ------------ */
 function SortDropdown({ value = "", onChange }) {
   const opts = [
@@ -209,6 +262,10 @@ export default function App() {
   const qDef = useDeferredValue(qDeb);
   const [limit, setLimit] = useState(9999);
   const [quick, setQuick] = useState(null);
+  // Ghi nhớ: trang có được mở trực tiếp với ?pid=... hay không
+  // (để khi đóng QuickView không history.back() ra khỏi site)
+  const quickInitFromURLRef = useRef(false);
+  const didInitQuickURLRef = useRef(false);
   const [activeCat, setActiveCat] = useState("all");
   const [homeActive, setHomeActive] = useState("all");
   const [filterState, setFilterState] = useState(null);
@@ -218,6 +275,14 @@ export default function App() {
   const [user, setUser] = useState(() => readLS(LS.AUTH, null));
   const [fbUrls, setFbUrls] = useState(() => readLS(LS.FB_URLS, []));
   const [products, setProducts] = useState(() => readLS(LS.PRODUCTS, DATA.products || []));
+    useEffect(() => {
+    try {
+      const mode = getMode(user);
+      const sanitized = sanitizeProductsForMode(readLS(LS.PRODUCTS, DATA.products || []), mode);
+      setProducts(sanitized);
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
   const [categories, setCategories] = useState(() => readLS(LS.CATEGORIES, DATA.categories || []));
   const [menu, setMenu] = useState(() => readLS(LS.MENU, DATA.nav || []));
   const [pages, setPages] = useState(() => readLS(LS.PAGES, DATA.pages || []));
@@ -381,6 +446,11 @@ export default function App() {
       );
       setQuick(found || null);
     };
+    
+      if (!didInitQuickURLRef.current) {
+      didInitQuickURLRef.current = true;
+      quickInitFromURLRef.current = !!new URL(location.href).searchParams.get("pid");
+    }
 
     syncFromURL();                       // lần đầu
     window.addEventListener("popstate", syncFromURL); // back/forward
@@ -388,7 +458,7 @@ export default function App() {
   }, [products]);
 
   // back/forward: đồng bộ quick với ?pid
-  useEffect(() => {
+  /*useEffect(() => {
     const onPop = () => {
       const pid = new URL(location.href).searchParams.get("pid");
       if (!pid) return setQuick(null);
@@ -397,7 +467,7 @@ export default function App() {
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [products]);
+  }, [products]);*/
 
   /* đồng bộ dữ liệu */
   useEffect(() => {
@@ -414,7 +484,9 @@ export default function App() {
               .replace(/\|/g, ",").replace(/\n/g, ",").split(",").map((s) => s.trim()).filter(Boolean).join(","),
             price: String(r.price || r.gia || ""),
             sizes: String(r.sizes || r.size || r.Sizes || r.Size || ""),
-            priceBySize: r.pricebysize ?? r.priceBySize ?? "",
+            priceBySize: (r.pricebysize ?? r.priceBySize ?? ""),
+            visibility: String(r.visibility ?? r.Visibility ?? r.show ?? r.hienthi ?? r["hiển thị"] ?? "public").trim().toLowerCase(),
+            priceVisibility: String(r.priceVisibility ?? r.pricevisibility ?? r.showPrice ?? r.showprice ?? r.show_price ?? r.hienGia ?? r["hiển thị giá"] ?? "").trim().toLowerCase(),
             description: String(r.description || r.desc || r.mo_ta || "").trim(),
           }),
         });
@@ -439,8 +511,10 @@ export default function App() {
 
       if (fromSheet?.length) {
         const enriched = fromSheet.map((p) => enrichProductPricing(p, types, levels));
-        setProducts(enriched); writeLS(LS.PRODUCTS, enriched);
-        const cats = [...new Set(enriched.map((p) => p.category).filter(Boolean))];
+        const mode = getMode(user);
+        const sanitized = sanitizeProductsForMode(enriched, mode);
+        setProducts(sanitized); writeLS(LS.PRODUCTS, sanitized);
+        const cats = [...new Set(sanitized.map((p) => p.category).filter(Boolean))];
         if (cats.length) {
           const existed = new Set((categories || []).map((c) => c.key));
           const add = cats.filter((k) => !existed.has(k)).map((k) => ({ key: k, title: k }));
@@ -742,7 +816,7 @@ export default function App() {
       if (p) {
         setQuick(p);
         const u = new URL(location.href);
-        u.searchParams.set("pid", String(p.id));
+        u.searchParams.set("pid", pidOf(p));
         window.history.pushState(null, "", u);
         if (route !== "search") setRoute("search");
       }
@@ -777,10 +851,22 @@ export default function App() {
     window.history.pushState(null, "", u);
   }, []);
   const closeQuick = useCallback(() => {
-    setQuick(null); 
-    const u = new URL(location.href); 
-    u.searchParams.delete("pid"); 
-    window.history.pushState(null, "", u);
+    // Nếu đang có ?pid, ưu tiên back để người dùng bấm back sẽ "đóng" modal đúng nghĩa
+    // Nhưng nếu user mở trực tiếp bằng link có pid thì back sẽ rời trang, nên dùng replaceState.
+    const u = new URL(location.href);
+    const hasPid = u.searchParams.has("pid");
+
+    setQuick(null);
+    if (!hasPid) return;
+
+    if (quickInitFromURLRef.current) {
+      u.searchParams.delete("pid");
+      window.history.replaceState(null, "", u);
+      // Sau khi đã "hạ" pid khỏi URL, các lần mở/đóng tiếp theo có thể dùng back bình thường
+      quickInitFromURLRef.current = false;
+    } else {
+      window.history.back();
+    }
   }, []);
 
   /* click tag từ QuickView */
@@ -859,7 +945,12 @@ export default function App() {
             products={products}
             interval={2000}
             fbUrls={fbUrls}
-            onBannerClick={(p) => { setQuick(p); const u = new URL(location.href); u.searchParams.set("pid", String(p.id)); window.history.pushState(null, "", u); }}
+            onBannerClick={(p) => { 
+              setQuick(p); 
+              const u = new URL(location.href); 
+              u.searchParams.set("pid", pidOf(p)); 
+              window.history.pushState(null, "", u); 
+            }}
           />
         )}
         {CatBar}

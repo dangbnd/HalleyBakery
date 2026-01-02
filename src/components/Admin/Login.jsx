@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { readLS, writeLS } from "../../utils.js";
+import { LS, readLS, writeLS } from "../../utils.js";
 
 export default function Login() {
   const [u, setU] = useState("");
@@ -7,10 +7,10 @@ export default function Login() {
   const [err, setErr] = useState("");
 
   const preset = {
-    owner:   { password: "owner",   role: "owner" },
-    manager: { password: "manager", role: "manager" },
-    editor:  { password: "editor",  role: "editor" },
-    staff:   { password: "staff",   role: "staff" },
+    [String(import.meta.env.VITE_ADMIN_USER || "halley")]: {
+      password: String(import.meta.env.VITE_ADMIN_PASS || "123456"),
+      role: "staff",
+    },
   };
 
   function submit(e){
@@ -42,9 +42,6 @@ export default function Login() {
                  placeholder="trùng với tên tài khoản" />
         </div>
         <button className="w-full bg-black text-white rounded-xl py-2">Đăng nhập</button>
-        <div className="text-xs text-gray-500 text-center">
-          Demo: owner/owner, manager/manager, editor/editor, staff/staff
-        </div>
       </form>
     </div>
   );

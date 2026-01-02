@@ -243,6 +243,19 @@ export function mapProducts(rows = [], imageIndex) {
         price,
         sizes: parseSizesCell(r.sizes ?? r.size ?? r.Sizes ?? r.Size),
         priceBySize: parsePriceBySize(r.pricebysize ?? r.priceBySize),
+
+        // Hiển thị sản phẩm: public|admin|hidden (mặc định public)
+        visibility: String(
+          r.visibility || r.Visibility || r.show || r.hienthi || r["hiển thị"] || "public"
+        ).trim().toLowerCase(),
+
+        // Hiển thị giá cho khách: public/show/true/1/yes => hiện; để trống => ẩn
+        priceVisibility: String(
+          r.priceVisibility || r.pricevisibility ||
+          r.showPrice || r.showprice || r.show_price ||
+          r.hienGia || r["hiển thị giá"] || ""
+        ).trim().toLowerCase(),
+        
         desc: String(r.description || r.desc || r.mota || r["mô tả"] || "").trim(),
         description: String(r.description || r.desc || r.mota || r["mô tả"] || "").trim(),
         // chỉ nhận số; ô trống/không hợp lệ => undefined (không ưu tiên)

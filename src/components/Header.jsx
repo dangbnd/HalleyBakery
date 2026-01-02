@@ -23,7 +23,8 @@ export default function Header({
   const [open, setOpen] = useState(false);
   const [limit, setLimit] = useState(5);
   const [showSug, setShowSug] = useState(false);
-  const sugRef = useRef(null);
+  const sugRefMobile = useRef(null);
+  const sugRefDesktop = useRef(null);
   const desk = logoSrcDesktop || logoSrc;
   const mob = logoSrcMobile || logoSrc;
 
@@ -46,9 +47,14 @@ export default function Header({
   // đóng dropdown khi click ra ngoài
   useEffect(() => {
     const onDoc = (e) => {
-      if (!sugRef.current) return;
-      if (!sugRef.current.contains(e.target)) setShowSug(false);
+      const insideMobile =
+        sugRefMobile.current && sugRefMobile.current.contains(e.target);
+      const insideDesktop =
+        sugRefDesktop.current && sugRefDesktop.current.contains(e.target);
+
+      if (!insideMobile && !insideDesktop) setShowSug(false);
     };
+
     document.addEventListener("click", onDoc);
     return () => document.removeEventListener("click", onDoc);
   }, []);
@@ -218,8 +224,8 @@ export default function Header({
   // ảnh nhỏ ưu tiên cho product suggestions
   const thumbOf = (s) => s.thumb || s.image || s.img || "";
 
-  const Search = (
-    <form onSubmit={submit} className="relative w-full" ref={sugRef} autoComplete="off">
+  const renderSearch = (formRef) => (
+    <form onSubmit={submit} className="relative w-full" ref={formRef} autoComplete="off">
       <input
         value={searchQuery}
         onChange={(e) => {
@@ -282,8 +288,12 @@ export default function Header({
             <button
               type="button"
               className="w-full px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 border-t"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setLimit((n) => Math.min(n + 10, suggestions.length))}
+              onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setLimit((n) => Math.min(n + 10, suggestions.length));
+              }}
             >
               Hiển thị thêm {suggestions.length - limit}…
             </button>
@@ -311,7 +321,7 @@ export default function Header({
               <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" />
             </svg>
           </button>
-          <div className="flex-1">{Search}</div>
+          <div className="flex-1">{renderSearch(sugRefMobile)}</div>
         </div>
       </div>
 
@@ -345,7 +355,7 @@ export default function Header({
               );
             })}
           </div>
-          <div className="flex-1 max-w-md ml-auto">{Search}</div>
+          <div className="flex-1 max-w-md ml-auto">{renderSearch(sugRefDesktop)}</div>
           {/* {hotline ? (
             <a href={`tel:${hotline}`} className="hidden lg:inline text-sm text-gray-600">
               {hotline}
