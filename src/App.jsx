@@ -155,32 +155,53 @@ const sanitizeProductsForMode = (list = [], mode) => {
     return true;
   });
 
-  // 2) Admin mode: giữ nguyên giá
+  // 2) Admin mode: giữ nguyên giá + mô tả
   if (m.canSeePrice) return filtered;
 
-  // 3) Guest mode: chỉ hiện giá nếu product.priceVisibility cho phép
+  // 3) Guest mode: ẩn/hiện theo priceVisibility + descriptionVisibility
   return filtered.map((p) => {
-    const pvRaw = (p?.priceVisibility ?? p?.pricevisibility ?? p?.showPrice ?? p?.showprice ?? "")
+    let out = p;
+
+    // ----- PRICE -----
+    const pvRaw = (out?.priceVisibility ?? out?.pricevisibility ?? out?.showPrice ?? out?.showprice ?? "")
       .toString()
       .trim()
       .toLowerCase();
 
     const allowPrice =
-      pvRaw === "public" ||
-      pvRaw === "show" ||
-      pvRaw === "true" ||
-      pvRaw === "1" ||
-      pvRaw === "yes";
+      pvRaw === "public" || pvRaw === "show" || pvRaw === "true" || pvRaw === "1" || pvRaw === "yes";
 
-    if (allowPrice) return p;
+    if (!allowPrice) {
+      const pricing = out?.pricing ? { ...out.pricing, table: [] } : out?.pricing;
+      out = { ...out, price: null, priceBySize: {}, pricing };
+    }
 
-    // Mặc định: giấu giá cho khách
-    const pricing = p?.pricing ? { ...p.pricing, table: [] } : p?.pricing;
-    return { ...p, price: null, priceBySize: {}, pricing };
+    // ----- DESCRIPTION (giống y giá: để trống = ẨN) -----
+    const dvRaw = (
+      out?.descriptionVisibility ??
+      out?.descriptionvisibility ??
+      out?.descVisibility ??
+      out?.descvisibility ??
+      out?.showDesc ??
+      out?.showdesc ??
+      out?.showDescription ??
+      out?.showdescription ??
+      ""
+    )
+      .toString()
+      .trim()
+      .toLowerCase();
+
+    const allowDesc =
+      dvRaw === "public" || dvRaw === "show" || dvRaw === "true" || dvRaw === "1" || dvRaw === "yes";
+
+    if (!allowDesc) {
+      out = { ...out, desc: "", description: "" };
+    }
+
+    return out;
   });
 };
-// ----------------------------------------------------------------
-
 
 /* ------------ Sort UI (count ⟷ dropdown) ------------ */
 function SortDropdown({ value = "", onChange }) {
@@ -488,7 +509,14 @@ export default function App() {
             visibility: String(r.visibility ?? r.Visibility ?? r.show ?? r.hienthi ?? r["hiển thị"] ?? "public").trim().toLowerCase(),
             priceVisibility: String(r.priceVisibility ?? r.pricevisibility ?? r.showPrice ?? r.showprice ?? r.show_price ?? r.hienGia ?? r["hiển thị giá"] ?? "").trim().toLowerCase(),
             description: String(r.description || r.desc || r.mo_ta || "").trim(),
-          }),
+            descriptionVisibility: String(
+              r.descriptionVisibility ?? r.descriptionvisibility ??
+              r.descVisibility ?? r.descvisibility ??
+              r.showDesc ?? r.showdesc ??
+              r.showDescription ?? r.showdescription ??
+              r.hienMoTa ?? r["hiển thị mô tả"] ?? r["hien thi mo ta"] ?? ""
+            ).trim().toLowerCase(),
+                      }),
         });
         prodRows = rows;
       } else {

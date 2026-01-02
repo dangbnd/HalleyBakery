@@ -258,6 +258,14 @@ export function mapProducts(rows = [], imageIndex) {
         
         desc: String(r.description || r.desc || r.mota || r["mô tả"] || "").trim(),
         description: String(r.description || r.desc || r.mota || r["mô tả"] || "").trim(),
+        descriptionVisibility: String(
+          r.descriptionVisibility || r.descriptionvisibility ||
+          r.descVisibility || r.descvisibility ||
+          r.showDesc || r.showdesc ||
+          r.showDescription || r.showdescription ||
+          r.hienMoTa || r["hiển thị mô tả"] || r["hien thi mo ta"] || ""
+        ).trim().toLowerCase(),
+        
         // chỉ nhận số; ô trống/không hợp lệ => undefined (không ưu tiên)
         order: (() => {
           const raw = String(r.order ?? "").trim();
