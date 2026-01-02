@@ -393,7 +393,7 @@ export default function App() {
       catch (e) { console.error("load FB sheet fail:", e); }
     })();
   }, []);
-  useEffect(() => {
+  /*useEffect(() => {
     const applyFromURL = () => {
       const s = decodeState(location.search);
 
@@ -418,7 +418,7 @@ export default function App() {
     applyFromURL();
     window.addEventListener("popstate", applyFromURL);
     return () => window.removeEventListener("popstate", applyFromURL);
-  }, []); // <- giữ nguyên deps
+  }, []); // <- giữ nguyên deps*/
   useEffect(() => {
     if (!filterState?.tags?.size || !tags?.length) return;
     const hasAllLabels = [...filterState.tags].every(k => filterState.tagLabels?.[k]);
