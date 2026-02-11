@@ -26,20 +26,27 @@ export function decodeState(search) {
   const p = new URLSearchParams(search);
   const pickSet = (k) => new Set((p.get(k) || "").split(",").filter(Boolean));
 
-  const filters = {
-    price: [0, 0],
-    priceActive: false,
-    tags: pickSet("tags"),
-    sizes: pickSet("sizes"),
-    levels: pickSet("lvls"),
-    featured: p.get("feat") === "1",
-    inStock: p.get("stock") === "1",
-    sort: p.get("sort") || "",
-  };
-  if (p.get("price")) {
-    const [a, b] = p.get("price").split("-").map((n) => Number(n) || 0);
-    filters.price = [a, b];
-    filters.priceActive = true;
+  // Chỉ tạo filter object nếu URL thực sự có tham số lọc
+  const hasFilterParams = p.has("price") || p.has("tags") || p.has("sizes") ||
+    p.has("lvls") || p.has("feat") || p.has("stock") || p.has("sort");
+
+  let filters = null;
+  if (hasFilterParams) {
+    filters = {
+      price: [0, 0],
+      priceActive: false,
+      tags: pickSet("tags"),
+      sizes: pickSet("sizes"),
+      levels: pickSet("lvls"),
+      featured: p.get("feat") === "1",
+      inStock: p.get("stock") === "1",
+      sort: p.get("sort") || "",
+    };
+    if (p.get("price")) {
+      const [a, b] = p.get("price").split("-").map((n) => Number(n) || 0);
+      filters.price = [a, b];
+      filters.priceActive = true;
+    }
   }
 
   return {

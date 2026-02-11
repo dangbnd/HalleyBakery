@@ -1,4 +1,7 @@
 // src/services/sheets.multi.js
+import { normalizeImageUrl } from "../utils/img.js";
+import { queuedFetch } from "./fetchQueue.js";
+import { cachedText } from "./cache.js";
 
 /* ---------- Parse env multi-tab ---------- */
 export function readProductTabsFromEnv() {
@@ -20,25 +23,14 @@ export function readProductTabsFromEnv() {
   return tabs;
 }
 
-/* ---------- Ảnh Drive → thumbnail ---------- */
-export function normalizeImageUrl(u, max = 700) {
-  if (!u) return "";
-  const s = String(u).trim();
-  const m =
-    s.match(/\/file\/d\/([A-Za-z0-9_-]+)/) ||
-    s.match(/\/d\/([A-Za-z0-9_-]+)/) ||
-    s.match(/[?&]id=([A-Za-z0-9_-]+)/) ||
-    s.match(/uc\?[^#?]*id=([A-Za-z0-9_-]+)/);
-  if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w${max}`;
-  if (/^https?:\/\//i.test(s)) return s;
-  const base = (import.meta.env.VITE_IMAGE_BASE || "/images/").replace(/\/+$/, "") + "/";
-  return encodeURI(base + s.replace(/^\/+/, ""));
-}
+
+
 
 /* ---------- GViz fetch + chuẩn hoá cột ---------- */
 async function fetchGViz({ sheetId, gid }) {
-  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&gid=${gid}&t=${Date.now()}`;
-  const txt = await fetch(url, { cache: "no-store" }).then(r => r.text());
+  // P6: bỏ cache-buster t=Date.now() để cachedText có thể cache
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&gid=${gid}`;
+  const txt = await cachedText(url);
 
   let json;
   try {
@@ -92,28 +84,36 @@ function slugify(s = "") {
 }
 
 /* ---------- Load nhiều tab sản phẩm ---------- */
-export async function fetchProductsFromTabs({ sheetId, tabs, normalize }) {
+export async function fetchProductsFromTabs({ sheetId, tabs, normalize, onTabDone }) {
   if (!Array.isArray(tabs) || !tabs.length) return [];
 
-  // tải song song các tab
+  // Tải qua hàng đợi (tối đa 4 song song nhờ queuedFetch)
   const lists = await Promise.all(
     tabs.map(async (t) => {
-      const rows = await fetchGViz({ sheetId, gid: t.gid });
-      return rows.map((r) => {
-        // chuẩn hoá ảnh NGAY tại đây nếu muốn nhỏ hơn
-        const images = String(r.images || r.image || "")
-          .split(/[|,\n]/).map(s => s.trim()).filter(Boolean)
-          .map(u => normalizeImageUrl(u, 700));
+      try {
+        const rows = await fetchGViz({ sheetId, gid: t.gid });
+        const mapped = rows.map((r) => {
+          // M5: thống nhất image field — fallback giống sheets.js
+          const images = String(r.images || r.image || r.hinh || r.hinhanh || r.img || r["hình ảnh"] || "")
+            .split(/[|,\n]/).map(s => s.trim()).filter(Boolean)
+            .map(u => normalizeImageUrl(u, 700));
 
-        const base = {
-          ...r,
-          images,
-          _tab_gid: t.gid,
-          _tab_key: t.key,
-          category: r.category || r.type || t.key,
-        };
-        return normalize ? normalize(base) : base;
-      });
+          const base = {
+            ...r,
+            images,
+            _tab_gid: t.gid,
+            _tab_key: t.key,
+            category: r.category || r.type || t.key,
+          };
+          return normalize ? normalize(base) : base;
+        });
+        // Callback progressive: hiển sản phẩm ngay khi tab xong
+        if (onTabDone) onTabDone(mapped, t);
+        return mapped;
+      } catch (e) {
+        console.error(`[sheets.multi] Tab ${t.key} (gid=${t.gid}) fail:`, e);
+        return []; // không crash toàn bộ nếu 1 tab fail
+      }
     })
   );
 
@@ -134,4 +134,28 @@ export async function fetchProductsFromTabs({ sheetId, tabs, normalize }) {
     }
   }
   return out;
+}
+
+/* ---------- Fetch Unified Data (GAS) ---------- */
+export async function fetchUnifiedData(apiUrl) {
+  try {
+    const res = await queuedFetch(apiUrl);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+
+    // Chuẩn hoá sơ bộ products
+    if (Array.isArray(data.products)) {
+      data.products = data.products.map(p => ({
+        ...p,
+        images: String(p.images || p.image || "")
+          .split(/[|,\n]/).map(s => s.trim()).filter(Boolean)
+          .map(u => normalizeImageUrl(u, 700))
+          .join(","),
+      }));
+    }
+    return data;
+  } catch (e) {
+    console.error("Fetch Unified Data fail:", e);
+    return null;
+  }
 }

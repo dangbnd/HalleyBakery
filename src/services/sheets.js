@@ -1,4 +1,5 @@
 import { tagKey, toTagArray } from "../utils/tagKey.js";
+import { normalizeImageUrl } from "../utils/img.js";
 
 /* ===================== Fetch helpers ===================== */
 function makeUid(r) {
@@ -76,19 +77,8 @@ export async function fetchFbUrls({ sheetId, gid }) {
 
 /* ===================== Image URL ===================== */
 
-export function normalizeImageUrl(u) {
-  if (!u) return "";
-  const s = String(u).trim();
-  const m =
-    s.match(/\/file\/d\/([A-Za-z0-9_-]+)/) ||
-    s.match(/\/d\/([A-Za-z0-9_-]+)/) ||
-    s.match(/[?&]id=([A-Za-z0-9_-]+)/) ||
-    s.match(/uc\?id=([A-Za-z0-9_-]+)/);
-  if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w2048`;
-  if (/^https?:\/\//i.test(s)) return s;
-  const base = (import.meta.env.VITE_IMAGE_BASE || "/images/").replace(/\/+$/, "") + "/";
-  return encodeURI(base + s.replace(/^\/+/, ""));
-}
+// normalizeImageUrl giờ import từ utils/img.js
+export { normalizeImageUrl } from "../utils/img.js";
 
 /* ===================== Parsers ===================== */
 
@@ -148,7 +138,7 @@ function makeStableId(r) {
   const id = r.id || r.ID;
   if (id) return String(id).trim();
   const name = String(r.name || "").trim().toLowerCase();
-  const cat  = String(r.category || "").trim().toLowerCase();
+  const cat = String(r.category || "").trim().toLowerCase();
   return name ? `${name}|${cat}` : (crypto.randomUUID?.() || String(Date.now() + Math.random()));
 }
 
@@ -159,7 +149,7 @@ function parsePriceBySize(input = "") {
   try {
     const obj = JSON.parse(s);
     return obj && typeof obj === "object" ? obj : {};
-  } catch {}
+  } catch { }
   const out = {};
   const toNumber = (numStr, unit = "") => {
     let n = Number(String(numStr).replace(/\./g, "").replace(/\s/g, ""));
@@ -186,7 +176,8 @@ function parsePriceBySize(input = "") {
   return out;
 }
 
-// src/services/sheets.js
+
+
 export function mapProducts(rows = [], imageIndex) {
   const norm = (s) =>
     String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
@@ -255,7 +246,7 @@ export function mapProducts(rows = [], imageIndex) {
           r.showPrice || r.showprice || r.show_price ||
           r.hienGia || r["hiển thị giá"] || ""
         ).trim().toLowerCase(),
-        
+
         desc: String(r.description || r.desc || r.mota || r["mô tả"] || "").trim(),
         description: String(r.description || r.desc || r.mota || r["mô tả"] || "").trim(),
         descriptionVisibility: String(
@@ -265,7 +256,7 @@ export function mapProducts(rows = [], imageIndex) {
           r.showDescription || r.showdescription ||
           r.hienMoTa || r["hiển thị mô tả"] || r["hien thi mo ta"] || ""
         ).trim().toLowerCase(),
-        
+
         // chỉ nhận số; ô trống/không hợp lệ => undefined (không ưu tiên)
         order: (() => {
           const raw = String(r.order ?? "").trim();
@@ -293,11 +284,11 @@ export function mapSizes(rows = []) {
       if (code.includes("@")) {
         const [c, h] = code.split("@"); const n = Number(h);
         if (Number.isFinite(n)) { height = n; code = S(c); }
-      } else if (/@(\d+)/.test(label)) {
-        height = Number(RegExp.$1);
+      } else {
+        const hm = label.match(/@(\d+)/);
+        if (hm) height = Number(hm[1]);
       }
     }
-
     if (!code) continue;
     if (!label) label = `Size ${code}`;
     if (!Number.isFinite(height)) height = 0;
@@ -328,7 +319,7 @@ export const mapCategories = (rows = []) =>
 export function mapTags(rows = []) {
   return rows
     .map(r => {
-      const raw  = String(r.label ?? r.name ?? r.key ?? r.tag ?? "").trim();
+      const raw = String(r.label ?? r.name ?? r.key ?? r.tag ?? "").trim();
       if (!raw) return null;
       const slug = tagKey(raw);               // không dấu, dùng để lọc
       return { key: slug, label: raw };       // HIỂN THỊ dùng label có dấu
@@ -420,7 +411,7 @@ export function mapTypes(rows = []) {
 export function sizesForProduct(product, types = []) {
   const t = types.find(x =>
     x.id === product?.typeId ||
-    x.id === product?.type   ||
+    x.id === product?.type ||
     x.code === product?.type ||
     x.code === product?.typeId
   );
@@ -457,14 +448,14 @@ export function enrichProductPricing(p, types = [], levels = []) {
   const keysFromPB = Object.keys(pb);
   const keysFromProduct = Array.isArray(p.sizes) && p.sizes.length
     ? p.sizes.map(s => {
-        const [c,h] = String(s).split("@");
-        const n = Number(h);
-        return Number.isFinite(n) ? `${c}-${n}` : `${s}-0`;
-      })
+      const [c, h] = String(s).split("@");
+      const n = Number(h);
+      return Number.isFinite(n) ? `${c}-${n}` : `${s}-0`;
+    })
     : [];
   const keysFromLevel = Object.keys(level?.prices || {});
   const keys = (keysFromPB.length ? keysFromPB :
-               (keysFromProduct.length ? keysFromProduct : keysFromLevel));
+    (keysFromProduct.length ? keysFromProduct : keysFromLevel));
 
   const typeSizes = (type ? type.sizes : []).map(s => (s && typeof s === "object") ? s : labelFromKey(s));
   const sizeDict = new Map(typeSizes.map(s => [s.key, s]));
@@ -492,19 +483,19 @@ export function mapSchemes(rows = []) {
 export const mapAnnouncements = (rows = []) => {
   const now = Date.now();
   const toTs = s => {
-    const t = Date.parse(String(s||"").trim());
+    const t = Date.parse(String(s || "").trim());
     return Number.isFinite(t) ? t : null;
   };
   return rows
     .map(r => ({
       text: String(r.text || r.message || "").trim(),
-      active: /^(1|true|yes|x)$/i.test(String(r.active||"")),
+      active: /^(1|true|yes|x)$/i.test(String(r.active || "")),
       order: Number(r.order || 0),
       start: toTs(r.start || r.from),
       end: toTs(r.end || r.until),
     }))
     .filter(x => x.text && x.active)
     .filter(x => (x.start ? now >= x.start : true) && (x.end ? now <= x.end : true))
-    .sort((a,b) => a.order - b.order)
+    .sort((a, b) => a.order - b.order)
     .map(x => x.text);
 };

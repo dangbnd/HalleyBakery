@@ -1,10 +1,10 @@
 // src/components/Filters.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { tagKey } from "../utils/tagKey.js";
 
 export default function Filters({ products = [], tags = [], onChange, className = "" }) {
   /* ---------- TAGS ---------- */
-   const normTag = (t) => {
+  const normTag = (t) => {
     if (typeof t === "string") return { id: tagKey(t), label: t };
     const rawId = t?.id ?? t?.key ?? t?.value ?? t?.label ?? JSON.stringify(t);
     const label = t?.label ?? t?.name ?? String(rawId);
@@ -59,8 +59,9 @@ export default function Filters({ products = [], tags = [], onChange, className 
     return vals;
   }, [products]);
 
-  const priceMin = prices.length ? Math.min(...prices) : 0;
-  const priceMax = prices.length ? Math.max(...prices) : 0;
+  // P4: tránh Math.min/max spread overflow khi mảng lớn
+  const priceMin = prices.length ? prices.reduce((a, b) => a < b ? a : b, Infinity) : 0;
+  const priceMax = prices.length ? prices.reduce((a, b) => a > b ? a : b, -Infinity) : 0;
 
   const [minV, setMinV] = useState(priceMin);
   const [maxV, setMaxV] = useState(priceMax);
@@ -69,6 +70,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
   /* ---------- FACETS ---------- */
   const [qTag, setQTag] = useState("");
   const [tagSet, setTagSet] = useState(new Set());
+  const [tagLabels, setTagLabels] = useState({});
   const [sizeSet, setSizeSet] = useState(new Set());
   const [lvlSet, setLvlSet] = useState(new Set());
   const [featured, setFeatured] = useState(false);
@@ -80,9 +82,13 @@ export default function Filters({ products = [], tags = [], onChange, className 
     [minV, maxV, priceMin, priceMax]
   );
 
+  // B1: chỉ gọi onChange khi user thực sự thay đổi filter, không fire on mount
+  const hasInteracted = useRef(false);
+  const markInteracted = () => { hasInteracted.current = true; };
   useEffect(() => {
-    onChange?.({ price: [minV, maxV], priceActive, tags: tagSet, sizes: sizeSet, levels: lvlSet, featured, inStock, sort });
-  }, [minV, maxV, priceActive, tagSet, sizeSet, lvlSet, featured, inStock, sort, onChange]);
+    if (!hasInteracted.current) return;
+    onChange?.({ price: [minV, maxV], priceActive, tags: tagSet, tagLabels: tagLabels, sizes: sizeSet, levels: lvlSet, featured, inStock, sort });
+  }, [minV, maxV, priceActive, tagSet, tagLabels, sizeSet, lvlSet, featured, inStock, sort, onChange]);
 
   /* ---------- OPTIONS ---------- */
   const allSizes = useMemo(() => {
@@ -104,7 +110,6 @@ export default function Filters({ products = [], tags = [], onChange, className 
   }, [allTags, qTag]);
 
   const fmt = (v) => new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(v) + "đ";
-  const fmtRaw = (v) => new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(v) + "đ";
 
   /* ---------- Slider geometry ---------- */
   const disabledRange = priceMax <= priceMin;
@@ -130,7 +135,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
               type="number"
               className="w-full rounded-lg border px-3 py-2 text-sm"
               value={minV}
-              onChange={(e) => setMinV(Math.min(Number(e.target.value || 0), maxV))}
+              onChange={(e) => { markInteracted(); setMinV(Math.min(Number(e.target.value || 0), maxV)); }}
             />
           </div>
           <div className="relative">
@@ -139,7 +144,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
               type="number"
               className="w-full rounded-lg border px-3 py-2 text-sm"
               value={maxV}
-              onChange={(e) => setMaxV(Math.max(Number(e.target.value || 0), minV))}
+              onChange={(e) => { markInteracted(); setMaxV(Math.max(Number(e.target.value || 0), minV)); }}
             />
           </div>
         </div>
@@ -200,7 +205,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
             max={priceMax}
             step="1000"
             value={minV}
-            onChange={(e) => setMinV(Math.min(Number(e.target.value), maxV))}
+            onChange={(e) => { markInteracted(); setMinV(Math.min(Number(e.target.value), maxV)); }}
             disabled={disabledRange}
             className="min"
           />
@@ -211,50 +216,18 @@ export default function Filters({ products = [], tags = [], onChange, className 
             max={priceMax}
             step="1000"
             value={maxV}
-            onChange={(e) => setMaxV(Math.max(Number(e.target.value), minV))}
+            onChange={(e) => { markInteracted(); setMaxV(Math.max(Number(e.target.value), minV)); }}
             disabled={disabledRange}
             className="max"
           />
 
           <div className="minmax">
-            <span>{fmtRaw(priceMin)}</span>
-            <span>{fmtRaw(priceMax)}</span>
+            <span>{fmt(priceMin)}</span>
+            <span>{fmt(priceMax)}</span>
           </div>
         </div>
       </section>
 
-      {/* TAGS */}
-      {/* <section className="mb-5 rounded-xl border bg-white/80 shadow-sm p-4">
-        <div className="flex items-center justify-between gap-3 mb-3">
-          <div className="flex items-center gap-2">
-            <div className="h-6 w-6 rounded-md bg-sky-100 grid place-items-center text-sky-600">#</div>
-            <h3 className="text-sm font-semibold">Tag</h3>
-          </div>
-        </div>
-        <input
-          value={qTag}
-          onChange={(e) => setQTag(e.target.value)}
-          placeholder="Tìm tag…"
-          className="rounded-full border px-3 py-1.5 text-xs w-full mb-2"
-        />
-        <div className="max-h-44 overflow-auto flex flex-wrap gap-2">
-          {filteredTags.map((x) => {
-            const on = tagSet.has(x.id);
-            return (
-              <button
-                key={x.id}
-                onClick={() => { const s = new Set(tagSet); on ? s.delete(x.id) : s.add(x.id); setTagSet(s); }}
-                className={
-                  "px-3 py-1.5 rounded-full text-xs border transition " +
-                  (on ? "bg-rose-50 border-rose-300 text-rose-700" : "border-gray-200 hover:bg-gray-50")
-                }
-              >
-                {x.label}
-              </button>
-            );
-          })}
-        </div>
-      </section> */}
 
       {/* TAGS */}
       <section className="mb-5 rounded-xl border bg-white/80 shadow-sm p-4">
@@ -274,22 +247,17 @@ export default function Filters({ products = [], tags = [], onChange, className 
 
         <div className="max-h-44 overflow-auto flex flex-wrap gap-2">
           {filteredTags.map((t) => {
-            // t.key = slug không dấu; t.label = nhãn có dấu
-            const on = tagSet.has(t.key);
+            // t.id = slug không dấu; t.label = nhãn có dấu
+            const on = tagSet.has(t.id);
             return (
               <button
-                key={t.key}
+                key={t.id}
                 onClick={() => {
+                  markInteracted();
                   const next = new Set(tagSet);
-                  on ? next.delete(t.key) : next.add(t.key);
-                  setTagSet(next); // nếu bạn vẫn giữ state cục bộ
-
-                  // báo lên App để lọc + lưu nhãn hiển thị
-                  onChange?.((prev) => ({
-                    ...(prev || {}),
-                    tags: next,
-                    tagLabels: { ...(prev?.tagLabels || {}), [t.key]: t.label },
-                  }));
+                  on ? next.delete(t.id) : next.add(t.id);
+                  setTagSet(next);
+                  setTagLabels(prev => ({ ...prev, [t.id]: t.label }));
                 }}
                 className={
                   "px-3 py-1.5 rounded-full text-xs border transition " +
@@ -316,7 +284,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
               return (
                 <button
                   key={s}
-                  onClick={() => { const t = new Set(sizeSet); on ? t.delete(s) : t.add(s); setSizeSet(t); }}
+                  onClick={() => { markInteracted(); const t = new Set(sizeSet); on ? t.delete(s) : t.add(s); setSizeSet(t); }}
                   className={
                     "px-3 py-1.5 rounded-full text-xs border transition " +
                     (on ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "border-gray-200 hover:bg-gray-50")
@@ -344,7 +312,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
                 return (
                   <button
                     key={l}
-                    onClick={() => { const t = new Set(lvlSet); on ? t.delete(l) : t.add(l); setLvlSet(t); }}
+                    onClick={() => { markInteracted(); const t = new Set(lvlSet); on ? t.delete(l) : t.add(l); setLvlSet(t); }}
                     className={
                       "px-3 py-1.5 rounded-full text-xs border transition " +
                       (on ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "border-gray-200 hover:bg-gray-50")
@@ -364,7 +332,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
               type="checkbox"
               className="h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-300"
               checked={featured}
-              onChange={(e) => setFeatured(e.target.checked)}
+              onChange={(e) => { markInteracted(); setFeatured(e.target.checked); }}
             />
             Nổi bật/Banner
           </label>
@@ -373,7 +341,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
               type="checkbox"
               className="h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-300"
               checked={inStock}
-              onChange={(e) => setInStock(e.target.checked)}
+              onChange={(e) => { markInteracted(); setInStock(e.target.checked); }}
             />
             Còn hàng
           </label>
@@ -385,7 +353,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
         <div className="text-sm font-semibold mb-2">Sắp xếp</div>
         <select
           value={sort}
-          onChange={(e) => setSort(e.target.value)}
+          onChange={(e) => { markInteracted(); setSort(e.target.value); }}
           className="w-full rounded-lg border px-3 py-2 text-sm"
         >
           <option value="">Mặc định</option>
@@ -398,6 +366,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
         <button
           className="mt-4 w-full rounded-lg border px-3 py-2 text-sm hover:bg-gray-50"
           onClick={() => {
+            markInteracted();
             setMinV(priceMin); setMaxV(priceMax);
             setTagSet(new Set()); setSizeSet(new Set()); setLvlSet(new Set());
             setFeatured(false); setInStock(false); setSort(""); setQTag("");

@@ -1,4 +1,14 @@
+import { useEffect } from "react";
+
 export default function FilterSheet({ open, title = "Bộ lọc", onClose, children }) {
+  // L8: lock body scroll khi mở filter panel
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev || ""; };
+  }, [open]);
+
   if (!open) return null;
 
   return (

@@ -88,9 +88,11 @@ export default function CascadingMenu({
     };
   }, [open]);
 
-  // khóa nền khi mở modal
+  // L11: khóa nền chỉ trên mobile (desktop dropdown không cần lock)
   useEffect(() => {
     if (!open) return;
+    const isMobile = window.matchMedia("(max-width: 767px)").matches;
+    if (!isMobile) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = prev; };
@@ -124,11 +126,10 @@ export default function CascadingMenu({
         onMouseLeave={scheduleClose}
       >
         <button
-          className={`px-4 py-2 rounded-md ${
-            open ? "bg-gray-100"
+          className={`px-4 py-2 rounded-md ${open ? "bg-gray-100"
               : activeInside ? "bg-rose-50 text-rose-700"
-              : "hover:bg-gray-50"
-          }`}
+                : "hover:bg-gray-50"
+            }`}
           {...triggerHandlers}
         >
           {triggerLabel}
@@ -152,8 +153,8 @@ export default function CascadingMenu({
                           const itemClass = isLeafActive
                             ? "bg-rose-100 text-rose-700 font-medium"
                             : onPath
-                            ? "bg-rose-50 text-rose-700"
-                            : "text-gray-800 hover:bg-gray-50";
+                              ? "bg-rose-50 text-rose-700"
+                              : "text-gray-800 hover:bg-gray-50";
                           return (
                             <div
                               key={node.key || labelOf(node)}
@@ -202,11 +203,10 @@ export default function CascadingMenu({
     return (
       <div className="relative" ref={rootRef}>
         <button
-          className={`px-4 py-2 rounded-md ${
-            open ? "bg-gray-100"
+          className={`px-4 py-2 rounded-md ${open ? "bg-gray-100"
               : activeInside ? "bg-rose-50 text-rose-700"
-              : "hover:bg-gray-50"
-          }`}
+                : "hover:bg-gray-50"
+            }`}
           onClick={() => setOpen(true)}
         >
           {triggerLabel}
@@ -250,8 +250,8 @@ export default function CascadingMenu({
                                 const itemClass = isLeafActive
                                   ? "bg-rose-100 text-rose-700 font-medium"
                                   : onPath
-                                  ? "bg-rose-50 text-rose-700"
-                                  : "text-gray-800";
+                                    ? "bg-rose-50 text-rose-700"
+                                    : "text-gray-800";
                                 return (
                                   <div
                                     key={node.key || labelOf(node)}
@@ -352,24 +352,32 @@ export const demoMenu = [
     key: "kids",
     label: "Bánh trẻ em",
     children: [
-      { key: "boy", label: "Bánh bé trai", children: [
-        { key: "spider", label: "Người nhện" },
-        { key: "police", label: "Cảnh sát" },
-      ]},
-      { key: "girl", label: "Bánh bé gái", children: [
-        { key: "kitty", label: "Hello Kitty" },
-        { key: "barbie", label: "Barbie" },
-      ]},
+      {
+        key: "boy", label: "Bánh bé trai", children: [
+          { key: "spider", label: "Người nhện" },
+          { key: "police", label: "Cảnh sát" },
+        ]
+      },
+      {
+        key: "girl", label: "Bánh bé gái", children: [
+          { key: "kitty", label: "Hello Kitty" },
+          { key: "barbie", label: "Barbie" },
+        ]
+      },
     ],
   },
   { key: "basic", label: "Bánh Basic" },
   { key: "redvelvet", label: "Red Velvet" },
-  { key: "mousse", label: "Mousse hoa quả", children: [
-    { key: "mix", label: "Mix vị", children: [
-      { key: "mix-6", label: "6 vị" },
-      { key: "mix-9", label: "9 vị" },
-    ]},
-  ]},
+  {
+    key: "mousse", label: "Mousse hoa quả", children: [
+      {
+        key: "mix", label: "Mix vị", children: [
+          { key: "mix-6", label: "6 vị" },
+          { key: "mix-9", label: "9 vị" },
+        ]
+      },
+    ]
+  },
 ];
 
 /* Dùng:

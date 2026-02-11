@@ -1,10 +1,11 @@
 // src/App.jsx
-import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue, lazy, Suspense } from "react";
 import { LS, readLS, writeLS } from "./utils.js";
 import { DATA } from "./data.js";
 import { encodeState, decodeState } from "./utils/urlState.js";
 import { pidOf } from "./utils/pid.js";
-
+import { firstImg } from "./utils/img.js";
+import SectionErrorBoundary from "./components/system/SectionErrorBoundary.jsx";
 import Header from "./components/Header.jsx";
 import { Footer } from "./components/Footer.jsx";
 import { Hero } from "./components/Hero.jsx";
@@ -17,8 +18,9 @@ import PageViewer from "./components/PageViewer.jsx";
 import MessageButton from "./components/MessageButton.jsx";
 import BackToTop from "./components/BackToTop.jsx";
 import AnnouncementTicker from "./components/AnnouncementTicker.jsx";
+import LoadingSkeleton from "./components/LoadingSkeleton.jsx";
 
-import { readProductTabsFromEnv, fetchProductsFromTabs } from "./services/sheets.multi.js";
+import { readProductTabsFromEnv, fetchProductsFromTabs, fetchUnifiedData } from "./services/sheets.multi.js";
 import {
   fetchSheetRows, fetchTabAsObjects, fetchFbUrls,
   mapProducts, mapCategories, mapTags, mapMenu, mapPages,
@@ -52,11 +54,7 @@ const fold = (s = "") =>
 
 const hasDiacritics = (s = "") => lower(s) !== fold(s);
 
-const primaryImage = (p = {}) => {
-  if (Array.isArray(p.images) && p.images.length) return p.images[0];
-  if (typeof p.images === "string" && p.images) return p.images.split(",")[0].trim();
-  return p.image || p.thumbnail || "";
-};
+const primaryImage = firstImg;
 
 // sắp xếp
 const cmpGrid = (a, b) =>
@@ -84,7 +82,7 @@ const allPrices = (p = {}) => {
   return vals;
 };
 
-const norm = (s = "") => s.toString().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const norm = (s = "") => s.toString().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
 const normFb = (u) => { try { const x = new URL(u); x.search = ""; x.hash = ""; return x.toString(); } catch { return u; } };
 const HOME_LIMITS = { default: 8 };
 
@@ -121,8 +119,10 @@ function getProductCategoriesFromMenu(menu = []) {
 }
 function buildDescIndex(menu = []) {
   const tree = buildTreeFromFlat(menu); const product = findNodeByKey(tree, "product"); const idx = new Map();
-  const gather = (node) => { const kids = node.children || []; if (!kids.length) return [node.key];
-    const leaves = kids.flatMap(gather); if (node.key) idx.set(node.key, new Set(leaves.filter((k) => k !== node.key))); return leaves; };
+  const gather = (node) => {
+    const kids = node.children || []; if (!kids.length) return [node.key];
+    const leaves = kids.flatMap(gather); if (node.key) idx.set(node.key, new Set(leaves.filter((k) => k !== node.key))); return leaves;
+  };
   if (product) gather(product); return idx;
 }
 const inMenuCat = (catKey, selectedKey, descIdx) => selectedKey === "all" || catKey === selectedKey || !!descIdx.get(selectedKey)?.has(catKey);
@@ -275,6 +275,23 @@ function ActiveFilters({ filterState, clearTag, masterTags = [] }) {
   );
 }
 
+/* =================== Sheet config (biến env là hằng, tạo 1 lần) =================== */
+const _SHEET = {
+  id: import.meta.env.VITE_SHEET_ID,
+  gid: import.meta.env.VITE_SHEET_GID || "0",
+  gids: {
+    products: import.meta.env.VITE_SHEET_GID_PRODUCTS || import.meta.env.VITE_SHEET_GID || "0",
+    categories: import.meta.env.VITE_SHEET_GID_CATEGORIES,
+    tags: import.meta.env.VITE_SHEET_GID_TAGS,
+    menu: import.meta.env.VITE_SHEET_GID_MENU,
+    pages: import.meta.env.VITE_SHEET_GID_PAGES,
+    types: import.meta.env.VITE_SHEET_GID_TYPES,
+    levels: import.meta.env.VITE_SHEET_GID_LEVELS,
+    sizes: import.meta.env.VITE_SHEET_GID_SIZES,
+    announcements: import.meta.env.VITE_SHEET_GID_ANNOUNCEMENTS,
+  },
+};
+
 /* =================== App =================== */
 export default function App() {
   const [route, setRoute] = useState("home");
@@ -294,14 +311,21 @@ export default function App() {
   const [filtersResetKey, setFiltersResetKey] = useState(0);
 
   const [user, setUser] = useState(() => readLS(LS.AUTH, null));
+  /* ---------------- State ---------------- */
   const [fbUrls, setFbUrls] = useState(() => readLS(LS.FB_URLS, []));
   const [products, setProducts] = useState(() => readLS(LS.PRODUCTS, DATA.products || []));
-    useEffect(() => {
+  // Returning user có cache → false (hiện SP từ cache ngay)
+  // New user → true (hiện skeleton)
+  const [dataLoading, setDataLoading] = useState(() => {
+    const cached = readLS(LS.PRODUCTS, null);
+    return !cached || !Array.isArray(cached) || cached.length <= 1;
+  });
+  useEffect(() => {
     try {
       const mode = getMode(user);
       const sanitized = sanitizeProductsForMode(readLS(LS.PRODUCTS, DATA.products || []), mode);
       setProducts(sanitized);
-    } catch {}
+    } catch { }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
   const [categories, setCategories] = useState(() => readLS(LS.CATEGORIES, DATA.categories || []));
@@ -309,21 +333,7 @@ export default function App() {
   const [pages, setPages] = useState(() => readLS(LS.PAGES, DATA.pages || []));
   const [tags, setTags] = useState(() => readLS(LS.TAGS, DATA.tags || []));
 
-  const SHEET = {
-    id: import.meta.env.VITE_SHEET_ID,
-    gid: import.meta.env.VITE_SHEET_GID || "0",
-    gids: {
-      products: import.meta.env.VITE_SHEET_GID_PRODUCTS || import.meta.env.VITE_SHEET_GID || "0",
-      categories: import.meta.env.VITE_SHEET_GID_CATEGORIES,
-      tags: import.meta.env.VITE_SHEET_GID_TAGS,
-      menu: import.meta.env.VITE_SHEET_GID_MENU,
-      pages: import.meta.env.VITE_SHEET_GID_PAGES,
-      types: import.meta.env.VITE_SHEET_GID_TYPES,
-      levels: import.meta.env.VITE_SHEET_GID_LEVELS,
-      sizes: import.meta.env.VITE_SHEET_GID_SIZES,
-      announcements: import.meta.env.VITE_SHEET_GID_ANNOUNCEMENTS,
-    },
-  };
+  const SHEET = _SHEET;
 
   const [announcements, setAnnouncements] =
     useState(() => readLS(LS.ANNOUNCEMENTS, DATA.announcements || []));
@@ -331,13 +341,28 @@ export default function App() {
 
   const SYNC_MS = Number(import.meta.env.VITE_SYNC_INTERVAL_MS || 600000);
 
-  useEffect(() => writeLS(LS.AUTH, user), [user]);
-  useEffect(() => writeLS(LS.PRODUCTS, products), [products]);
-  useEffect(() => writeLS(LS.CATEGORIES, categories), [categories]);
-  useEffect(() => writeLS(LS.MENU, menu), [menu]);
-  useEffect(() => writeLS(LS.PAGES, pages), [pages]);
-  useEffect(() => writeLS(LS.TAGS, tags), [tags]);
-  useEffect(() => writeLS(LS.FB_URLS, fbUrls), [fbUrls]);
+  // P3: Batch localStorage writes — tránh block main thread khi syncAll cập nhật nhiều state
+  const lsQueue = useRef(new Map());
+  const flushLS = useCallback(() => {
+    const q = lsQueue.current;
+    if (!q.size) return;
+    const entries = [...q.entries()];
+    q.clear();
+    const run = () => entries.forEach(([k, v]) => writeLS(k, v));
+    if (typeof requestIdleCallback === "function") requestIdleCallback(run);
+    else setTimeout(run, 0);
+  }, []);
+  const queueLS = useCallback((key, val) => { lsQueue.current.set(key, val); }, []);
+  useEffect(() => { queueLS(LS.AUTH, user); flushLS(); }, [user]);
+  useEffect(() => {
+    queueLS(LS.PRODUCTS, products);
+    queueLS(LS.CATEGORIES, categories);
+    queueLS(LS.MENU, menu);
+    queueLS(LS.PAGES, pages);
+    queueLS(LS.TAGS, tags);
+    queueLS(LS.FB_URLS, fbUrls);
+    flushLS();
+  }, [products, categories, menu, pages, tags, fbUrls]);
   useEffect(() => {
     setLimit(24);
     const t = setTimeout(() => setLimit(9999), 150);
@@ -351,15 +376,15 @@ export default function App() {
       if (s.q) setQ(s.q);
       if (s.cat) setActiveCat(s.cat);
       if (s.view) {
-     setRoute(s.view);                            // ví dụ 'love'
-    } else if (s.q && s.q.trim()) {
-      setRoute("search");                          // chỉ vào search khi có query
-    } else if (s.cat && s.cat !== "all") {
-      setRoute(s.cat);                             // deep-link theo cat nếu không có 'view'
-    } else {
-      setRoute("home");                            // mặc định
-    }
-        if (s.filters) { setFilterState(s.filters); setFiltersResetKey((k) => k + 1); }
+        setRoute(s.view);                            // ví dụ 'love'
+      } else if (s.q && s.q.trim()) {
+        setRoute("search");                          // chỉ vào search khi có query
+      } else if (s.cat && s.cat !== "all") {
+        setRoute(s.cat);                             // deep-link theo cat nếu không có 'view'
+      } else {
+        setRoute("home");                            // mặc định
+      }
+      if (s.filters) { setFilterState(s.filters); setFiltersResetKey((k) => k + 1); }
     };
     applyFromURL();
     window.addEventListener("popstate", applyFromURL);
@@ -369,8 +394,8 @@ export default function App() {
   /* state -> URL */
   useEffect(() => {
     const u = new URL(location.href);
-    // Xóa các key do app quản lý, GIỮ các key khác (pid, v.v.)
-    ["view", "q", "cat", "filters"].forEach((k) => u.searchParams.delete(k));
+    // Xóa TẤT CẢ key do app quản lý (bao gồm cả filter params)
+    ["view", "q", "cat", "filters", "tags", "sizes", "lvls", "price", "feat", "stock", "sort"].forEach((k) => u.searchParams.delete(k));
     // Gộp lại các key mới từ state
     const qs = encodeState({ route, q, cat: activeCat, filters: filterState });
     if (qs) {
@@ -393,32 +418,6 @@ export default function App() {
       catch (e) { console.error("load FB sheet fail:", e); }
     })();
   }, []);
-  /*useEffect(() => {
-    const applyFromURL = () => {
-      const s = decodeState(location.search);
-
-      if (s.q) setQ(s.q);
-      if (s.cat) setActiveCat(s.cat);
-      if (s.view) setRoute(s.view);
-      if ((s.cat && s.cat !== "all") || s.q) setRoute("search");
-
-      if (s.filters) {
-        const f = s.filters;
-        // map nhãn có dấu từ master tags
-        if (f.tags instanceof Set || Array.isArray(f.tags)) {
-          const set = f.tags instanceof Set ? f.tags : new Set(f.tags);
-          const labels = {};
-          for (const t of (tags || [])) if (set.has(t.key)) labels[t.key] = t.label;
-          f.tagLabels = labels;
-        }
-        setFilterState(f);
-        setFiltersResetKey(k => k + 1);
-      }
-    };
-    applyFromURL();
-    window.addEventListener("popstate", applyFromURL);
-    return () => window.removeEventListener("popstate", applyFromURL);
-  }, []); // <- giữ nguyên deps*/
   useEffect(() => {
     if (!filterState?.tags?.size || !tags?.length) return;
     const hasAllLabels = [...filterState.tags].every(k => filterState.tagLabels?.[k]);
@@ -429,21 +428,16 @@ export default function App() {
     setFilterState(fs => ({ ...(fs || {}), tagLabels: labels }));
   }, [tags]); // chạy khi master tags cập nhật
 
-
-  /* tìm kiếm -> route */
-  /* useEffect(() => {
-    if (route === "admin") return;
-    const has = q.trim().length > 0;
-    if (has && route !== "search") setRoute("search");
-    if (!has && route === "search") setRoute(activeCat !== "all" ? activeCat : "all");
-  }, [q, route, activeCat]); */
-
   useEffect(() => {
     const has = q.trim().length > 0;
 
     if (has) {
       if (activeCat !== "all") setActiveCat("all");
       if (route !== "search") setRoute("search");
+    } else if (route === "search" && !filterState?.tags?.size) {
+      // Xoá search + không có filter → về home
+      setRoute("home");
+      setActiveCat("all");
     }
   }, [q]);
 
@@ -467,8 +461,8 @@ export default function App() {
       );
       setQuick(found || null);
     };
-    
-      if (!didInitQuickURLRef.current) {
+
+    if (!didInitQuickURLRef.current) {
       didInitQuickURLRef.current = true;
       quickInitFromURLRef.current = !!new URL(location.href).searchParams.get("pid");
     }
@@ -478,99 +472,178 @@ export default function App() {
     return () => window.removeEventListener("popstate", syncFromURL);
   }, [products]);
 
-  // back/forward: đồng bộ quick với ?pid
-  /*useEffect(() => {
-    const onPop = () => {
-      const pid = new URL(location.href).searchParams.get("pid");
-      if (!pid) return setQuick(null);
-      const p = (products || []).find(x => String(x.id) === String(pid));
-      setQuick(p || null);
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, [products]);*/
-
   /* đồng bộ dữ liệu */
   useEffect(() => {
+    let isFirstSync = true;
     async function syncAll() {
-      let prodRows;
-      const tabsEnv = (import.meta.env?.VITE_PRODUCT_TABS || "").trim();
-      if (tabsEnv) {
-        const tabs = readProductTabsFromEnv();
-        const rows = await fetchProductsFromTabs({
-          sheetId: SHEET.id, tabs,
-          normalize: (r) => ({
-            ...r,
-            images: String(r.images || r.image || "")
-              .replace(/\|/g, ",").replace(/\n/g, ",").split(",").map((s) => s.trim()).filter(Boolean).join(","),
-            price: String(r.price || r.gia || ""),
-            sizes: String(r.sizes || r.size || r.Sizes || r.Size || ""),
-            priceBySize: (r.pricebysize ?? r.priceBySize ?? ""),
-            visibility: String(r.visibility ?? r.Visibility ?? r.show ?? r.hienthi ?? r["hiển thị"] ?? "public").trim().toLowerCase(),
-            priceVisibility: String(r.priceVisibility ?? r.pricevisibility ?? r.showPrice ?? r.showprice ?? r.show_price ?? r.hienGia ?? r["hiển thị giá"] ?? "").trim().toLowerCase(),
-            description: String(r.description || r.desc || r.mo_ta || "").trim(),
-            descriptionVisibility: String(
-              r.descriptionVisibility ?? r.descriptionvisibility ??
-              r.descVisibility ?? r.descvisibility ??
-              r.showDesc ?? r.showdesc ??
-              r.showDescription ?? r.showdescription ??
-              r.hienMoTa ?? r["hiển thị mô tả"] ?? r["hien thi mo ta"] ?? ""
-            ).trim().toLowerCase(),
-                      }),
-        });
-        prodRows = rows;
-      } else {
-        prodRows = await fetchSheetRows({ sheetId: SHEET.id, gid: SHEET.gids.products || "0" });
-      }
-
-      const fromSheet = mapProducts(prodRows, null);
-
-      let types = [], levels = [];
+      const currentProducts = readLS(LS.PRODUCTS, []);
+      const hasCache = currentProducts.length > 1;
+      if (!hasCache && isFirstSync) setDataLoading(true);
+      isFirstSync = false;
       try {
-        if (SHEET.gids.types) {
-          const trows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.types });
-          types = mapTypes(trows); writeLS(LS.TYPES, types);
-        } else types = readLS(LS.TYPES, []);
-        if (SHEET.gids.levels) {
-          const lrows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.levels });
-          levels = mapLevels(lrows); writeLS(LS.LEVELS, levels);
-        } else levels = readLS(LS.LEVELS, []);
-      } catch (e) { console.error("load types/levels fail:", e); }
+        let prodRows;
+        let unifiedOk = false;
 
-      if (fromSheet?.length) {
-        const enriched = fromSheet.map((p) => enrichProductPricing(p, types, levels));
-        const mode = getMode(user);
-        const sanitized = sanitizeProductsForMode(enriched, mode);
-        setProducts(sanitized); writeLS(LS.PRODUCTS, sanitized);
-        const cats = [...new Set(sanitized.map((p) => p.category).filter(Boolean))];
-        if (cats.length) {
-          const existed = new Set((categories || []).map((c) => c.key));
-          const add = cats.filter((k) => !existed.has(k)).map((k) => ({ key: k, title: k }));
-          if (add.length) { const next = [...(categories || []), ...add]; setCategories(next); writeLS(LS.CATEGORIES, next); }
+        // 1. Ưu tiên fetch từ API gộp (nhanh, 1 request) - chỉ khi user cấu hình
+        const allUrl = import.meta.env.VITE_API_ALL_URL;
+        if (allUrl) {
+          const unified = await fetchUnifiedData(allUrl);
+          if (unified && unified.products && unified.products.length) {
+            // Set metadata
+            if (unified.categories?.length) { setCategories(mapCategories(unified.categories)); writeLS(LS.CATEGORIES, unified.categories); }
+            if (unified.tags?.length) { setTags(mapTags(unified.tags)); writeLS(LS.TAGS, unified.tags); }
+            if (unified.menu?.length) { setMenu(mapMenu(unified.menu)); writeLS(LS.MENU, unified.menu); }
+            if (unified.pages?.length) { setPages(mapPages(unified.pages)); writeLS(LS.PAGES, unified.pages); }
+            if (unified.announcements?.length) { setAnnouncements(mapAnnouncements(unified.announcements)); writeLS(LS.ANNOUNCEMENTS, unified.announcements); }
+            if (unified.types?.length) { writeLS(LS.TYPES, mapTypes(unified.types)); }
+            if (unified.levels?.length) { writeLS(LS.LEVELS, mapLevels(unified.levels)); }
+
+            // Set products
+            prodRows = unified.products.map(r => ({
+              ...r,
+              images: String(r.images || "").trim(),
+              price: String(r.price || r.gia || ""),
+              sizes: String(r.sizes || r.size || r.Sizes || r.Size || ""),
+              priceBySize: (r.pricebysize ?? r.priceBySize ?? ""),
+              visibility: String(r.visibility ?? r.Visibility ?? r.show ?? r.hienthi ?? r["hiển thị"] ?? "public").trim().toLowerCase(),
+              priceVisibility: String(r.priceVisibility ?? r.pricevisibility ?? r.showPrice ?? r.showprice ?? r.show_price ?? r.hienGia ?? r["hiển thị giá"] ?? "").trim().toLowerCase(),
+              description: String(r.description || r.desc || r.mo_ta || "").trim(),
+              descriptionVisibility: String(
+                r.descriptionVisibility ?? r.descriptionvisibility ??
+                r.descVisibility ?? r.descvisibility ??
+                r.showDesc ?? r.showdesc ??
+                r.showDescription ?? r.showdescription ??
+                r.hienMoTa ?? r["hiển thị mô tả"] ?? r["hien thi mo ta"] ?? ""
+              ).trim().toLowerCase(),
+            }));
+            unifiedOk = true;
+          }
         }
-      }
 
-      const loadOpt = async (gid, mapper, setter, lsKey) => {
-        if (!gid) return;
-        const rows = await fetchTabAsObjects({ sheetId: SHEET.id, gid });
-        const mapped = mapper(rows);
-        if (mapped?.length) { setter(mapped); writeLS(lsKey, mapped); }
-      };
-      await Promise.all([
-        loadOpt(SHEET.gids.categories, mapCategories, setCategories, LS.CATEGORIES),
-        loadOpt(SHEET.gids.tags, mapTags, setTags, LS.TAGS),
-        loadOpt(SHEET.gids.menu, mapMenu, setMenu, LS.MENU),
-        loadOpt(SHEET.gids.pages, mapPages, setPages, LS.PAGES),
-        loadOpt(SHEET.gids.sizes, mapSizes, () => {}, LS.SIZES),
-        loadOpt(SHEET.gids.announcements, mapAnnouncements, setAnnouncements, LS.ANNOUNCEMENTS),
-      ]);
+        // 2. Fallback: multi-tab (chỉ khi API gộp không trả được data)
+        if (!prodRows) {
+          const tabsEnv = (import.meta.env?.VITE_PRODUCT_TABS || "").trim();
+          if (tabsEnv) {
+            const tabs = readProductTabsFromEnv();
+
+            // Hàm chuẩn hoá row (dùng chung)
+            const normalizeRow = (r) => ({
+              ...r,
+              images: String(r.images || r.image || "")
+                .replace(/\|/g, ",").replace(/\n/g, ",").split(",").map((s) => s.trim()).filter(Boolean).join(","),
+              price: String(r.price || r.gia || ""),
+              sizes: String(r.sizes || r.size || r.Sizes || r.Size || ""),
+              priceBySize: (r.pricebysize ?? r.priceBySize ?? ""),
+              visibility: String(r.visibility ?? r.Visibility ?? r.show ?? r.hienthi ?? r["hiển thị"] ?? "public").trim().toLowerCase(),
+              priceVisibility: String(r.priceVisibility ?? r.pricevisibility ?? r.showPrice ?? r.showprice ?? r.show_price ?? r.hienGia ?? r["hiển thị giá"] ?? "").trim().toLowerCase(),
+              description: String(r.description || r.desc || r.mo_ta || "").trim(),
+              descriptionVisibility: String(
+                r.descriptionVisibility ?? r.descriptionvisibility ??
+                r.descVisibility ?? r.descvisibility ??
+                r.showDesc ?? r.showdesc ??
+                r.showDescription ?? r.showdescription ??
+                r.hienMoTa ?? r["hiển thị mô tả"] ?? r["hien thi mo ta"] ?? ""
+              ).trim().toLowerCase(),
+            });
+
+            // Tìm tab ưu tiên theo URL (?cat=xxx)
+            const urlCat = new URL(location.href).searchParams.get("cat") || "";
+            let priorityIdx = urlCat
+              ? tabs.findIndex(t => t.key.toLowerCase() === urlCat.toLowerCase())
+              : -1;
+            if (priorityIdx < 0) priorityIdx = 0; // mặc định = tab đầu tiên
+
+            const priorityTab = tabs[priorityIdx];
+            const restTabs = tabs.filter((_, i) => i !== priorityIdx);
+
+            // A. Fetch tab ưu tiên TRƯỚC (~2-3s)
+            console.time(`[Halley] Priority tab "${priorityTab.key}"`);
+            const priorityRows = await fetchProductsFromTabs({
+              sheetId: SHEET.id, tabs: [priorityTab], normalize: normalizeRow,
+            });
+            console.timeEnd(`[Halley] Priority tab "${priorityTab.key}"`);
+            console.log(`[Halley] Priority: ${priorityRows.length} products, hasCache=${hasCache}`);
+
+            // Set products sớm (nhưng GIỮ skeleton - chỉ tắt ở finally)
+            if (!hasCache && priorityRows.length) {
+              const mapped = mapProducts(priorityRows, null);
+              const mode = getMode(user);
+              const sanitized = sanitizeProductsForMode(mapped, mode);
+              setProducts(sanitized);
+              // KHÔNG gọi setDataLoading(false) ở đây!
+            }
+
+            // B. Fetch các tab còn lại ngầm
+            const restRows = await fetchProductsFromTabs({
+              sheetId: SHEET.id, tabs: restTabs, normalize: normalizeRow,
+            });
+
+            prodRows = [...priorityRows, ...restRows];
+          } else {
+            prodRows = await fetchSheetRows({ sheetId: SHEET.id, gid: SHEET.gids.products || "0" });
+          }
+        }
+
+        const fromSheet = mapProducts(prodRows, null);
+
+        // Set products sớm cho new user (nhưng GIỮ skeleton)
+        if (!hasCache && fromSheet?.length) {
+          const mode = getMode(user);
+          const sanitized = sanitizeProductsForMode(fromSheet, mode);
+          setProducts(sanitized);
+          // KHÔNG gọi setDataLoading(false) ở đây - chờ đến finally!
+        }
+
+        let types = [], levels = [];
+        try {
+          if (SHEET.gids.types) {
+            const trows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.types });
+            types = mapTypes(trows); writeLS(LS.TYPES, types);
+          } else types = readLS(LS.TYPES, []);
+          if (SHEET.gids.levels) {
+            const lrows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.levels });
+            levels = mapLevels(lrows); writeLS(LS.LEVELS, levels);
+          } else levels = readLS(LS.LEVELS, []);
+        } catch (e) { console.error("load types/levels fail:", e); }
+
+        if (fromSheet?.length) {
+          const enriched = fromSheet.map((p) => enrichProductPricing(p, types, levels));
+          const mode = getMode(user);
+          const sanitized = sanitizeProductsForMode(enriched, mode);
+          setProducts(sanitized); writeLS(LS.PRODUCTS, sanitized);
+          const cats = [...new Set(sanitized.map((p) => p.category).filter(Boolean))];
+          if (cats.length) {
+            const existed = new Set((categories || []).map((c) => c.key));
+            const add = cats.filter((k) => !existed.has(k)).map((k) => ({ key: k, title: k }));
+            if (add.length) { const next = [...(categories || []), ...add]; setCategories(next); writeLS(LS.CATEGORIES, next); }
+          }
+        }
+
+        const loadOpt = async (gid, mapper, setter, lsKey) => {
+          if (!gid) return;
+          if (unifiedOk) return; // Chỉ skip khi API gộp THẬT SỰ thành công
+
+          const rows = await fetchTabAsObjects({ sheetId: SHEET.id, gid });
+          const mapped = mapper(rows);
+          if (mapped?.length) { setter(mapped); writeLS(lsKey, mapped); }
+        };
+        await Promise.all([
+          loadOpt(SHEET.gids.categories, mapCategories, setCategories, LS.CATEGORIES),
+          loadOpt(SHEET.gids.tags, mapTags, setTags, LS.TAGS),
+          loadOpt(SHEET.gids.menu, mapMenu, setMenu, LS.MENU),
+          loadOpt(SHEET.gids.pages, mapPages, setPages, LS.PAGES),
+          loadOpt(SHEET.gids.sizes, mapSizes, () => { }, LS.SIZES),
+          loadOpt(SHEET.gids.announcements, mapAnnouncements, setAnnouncements, LS.ANNOUNCEMENTS),
+        ]).catch(e => console.error("loadOpt fail:", e));
+      } finally {
+        setDataLoading(false);
+      }
     }
     if (SHEET.id) { syncAll(); const t = setInterval(syncAll, SYNC_MS); return () => clearInterval(t); }
   }, [SHEET.id, SHEET.gid, SYNC_MS]); // eslint-disable-line
 
   /* lọc */
   function applyFilters(list = []) {
-    //if (!filterState) return [...list].sort(cmpDefault);
     if (!filterState) return [...list].sort(cmpGrid);
 
     const { price = [0, Number.MAX_SAFE_INTEGER], priceActive = false, tags: tagSet, sizes: sizeSet,
@@ -591,21 +664,20 @@ export default function App() {
     });
 
     if (!sort) out = [...out].sort(cmpDefault);
-    if (sort === "price-asc") out = [...out].sort((a, b) => (priceMinOf(a) ?? Infinity) - (priceMinOf(b) ?? Infinity));
-    if (sort === "price-desc") out = [...out].sort((a, b) => (priceMinOf(b) ?? -Infinity) - (priceMinOf(a) ?? -Infinity));
-    if (sort === "name-asc")  out = [...out].sort((a,b)=> cmpNameNatural(a.name, b.name));
-    if (sort === "name-desc") out = [...out].sort((a,b)=> cmpNameNatural(b.name, a.name));
+    else if (sort === "price-asc") out = [...out].sort((a, b) => (priceMinOf(a) ?? Infinity) - (priceMinOf(b) ?? Infinity));
+    else if (sort === "price-desc") out = [...out].sort((a, b) => (priceMinOf(b) ?? -Infinity) - (priceMinOf(a) ?? -Infinity));
+    else if (sort === "name-asc") out = [...out].sort((a, b) => cmpNameNatural(a.name, b.name));
+    else if (sort === "name-desc") out = [...out].sort((a, b) => cmpNameNatural(b.name, a.name));
+    else if (sort === "newest") out = [...out].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    else if (sort === "popular") out = [...out].sort((a, b) => (b.popular || 0) - (a.popular || 0));
     return out;
   }
 
-  const params = new URLSearchParams(window.location.search);
-  const view = params.get("view") || "";
-  const cat  = params.get("cat")  || "";
-
-  // tránh ReferenceError khi filter chưa khai báo ở scope này
-  const F = typeof filter === "undefined" ? {} : filter;
-
-  const listKey = `${view}|${cat}|${(F.tags || []).join(",")}|${F.q || ""}`;
+  const listKey = useMemo(() => {
+    const tags = filterState?.tags ? [...filterState.tags].join(",") : "";
+    const s = filterState?.sort || "";
+    return `${route}|${activeCat}|${tags}|${s}|${q}`;
+  }, [route, activeCat, filterState, q]);
 
   // hiệu ứng loading khi key đổi
   const [loading, setLoading] = useState(false);
@@ -630,33 +702,11 @@ export default function App() {
     if (route === "home" || route === "search") return products || [];
     return (products || []).filter((p) => inMenuCat(p.category, route, descByKey));
   }, [route, products, descByKey]);
-  const filteredForRoute = useMemo(() => applyFilters(baseForRoute), [filterState, baseForRoute]);
-
   /* list cho search */
   const nqVal = useMemo(() => q.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""), [q]);
   const catTitle = useMemo(() => Object.fromEntries(productCatsFromMenu.map((c) => [c.key, norm(c.title || c.key)])), [productCatsFromMenu]);
 
-  const searchIndex = useMemo(() => {
-    const byId = new Map();
-    const tokenMap  = new Map();
-    const tokenMapF = new Map();
-    for (const p of products || []) {
-      const cat = catTitle[p.category] || p.category || "";
-      const bag = [p.name || "", Array.isArray(p.tags) ? p.tags.join(" ") : String(p.tags || ""), cat].join(" ");
-      const T  = new Set(words(bag));
-      const TF = new Set(words(fold(bag)));
-      byId.set(p.id, { p, T, TF });
-      for (const t of T)  { if (!tokenMap.has(t))  tokenMap.set(t, new Set());  tokenMap.get(t).add(p.id); }
-      for (const t of TF) { if (!tokenMapF.has(t)) tokenMapF.set(t, new Set()); tokenMapF.get(t).add(p.id); }
-    }
-    return { byId, tokenMap, tokenMapF };
-  }, [products, catTitle]);
-
   const listForSearch = useMemo(() => {
-    /* const base = activeCat === "all"
-     ? (products || [])
-     : (products || []).filter((p) => inMenuCat(p.category, activeCat, descByKey)); */
-
     const base = products || [];
 
     const qTrim = q.trim();
@@ -666,8 +716,8 @@ export default function App() {
     const qTokens = words(qTrim);
     const strict = base.filter((p) => {
       const nameToks = words(p.name || "");
-      const tagToks  = words(Array.isArray(p.tags) ? p.tags.join(" ") : String(p.tags || ""));
-      const catToks  = words((catTitle[p.category] || p.category || ""));
+      const tagToks = words(Array.isArray(p.tags) ? p.tags.join(" ") : String(p.tags || ""));
+      const catToks = words((catTitle[p.category] || p.category || ""));
       const hay = new Set([...nameToks, ...tagToks, ...catToks]);
       return qTokens.every((t) => hay.has(t));
     });
@@ -677,14 +727,13 @@ export default function App() {
     const qNF = words(fold(qTrim));
     return base.filter((p) => {
       const nameToks = words(fold(p.name || ""));
-      const tagToks  = words(fold(Array.isArray(p.tags) ? p.tags.join(" ") : String(p.tags || "")));
-      const catToks  = words(fold(catTitle[p.category] || p.category || ""));
+      const tagToks = words(fold(Array.isArray(p.tags) ? p.tags.join(" ") : String(p.tags || "")));
+      const catToks = words(fold(catTitle[p.category] || p.category || ""));
       const hay = new Set([...nameToks, ...tagToks, ...catToks]);
       return qNF.every((t) => hay.has(t));
     });
-  }, [q, products, catTitle, /* activeCat, descByKey */]);
+  }, [q, products, catTitle]);
 
-  //const listCapped = useMemo(() => listForSearch.slice(0, limit), [listForSearch, limit]);
 
   const customPage = useMemo(() => (pages || []).find((p) => p.key === route), [pages, route]);
 
@@ -695,18 +744,22 @@ export default function App() {
   const suppressSpyUntilRef = useRef(0);
   const rafRef = useRef(0);
 
+  const filtered = useMemo(() => {
+    const base = route === "search" ? listForSearch : baseForRoute;
+    return applyFilters(base);
+  }, [route, listForSearch, baseForRoute, filterState]);
+
   const homeSections = useMemo(() => {
     if (route !== "home") return [];
     const arr = [];
-    //const sortFn = (a, b) => (b.popular || 0) - (a.popular || 0) || (b.createdAt || 0) - (a.createdAt || 0);
     const sortFn = cmpGrid;
     for (const cat of productCatsFromMenu) {
       const limit = HOME_LIMITS?.[cat.key] ?? HOME_LIMITS?.default ?? 6;
-      const items = (filteredForRoute || []).filter((p) => p.category === cat.key).sort(sortFn).slice(0, limit);
+      const items = (filtered || []).filter((p) => p.category === cat.key).sort(sortFn).slice(0, limit);
       if (items.length) arr.push({ key: cat.key, title: cat.title, items });
     }
     return arr;
-  }, [route, productCatsFromMenu, filteredForRoute]);
+  }, [route, productCatsFromMenu, filtered]);
 
   const getOffset = useCallback(() => {
     const el = catbarRef.current; if (!el) return 0;
@@ -792,7 +845,11 @@ export default function App() {
       else { setActiveCat(key); setRoute(key); const u = new URL(location.href); u.hash = ""; history.replaceState(null, "", u); }
       return;
     }
-    if (key === "all") { setActiveCat("all"); setRoute("search"); } else { setActiveCat(key); setRoute(key); }
+    // Ngoài home: click "Tất cả" → về home nếu không search, giữ search nếu đang search
+    if (key === "all") {
+      setActiveCat("all");
+      setRoute(q?.trim() ? "search" : "home");
+    } else { setActiveCat(key); setRoute(key); }
   }
 
   function navigate(key) {
@@ -801,16 +858,20 @@ export default function App() {
     else if (categoryKeysFromMenu.has(key)) setActiveCat(key);
   }
 
-  useEffect(() => { scrollTop(); }, [route, activeCat]);
+  // P8: chỉ scroll khi route thay đổi, không fire 2 lần khi cả route+activeCat đổi
+  const prevRouteRef = useRef(route);
+  useEffect(() => {
+    if (prevRouteRef.current !== route) { scrollTop(); prevRouteRef.current = route; }
+  }, [route, activeCat]);
 
   const menuPublic = useMemo(() => stripAdmin(menu), [menu]);
 
-  // Gợi ý: danh mục + sản phẩm
+  // Gợi ý: danh mục + sản phẩm — dùng qDeb để debounce, dùng productCatsFromMenu đã memo
   const suggestions = useMemo(() => {
-    const query = q.trim().toLowerCase();
+    const query = qDeb.trim().toLowerCase();
     if (!query) return [];
 
-    const cats = getProductCategoriesFromMenu(menu)
+    const cats = productCatsFromMenu
       .filter(c => (c.title || c.key || "").toLowerCase().includes(query))
       .map(c => ({ type: "category", label: c.title || c.key, key: c.key }));
 
@@ -829,7 +890,7 @@ export default function App() {
       }));
 
     return [...cats, ...prods];
-  }, [q, products, menu]);
+  }, [qDeb, products, productCatsFromMenu]);
 
   function handleSuggestionSelect(s) {
     if (s?.type === "category" && s.key) {
@@ -874,32 +935,23 @@ export default function App() {
 
   const openQuick = useCallback((p) => {
     setQuick(p);
-    const u = new URL(location.href); 
-    u.searchParams.set("pid",  pidOf(p));
+    const u = new URL(location.href);
+    u.searchParams.set("pid", pidOf(p));
     window.history.pushState(null, "", u);
   }, []);
   const closeQuick = useCallback(() => {
-    // Nếu đang có ?pid, ưu tiên back để người dùng bấm back sẽ "đóng" modal đúng nghĩa
-    // Nhưng nếu user mở trực tiếp bằng link có pid thì back sẽ rời trang, nên dùng replaceState.
-    const u = new URL(location.href);
-    const hasPid = u.searchParams.has("pid");
-
     setQuick(null);
-    if (!hasPid) return;
-
-    if (quickInitFromURLRef.current) {
+    // Luôn dùng replaceState để xoá pid — history.back() có thể rời trang (incognito, direct link)
+    const u = new URL(location.href);
+    if (u.searchParams.has("pid")) {
       u.searchParams.delete("pid");
       window.history.replaceState(null, "", u);
-      // Sau khi đã "hạ" pid khỏi URL, các lần mở/đóng tiếp theo có thể dùng back bình thường
-      quickInitFromURLRef.current = false;
-    } else {
-      window.history.back();
     }
   }, []);
 
   /* click tag từ QuickView */
   const handlePickTagFromQuickView = useCallback((tag) => {
-    const raw  = String(tag || "").trim();
+    const raw = String(tag || "").trim();
     const slug = tagKey(raw);
     if (!slug) return;
     setQ("");
@@ -931,17 +983,25 @@ export default function App() {
       if (next.size === 0) { delete res.tags; delete res.tagLabels; }
       return res;
     });
+    // Nếu xoá hết tags + không có search query → về trang chủ
+    const currentTags = filterState?.tags;
+    const willBeEmpty = t === "*" || (currentTags?.size === 1 && currentTags.has(t));
+    if (willBeEmpty && !q?.trim()) {
+      setRoute("home");
+      setActiveCat("all");
+    }
   };
 
-  const filtered = useMemo(() => {
-    const base = route === "search" ? listForSearch : baseForRoute;
-    return applyFilters(base);
-  }, [route, listForSearch, baseForRoute, filterState]);
+
 
   /* --------------- render --------------- */
+  // Skeleton giữ cho đến khi TẤT CẢ data sẵn sàng
+  const showSkeleton = dataLoading;
   let mainContent = null;
 
-  if (customPage) {
+  if (showSkeleton) {
+    mainContent = <LoadingSkeleton count={8} message="Đang tải sản phẩm…" />;
+  } else if (customPage) {
     mainContent = <PageViewer page={customPage} />;
   } else if (route === "search") {
     const list = filtered;
@@ -955,11 +1015,17 @@ export default function App() {
             onSortChange={(v) => setFilterState((s) => ({ ...(s || {}), sort: v }))}
           />
           <ActiveFilters filterState={filterState} clearTag={clearTag} masterTags={tags} />
-          <ProductList
-            products={list.slice(0, limit)}
-            onImageClick={openQuick} 
-            filter={filterState} 
-          />
+          {list.length > 0 ? (
+            <ProductList
+              products={list}
+              onImageClick={openQuick}
+              filter={filterState}
+            />
+          ) : dataLoading ? (
+            <LoadingSkeleton count={4} message="Đang tìm kiếm sản phẩm…" />
+          ) : (
+            <div className="py-16 text-center text-gray-400 text-sm">Không tìm thấy sản phẩm nào</div>
+          )}
         </section>
       </>
     );
@@ -973,11 +1039,11 @@ export default function App() {
             products={products}
             interval={2000}
             fbUrls={fbUrls}
-            onBannerClick={(p) => { 
-              setQuick(p); 
-              const u = new URL(location.href); 
-              u.searchParams.set("pid", pidOf(p)); 
-              window.history.pushState(null, "", u); 
+            onBannerClick={(p) => {
+              setQuick(p);
+              const u = new URL(location.href);
+              u.searchParams.set("pid", pidOf(p));
+              window.history.pushState(null, "", u);
             }}
           />
         )}
@@ -985,19 +1051,22 @@ export default function App() {
 
         {isHome ? (
           <section className="max-w-6xl mx-auto p-4 space-y-10">
-            {getProductCategoriesFromMenu(menu).map(({ key, title }) => {
-              const items = (list || []).filter((p) => p.category === key).slice(0, HOME_LIMITS?.[key] ?? HOME_LIMITS.default);
-              if (!items.length) return null;
-              return (
-                <div key={key} ref={(el) => (sectionRefs.current[key] = el)}>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-lg font-semibold">{title}</h3>
-                    <button className="text-rose-600 hover:underline" onClick={() => { navigate(key); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" })); }}>Xem tất cả</button>
+            {(() => {
+              const sections = homeSections.map(({ key, title, items }) => {
+                return (
+                  <div key={key} ref={(el) => (sectionRefs.current[key] = el)}>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-lg font-semibold">{title}</h3>
+                      <button className="text-rose-600 hover:underline" onClick={() => { navigate(key); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" })); }}>Xem tất cả</button>
+                    </div>
+                    <ProductList products={items} onImageClick={openQuick} />
                   </div>
-                  <ProductList products={items} onImageClick={openQuick} />
-                </div>
-              );
-            })}
+                );
+              });
+              const hasContent = sections.some(Boolean);
+              if (!hasContent && (dataLoading || products.length > 1)) return <LoadingSkeleton count={8} message="Đang tải sản phẩm…" />;
+              return sections;
+            })()}
           </section>
         ) : (
           <section className="max-w-6xl mx-auto p-4">
@@ -1007,11 +1076,17 @@ export default function App() {
               onSortChange={(v) => setFilterState((s) => ({ ...(s || {}), sort: v }))}
             />
             <ActiveFilters filterState={filterState} clearTag={clearTag} masterTags={tags} />
-            <ProductList 
-              products={list}
-              onImageClick={openQuick}
-              filter={filterState}
-            />
+            {list.length > 0 ? (
+              <ProductList
+                products={list}
+                onImageClick={openQuick}
+                filter={filterState}
+              />
+            ) : (dataLoading || products.length > 1) ? (
+              <LoadingSkeleton count={8} message="Đang tải sản phẩm…" />
+            ) : (
+              <div className="py-16 text-center text-gray-400 text-sm">Không có sản phẩm trong danh mục này</div>
+            )}
           </section>
         )}
       </>
@@ -1020,45 +1095,60 @@ export default function App() {
 
   return (
     <div className="bg-gray-50 min-h-screen">
-      <Header
-        currentKey={route}
-        navItems={menuPublic}
-        onNavigate={navigate}
-        logoText={DATA.logoText}
-        logoSrcDesktop={DATA.logoDesktop}
-        logoSrcMobile={DATA.logoMobile}
-        logoSrc={DATA.logoUrl}
-        hotline={DATA.hotline}
-        searchQuery={q}
-        onSearchChange={setQ}
-        onSearchSubmit={(qq) =>
-          setRoute(qq.trim() ? "search" : activeCat !== "all" ? activeCat : "all")
-        }
-        suggestions={suggestions}
-        onSuggestionSelect={handleSuggestionSelect}
-      />
-      <AnnouncementTicker items={announcements} />
-      <main>{mainContent}</main>
+      <SectionErrorBoundary name="Header">
+        <Header
+          currentKey={route}
+          navItems={menuPublic}
+          onNavigate={navigate}
+          logoText={DATA.logoText}
+          logoSrcDesktop={DATA.logoDesktop}
+          logoSrcMobile={DATA.logoMobile}
+          logoSrc={DATA.logoUrl}
+          hotline={DATA.hotline}
+          searchQuery={q}
+          onSearchChange={setQ}
+          onSearchSubmit={(qq) =>
+            setRoute(qq.trim() ? "search" : activeCat !== "all" ? activeCat : "all")
+          }
+          suggestions={suggestions}
+          onSuggestionSelect={handleSuggestionSelect}
+        />
+      </SectionErrorBoundary>
+
+      <SectionErrorBoundary name="Thông báo">
+        <AnnouncementTicker items={announcements} />
+      </SectionErrorBoundary>
+
+      <SectionErrorBoundary name="Nội dung chính">
+        <main>{mainContent}</main>
+      </SectionErrorBoundary>
 
       {quick && (
-        <ProductQuickView
-          key={pidOf(quick)}
-          product={quick}
-          onClose={closeQuick}
-          onPickTag={handlePickTagFromQuickView}
-        />
+        <SectionErrorBoundary name="Xem nhanh">
+          <ProductQuickView
+            key={pidOf(quick)}
+            product={quick}
+            onClose={closeQuick}
+            onPickTag={handlePickTagFromQuickView}
+          />
+        </SectionErrorBoundary>
       )}
 
-      <FilterSheet open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Bộ lọc">
-        <Filters
-          key={filtersResetKey}
-          products={route === "search" ? listForSearch : baseForRoute}
-          tags={tags}
-          onChange={setFilterState}
-        />
-      </FilterSheet>
+      <SectionErrorBoundary name="Bộ lọc">
+        <FilterSheet open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Bộ lọc">
+          <Filters
+            key={filtersResetKey}
+            products={route === "search" ? listForSearch : baseForRoute}
+            tags={tags}
+            onChange={setFilterState}
+          />
+        </FilterSheet>
+      </SectionErrorBoundary>
 
-      <Footer data={DATA.footer} />
+      <SectionErrorBoundary name="Footer">
+        <Footer data={DATA.footer} pages={pages} />
+      </SectionErrorBoundary>
+
       <BackToTop />
       <MessageButton />
     </div>

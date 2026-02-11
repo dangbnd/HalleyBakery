@@ -1,7 +1,7 @@
 // src/components/Footer.jsx
 import React from "react";
 
-export function Footer({ data = {} }) {
+export function Footer({ data = {}, pages = [] }) {
   const brandName = data?.brand?.name || "Halley Bakery";
 
   const phone = data?.phone || data?.hotline || "0123 456 789";
@@ -12,9 +12,9 @@ export function Footer({ data = {} }) {
     Array.isArray(data?.hours) && data.hours.length
       ? data.hours
       : [
-          { d: "Thứ 2 — Thứ 6", t: "08:00 — 20:00" },
-          { d: "Thứ 7 — CN", t: "08:00 — 19:00" },
-        ];
+        { d: "Thứ 2 — Thứ 6", t: "08:00 — 20:00" },
+        { d: "Thứ 7 — CN", t: "08:00 — 19:00" },
+      ];
 
   const socials = {
     facebook: data?.socials?.facebook || data?.facebook,
@@ -50,9 +50,9 @@ export function Footer({ data = {} }) {
                 <PinIcon className="mt-0.5" /> <span>{address}</span>
               </div>
               <div className="flex text-justify text-rose-600/90 font-bold">
-                  Khách hàng đi từ ngõ 2 Xã Đàn vào đường Kim Hoa, 
-                  Không đi vào ngõ 422 Lê Duẩn, đường đi rất nhỏ, rất khó đi.
-                </div>
+                Khách hàng đi từ ngõ 2 Xã Đàn vào đường Kim Hoa,
+                Không đi vào ngõ 422 Lê Duẩn, đường đi rất nhỏ, rất khó đi.
+              </div>
               <div className="flex gap-2 pt-1">
                 <a
                   href={mapHref}
@@ -60,7 +60,7 @@ export function Footer({ data = {} }) {
                   rel="noopener"
                   className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
                 >
-                  <DirectionsIcon /> 
+                  <DirectionsIcon />
                   Chỉ đường
                 </a>
                 <a
@@ -133,8 +133,8 @@ export function Footer({ data = {} }) {
         <div className="max-w-6xl mx-auto px-4 py-4 text-sm text-gray-600 flex flex-col sm:flex-row items-center gap-2">
           <div className="grow">© {new Date().getFullYear()} {brandName}. All rights reserved.</div>
           <div className="flex items-center gap-4">
-            <a href="?view=policy" className="hover:underline">Chính sách bảo mật</a>
-            <a href="?view=terms" className="hover:underline">Điều khoản</a>
+            {pages.some(p => p.key === "policy") && <a href="?view=policy" className="hover:underline">Chính sách bảo mật</a>}
+            {pages.some(p => p.key === "terms") && <a href="?view=terms" className="hover:underline">Điều khoản</a>}
           </div>
         </div>
       </div>
@@ -151,10 +151,10 @@ function renderSocialIcon(key, url) {
     key === "facebook"
       ? { color: "#1877F2", glyph: <FacebookGlyph /> }
       : key === "instagram"
-      ? { gradient: "instagram", glyph: <InstagramGlyph /> }
-      : key === "tiktok"
-      ? { color: "#000000", glyph: <TiktokGlyph /> }
-      : { color: "#0068FF", glyph: <ZaloGlyph /> };
+        ? { gradient: "instagram", glyph: <InstagramGlyph /> }
+        : key === "tiktok"
+          ? { color: "#000000", glyph: <TiktokGlyph /> }
+          : { color: "#0068FF", glyph: <ZaloGlyph /> };
   return (
     <a href={url} target="_blank" rel="noopener" className={aClass} aria-label={key} key={key}>
       <Circle color={circleProps.color} gradient={circleProps.gradient}>
@@ -226,13 +226,6 @@ function Circle({ color, gradient, children }) {
 }
 
 /* ===== Icons ===== */
-function AttentionsIcon({ className }) {
-  return (
-    <svg viewBox="0 0 24 24" className={"h-5 w-5 text-gray-500 " + (className || "")} fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.08 4.18 2 2 0 0 1 4.06 2h3a2 2 0 0 1 2 1.72c.12.9.34 1.77.66 2.6a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.48-1.18a2 2 0 0 1 2.11-.45c.83.32 1.7.54 2.6.66A2 2 0 0 1 22 16.92z" />
-    </svg>
-  );
-}
 function PhoneIcon({ className }) {
   return (
     <svg viewBox="0 0 24 24" className={"h-5 w-5 text-gray-500 " + (className || "")} fill="none" stroke="currentColor" strokeWidth="1.8">

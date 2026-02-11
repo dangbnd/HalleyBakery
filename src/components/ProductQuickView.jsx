@@ -2,24 +2,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import ProductImage, { getImageUrls } from "./ProductImage.jsx";
-import { cdn, prefetchImage } from "../utils/img.js";
+import { cdn, cdnThumb, prefetchImage } from "../utils/img.js";
+import { VND } from "./PriceTag.jsx";
 
-const VND = new Intl.NumberFormat("vi-VN", {
-  style: "currency",
-  currency: "VND",
-  maximumFractionDigits: 0,
-});
 
-const onlyDigits = (s) => String(s || "").match(/\d+/)?.[0] || "";
 
-// CDN resize + nén WebP cho thumbnail
-const cdnThumb = (raw = "", w = 96, h = 96, q = 65) => {
-  if (!raw) return "";
-  const https = String(raw).replace(/^http:\/\//i, "https://");
-  const noProto = https.replace(/^https?:\/\//i, "");
-  const url = encodeURIComponent(noProto);
-  return `https://images.weserv.nl/?url=${url}&w=${w}&h=${h}&fit=cover&output=webp&q=${q}`;
-};
+// Trích các ký tự số từ chuỗi (dùng cho label size)
+const onlyDigits = (s) => String(s || "").replace(/[^\d]/g, "");
 
 // Gom size → giá từ pricing.table | priceBySize | price
 function buildSizeRows(product = {}) {
@@ -92,18 +81,15 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
     for (const u of nexts) prefetchImage(cdn(u, { w: 960, q: 62 }));
   }, [idx, images]);
 
+  // B7: preload ảnh hiện tại qua CDN (khớp URL mà ProductImage sẽ render)
   useEffect(() => {
+    if (!images.length || !images[idx]) return;
     const link = document.createElement("link");
     link.rel = "preload";
     link.as = "image";
-    link.href = images[idx];      // nếu dùng CDN thumb riêng, thay bằng URL 960px
+    link.href = cdn(images[idx], { w: 960, q: 62 });
     document.head.appendChild(link);
     return () => document.head.removeChild(link);
-  }, [idx, images]);
-
-  useEffect(() => {
-    const nexts = [images[(idx+1)%images.length], images[(idx+2)%images.length]].filter(Boolean);
-    for (const u of nexts) prefetchImage(cdn(u,{w:960,q:62}));
   }, [idx, images]);
 
   if (!product) return null;
@@ -244,7 +230,7 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
                       <button
                         type="button"
                         key={i}
-                        onClick={() => { onPickTag?.(t); onClose?.(); }}
+                        onClick={() => { onPickTag?.(t); }}
                         className="px-2 py-1 rounded-full border text-xs text-gray-700 bg-gray-50 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-rose-400 cursor-pointer"
                         aria-label={`Lọc theo ${t}`}
                         title={`Lọc theo ${t}`}

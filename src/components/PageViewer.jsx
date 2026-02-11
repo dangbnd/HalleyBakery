@@ -1,5 +1,6 @@
 // src/components/PageViewer.jsx
-import React from "react";
+import React, { useMemo } from "react";
+import DOMPurify from "dompurify";
 
 /* ===== helpers ===== */
 const S = (v) => (v == null ? "" : String(v).trim());
@@ -128,7 +129,7 @@ export default function PageViewer({ page = {} }) {
         <section className="max-w-6xl mx-auto px-4 mt-8">
           <article
             className="prose prose-sm md:prose max-w-none prose-rose"
-            dangerouslySetInnerHTML={{ __html: html }}
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }}
           />
         </section>
       )}

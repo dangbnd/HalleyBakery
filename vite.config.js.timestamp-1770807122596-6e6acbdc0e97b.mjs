@@ -1,0 +1,18 @@
+// vite.config.js
+import { defineConfig } from "file:///C:/Users/PC/Documents/GitHub/HalleyBakery/node_modules/vite/dist/node/index.js";
+import react from "file:///C:/Users/PC/Documents/GitHub/HalleyBakery/node_modules/@vitejs/plugin-react/dist/index.js";
+var vite_config_default = defineConfig({
+  plugins: [react()],
+  preview: {
+    host: true,
+    port: 4173,
+    // an toàn: chỉ cho phép domain bạn dùng
+    allowedHosts: ["preview.halleybakery.io.vn", "halleybakery.io.vn"]
+    // hoặc mở rộng cho mọi host (ít an toàn):
+    // allowedHosts: true,
+  }
+});
+export {
+  vite_config_default as default
+};
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsidml0ZS5jb25maWcuanMiXSwKICAic291cmNlc0NvbnRlbnQiOiBbImNvbnN0IF9fdml0ZV9pbmplY3RlZF9vcmlnaW5hbF9kaXJuYW1lID0gXCJDOlxcXFxVc2Vyc1xcXFxQQ1xcXFxEb2N1bWVudHNcXFxcR2l0SHViXFxcXEhhbGxleUJha2VyeVwiO2NvbnN0IF9fdml0ZV9pbmplY3RlZF9vcmlnaW5hbF9maWxlbmFtZSA9IFwiQzpcXFxcVXNlcnNcXFxcUENcXFxcRG9jdW1lbnRzXFxcXEdpdEh1YlxcXFxIYWxsZXlCYWtlcnlcXFxcdml0ZS5jb25maWcuanNcIjtjb25zdCBfX3ZpdGVfaW5qZWN0ZWRfb3JpZ2luYWxfaW1wb3J0X21ldGFfdXJsID0gXCJmaWxlOi8vL0M6L1VzZXJzL1BDL0RvY3VtZW50cy9HaXRIdWIvSGFsbGV5QmFrZXJ5L3ZpdGUuY29uZmlnLmpzXCI7aW1wb3J0IHsgZGVmaW5lQ29uZmlnIH0gZnJvbSBcInZpdGVcIjtcclxuaW1wb3J0IHJlYWN0IGZyb20gXCJAdml0ZWpzL3BsdWdpbi1yZWFjdFwiO1xyXG5cclxuZXhwb3J0IGRlZmF1bHQgZGVmaW5lQ29uZmlnKHtcclxuICBwbHVnaW5zOiBbcmVhY3QoKV0sXHJcbiAgcHJldmlldzoge1xyXG4gICAgaG9zdDogdHJ1ZSxcclxuICAgIHBvcnQ6IDQxNzMsXHJcbiAgICAvLyBhbiB0b1x1MDBFMG46IGNoXHUxRUM5IGNobyBwaFx1MDBFOXAgZG9tYWluIGJcdTFFQTFuIGRcdTAwRjluZ1xyXG4gICAgYWxsb3dlZEhvc3RzOiBbXCJwcmV2aWV3LmhhbGxleWJha2VyeS5pby52blwiLCBcImhhbGxleWJha2VyeS5pby52blwiXSxcclxuICAgIC8vIGhvXHUxRUI3YyBtXHUxRURGIHJcdTFFRDluZyBjaG8gbVx1MUVDRGkgaG9zdCAoXHUwMEVEdCBhbiB0b1x1MDBFMG4pOlxyXG4gICAgLy8gYWxsb3dlZEhvc3RzOiB0cnVlLFxyXG4gIH0sXHJcbn0pO1xyXG4iXSwKICAibWFwcGluZ3MiOiAiO0FBQXlULFNBQVMsb0JBQW9CO0FBQ3RWLE9BQU8sV0FBVztBQUVsQixJQUFPLHNCQUFRLGFBQWE7QUFBQSxFQUMxQixTQUFTLENBQUMsTUFBTSxDQUFDO0FBQUEsRUFDakIsU0FBUztBQUFBLElBQ1AsTUFBTTtBQUFBLElBQ04sTUFBTTtBQUFBO0FBQUEsSUFFTixjQUFjLENBQUMsOEJBQThCLG9CQUFvQjtBQUFBO0FBQUE7QUFBQSxFQUduRTtBQUNGLENBQUM7IiwKICAibmFtZXMiOiBbXQp9Cg==
