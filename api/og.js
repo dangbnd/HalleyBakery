@@ -112,10 +112,10 @@ let indexHtml = null;
 function getIndexHtml() {
     if (indexHtml) return indexHtml;
     try {
-        indexHtml = readFileSync(join(process.cwd(), "dist", "index.html"), "utf-8");
+        indexHtml = readFileSync(join(process.cwd(), "dist", "_app.html"), "utf-8");
     } catch {
         // Nếu dist không có, thử .output hoặc public
-        try { indexHtml = readFileSync(join(process.cwd(), ".output", "static", "index.html"), "utf-8"); } catch { }
+        try { indexHtml = readFileSync(join(process.cwd(), ".output", "static", "_app.html"), "utf-8"); } catch { }
     }
     return indexHtml;
 }
