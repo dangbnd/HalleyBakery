@@ -182,8 +182,8 @@ export default async function handler(req, res) {
             description = cp.length
                 ? `Xem ${cp.length} mẫu ${catTitle} tại Halley Bakery. Đặt bánh online, giao tận nơi.`
                 : `${catTitle} tại Halley Bakery. Đặt bánh online, giao tận nơi.`;
-            const w = cp.find(p => imgOf(p) !== DEFAULT_IMAGE);
-            if (w) image = imgOf(w);
+            const withImg = cp.filter(p => imgOf(p) !== DEFAULT_IMAGE);
+            if (withImg.length) image = imgOf(withImg[Math.floor(Math.random() * withImg.length)]);
         } else if (q) {
             title = `Tìm "${q}" — Halley Bakery`;
             description = `Kết quả tìm kiếm "${q}" tại Halley Bakery.`;
