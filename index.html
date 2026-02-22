@@ -1,46 +1,107 @@
 <!doctype html>
 <html lang="vi">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <!-- Favicon / Icons -->
-    <link rel="icon" type="image/png" href="/brand/logo-mobile.png?v=1">
-    <link rel="shortcut icon" type="image/png" href="/brand/logo-mobile.png?v=1">
-    <link rel="apple-touch-icon" href="/brand/logo-mobile.png?v=1">
-    <meta name="theme-color" content="#ffffff">
-    <link rel="preconnect" href="https://lh3.googleusercontent.com" crossorigin>
-    <link rel="preconnect" href="https://drive.google.com" crossorigin>
-    <link rel="preconnect" href="https://docs.google.com" crossorigin>
-    <link rel="dns-prefetch" href="//lh3.googleusercontent.com">
-    <link rel="dns-prefetch" href="//drive.google.com">
-    <link rel="preconnect" href="https://images.weserv.nl">
-    <link rel="dns-prefetch" href="https://images.weserv.nl">
-    <title>HALLEY BAKERY</title>
-  </head>
-  <body>
-    
-    <div id="root">
-      <style>
-        .hb-boot{height:100vh;display:flex;align-items:center;justify-content:center;font:600 16px/1.2 system-ui}
-        .hb-spin{width:28px;height:28px;border:3px solid #ddd;border-top-color:#333;border-radius:50%;animation:hb 1s linear infinite;margin-right:10px}
-        @keyframes hb{to{transform:rotate(1turn)}}
-        .hb-err{position:fixed;inset:0;background:#fff;padding:24px;font:14px/1.4 ui-monospace,monospace;overflow:auto}
-      </style>
-      <div class="hb-boot"><div class="hb-spin"></div>Đang khởi động…</div>
-    </div>
-    <script>
-      (function(){
-        function show(e){
-          var el=document.createElement('div');el.className='hb-err';
-          el.innerHTML='<b>Lỗi khởi động.</b><br><pre>'+String(e && (e.message||e)).slice(0,2000)+'</pre>';
-          document.body.appendChild(el);
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Favicon / Icons -->
+  <link rel="icon" type="image/png" href="/brand/logo-mobile.png?v=1">
+  <link rel="shortcut icon" type="image/png" href="/brand/logo-mobile.png?v=1">
+  <link rel="apple-touch-icon" href="/brand/logo-mobile.png?v=1">
+  <meta name="theme-color" content="#ffffff">
+
+  <!-- SEO -->
+  <meta name="description"
+    content="Halley Bakery - Bánh sinh nhật, bánh sự kiện, bánh kem theo yêu cầu tại Hà Nội. Đặt bánh online, giao hàng tận nơi.">
+  <meta name="keywords" content="bánh sinh nhật, bánh kem, halley bakery, đặt bánh hà nội, bánh sự kiện, cake">
+  <meta name="author" content="Halley Bakery">
+
+  <!-- Open Graph (Facebook, Zalo, Messenger) -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://halleybakery.io.vn/">
+  <meta property="og:title" content="HALLEY BAKERY — Bánh sinh nhật & Bánh sự kiện Hà Nội">
+  <meta property="og:description"
+    content="Đặt bánh sinh nhật, bánh sự kiện theo yêu cầu. Thiết kế độc đáo, giao hàng tận nơi tại Hà Nội.">
+  <meta property="og:image" content="https://halleybakery.io.vn/brand/logo-desktop.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:locale" content="vi_VN">
+  <meta property="og:site_name" content="Halley Bakery">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="HALLEY BAKERY — Bánh sinh nhật & Bánh sự kiện Hà Nội">
+  <meta name="twitter:description"
+    content="Đặt bánh sinh nhật, bánh sự kiện theo yêu cầu. Giao hàng tận nơi tại Hà Nội.">
+  <meta name="twitter:image" content="https://halleybakery.io.vn/brand/logo-desktop.png">
+
+  <!-- Preconnect -->
+  <link rel="preconnect" href="https://lh3.googleusercontent.com" crossorigin>
+  <link rel="preconnect" href="https://drive.google.com" crossorigin>
+  <link rel="preconnect" href="https://docs.google.com" crossorigin>
+  <link rel="dns-prefetch" href="//lh3.googleusercontent.com">
+  <link rel="dns-prefetch" href="//drive.google.com">
+  <link rel="preconnect" href="https://images.weserv.nl">
+  <link rel="dns-prefetch" href="https://images.weserv.nl">
+
+  <title>HALLEY BAKERY — Bánh sinh nhật & Bánh sự kiện Hà Nội</title>
+</head>
+
+<body>
+
+  <div id="root">
+    <style>
+      .hb-boot {
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font: 600 16px/1.2 system-ui
+      }
+
+      .hb-spin {
+        width: 28px;
+        height: 28px;
+        border: 3px solid #ddd;
+        border-top-color: #333;
+        border-radius: 50%;
+        animation: hb 1s linear infinite;
+        margin-right: 10px
+      }
+
+      @keyframes hb {
+        to {
+          transform: rotate(1turn)
         }
-        window.addEventListener('error',function(e){show(e.error||e.message);});
-        window.addEventListener('unhandledrejection',function(e){show(e.reason||e);});
-      })();
-    </script>
-    
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+      }
+
+      .hb-err {
+        position: fixed;
+        inset: 0;
+        background: #fff;
+        padding: 24px;
+        font: 14px/1.4 ui-monospace, monospace;
+        overflow: auto
+      }
+    </style>
+    <div class="hb-boot">
+      <div class="hb-spin"></div>Đang khởi động…
+    </div>
+  </div>
+  <script>
+    (function () {
+      function show(e) {
+        var el = document.createElement('div'); el.className = 'hb-err';
+        el.innerHTML = '<b>Lỗi khởi động.</b><br><pre>' + String(e && (e.message || e)).slice(0, 2000) + '</pre>';
+        document.body.appendChild(el);
+      }
+      window.addEventListener('error', function (e) { show(e.error || e.message); });
+      window.addEventListener('unhandledrejection', function (e) { show(e.reason || e); });
+    })();
+  </script>
+
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+
 </html>

@@ -1,5 +1,14 @@
 {
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
+    {
+      "source": "/(.*)",
+      "destination": "/api/og"
+    }
+  ],
+  "functions": {
+    "api/og.js": {
+      "memory": 256,
+      "includeFiles": "dist/index.html"
+    }
+  }
 }
