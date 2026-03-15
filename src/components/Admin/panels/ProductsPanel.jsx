@@ -1,15 +1,15 @@
 // src/components/Admin/panels/ProductsPanel.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Button, Input, Section, Toolbar, Badge } from "../ui/primitives.jsx";
-import { Table } from "../ui/table.jsx";
-import { readLS, writeLS } from "../../../utils.js";
-import { genId } from "../shared/helpers.js";
-import { listSheet, insertToSheet, updateToSheet, deleteFromSheet } from "../shared/sheets.js";
+import { readLS, writeLS, audit } from "../../../utils.js";
+import { listSheet, updateToSheet, deleteFromSheet } from "../shared/sheets.js";
+import { getConfig } from "../../../utils/config.js";
+import { fetchTabAsObjects } from "../../../services/sheets.js";
 
-/* ----------------- helpers ----------------- */
+const PAGE_SIZE = 50;
+
+/* helpers */
 const safe = (x) => (Array.isArray(x) ? x.filter((v) => v && typeof v === "object") : []);
 const s = (v) => (v == null ? "" : String(v));
-
 const parseMaybeJSON = (v) => {
   if (typeof v !== "string") return v;
   const t = v.trim();
@@ -19,519 +19,309 @@ const parseMaybeJSON = (v) => {
   }
   return v;
 };
-
 const normImages = (v) => Array.isArray(v) ? v : s(v).split(/[\n,|]\s*/).filter(Boolean);
 const firstImg = (p) => Array.isArray(p?.images) ? (p.images[0] || "") : s(p?.image) || "";
+const tagsArr = (v) => Array.isArray(v) ? v.map(t => String(t).trim()).filter(Boolean) : s(v).split(",").map(t => t.trim()).filter(Boolean);
+const stableRowId = (row) => {
+  const explicit = s(row.id ?? row.ID ?? row.key ?? row.sku ?? row.code).trim();
+  if (explicit) return explicit;
+  const name = s(row.name ?? row.title ?? row.ten).trim().toLowerCase();
+  const category = s(row.category ?? row.danh_muc ?? row.type).trim().toLowerCase();
+  const image = Array.isArray(row.images)
+    ? s(row.images[0]).trim().toLowerCase()
+    : s(row.images ?? row.image).split(/[\n,|]\s*/)[0]?.trim().toLowerCase();
+  return [name, category, image].filter(Boolean).join("|");
+};
 
-/* ----------------- types & sizes (for size/price) ----------------- */
-const sizeKey = (z) => `${s(z?.code).trim()}@@${s(z?.height).trim()}`;
-const sizeLabel = (z) => `${z?.label || z?.code}${z?.height ? ` - cao ${z.height}cm` : ""}`;
+const fixThumbUrl = (url, size = 96) => {
+  if (!url) return "";
+  const u = String(url);
+  const m = u.match(/[?&]id=([a-zA-Z0-9_-]+)/) || u.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (m) return `https://lh3.googleusercontent.com/d/${m[1]}=w${size}`;
+  return u.replace(/sz=w\d+/, `sz=w${size}`);
+};
 
-function useTypesSizes() {
-  const [types, setTypes] = useState(() => safe(readLS("types") || []));
-  const [sizes, setSizes] = useState(() => safe(readLS("sizes") || []));
-  const vT = useRef(""), vS = useRef("");
-
-  useEffect(() => {
-    let t; let alive = true;
-    const loop = async () => {
-      const a = await listSheet("Types");
-      if (a?.ok && a.version !== vT.current) {
-        vT.current = a.version;
-        const rows = safe(a.rows).map((r) => ({
-          id: s(r.id) || genId(),
-          code: s(r.code).trim(),
-          name: s(r.name).trim(),
-          sizeCodes: Array.isArray(r.sizeCodes)
-            ? r.sizeCodes
-            : (Array.isArray(parseMaybeJSON(r.sizeCodes))
-                ? parseMaybeJSON(r.sizeCodes)
-                : s(r.sizeCodes).split(/[\s,|]+/)).filter(Boolean).map(s),
-        }));
-        setTypes(rows); writeLS("types", rows);
-      }
-      const b = await listSheet("Sizes");
-      if (b?.ok && b.version !== vS.current) {
-        vS.current = b.version;
-        const rows = safe(b.rows).map((r) => ({
-          id: s(r.id) || genId(),
-          code: s(r.code).trim(),
-          label: s(r.label).trim(),
-          height: s(r.height).trim(),
-        }));
-        setSizes(rows); writeLS("sizes", rows);
-      }
-      if (alive) t = setTimeout(loop, 8000);
-    };
-    loop(); return () => { alive = false; clearTimeout(t); };
-  }, []);
-
-  return { types, sizes };
-}
-
-/* ----------------- categories from SHEET (not menu) ----------------- */
-function useCategories() {
-  const [cats, setCats] = useState(() => safe(readLS("categories") || []));
-  const verRef = useRef("");
-
-  useEffect(() => {
-    let t; let alive = true;
-    const loop = async () => {
-      const a = await listSheet("Category");
-      const r = a?.ok ? a : await listSheet("Categories");
-      if (r?.ok && r.version !== verRef.current) {
-        verRef.current = r.version;
-        const headers = (r.headers || []).map((h) => String(h || "").toLowerCase());
-        const rows = safe(r.rows).map((row) => {
-          const o = {};
-          headers.forEach((h) => { o[h] = row[h]; });
-          return {
-            id: s(o.id) || genId(),
-            slug: s(o.slug || o.code || o.value || o.path || o.name).trim(),
-            name: s(o.name || o.title || o.label).trim(),
-          };
-        }).filter((c) => c.slug && c.name);
-        setCats(rows); writeLS("categories", rows);
-      }
-      if (alive) t = setTimeout(loop, 8000);
-    };
-    loop(); return () => { alive = false; clearTimeout(t); };
-  }, []);
-
-  const options = useMemo(() => cats.map((c) => ({ value: c.slug, label: c.name })), [cats]);
-  const mapByVal = useMemo(() => new Map(options.map((o) => [o.value, o])), [options]);
-  return { catOptions: options, catMap: mapByVal };
-}
-const displayCategory = (catMap, v) => catMap.get(s(v).trim())?.label || s(v);
-
-/* ----------------- products ----------------- */
 const normProduct = (row) => ({
-  id: s(row.id) || genId(),
+  id: stableRowId(row),
   name: s(row.name).trim(),
-  category: s(row.category).trim(),     // slug (sheet) – show with diacritics via catMap
-  type: s(row.type).trim(),             // type code
+  category: s(row.category).trim(),
   active: !!(row.active ?? true),
   images: Array.isArray(row.images) ? row.images : normImages(parseMaybeJSON(row.images ?? row.image)),
-  priceBySize: (row && typeof parseMaybeJSON(row.priceBySize) === "object") ? parseMaybeJSON(row.priceBySize) : {},
   description: s(row.description || row.desc || ""),
-  banner: !!row.banner,
   tags: s(row.tags || ""),
   createdAt: row.createdAt || new Date().toISOString(),
 });
-const notEmptyProduct = (p) => !!(s(p.name).trim() && (s(p.type).trim() || true));
 
-/* ----------------- main ----------------- */
+/* ====================== MAIN ====================== */
 export default function ProductsPanel() {
   const [products, setProducts] = useState(() => safe(readLS("products") || []));
   const [q, setQ] = useState("");
+  const [catFilter, setCatFilter] = useState("");
+  const [page, setPage] = useState(1);
   const verP = useRef("");
 
-  const { types, sizes } = useTypesSizes();
-  const { catOptions, catMap } = useCategories();
-
-  // pull Products from sheet
   useEffect(() => {
-    let t; let alive = true;
+    let t, alive = true;
     const loop = async () => {
-      const a = await listSheet("Products");
-      if (a?.ok && a.version !== verP.current) {
-        verP.current = a.version;
-        const rows = safe(a.rows).map(normProduct).filter(notEmptyProduct);
-        setProducts(rows); writeLS("products", rows);
-      }
-      if (alive) t = setTimeout(loop, 8000);
+      try {
+        const a = await listSheet("Products");
+        if (a?.ok && a.version !== verP.current) {
+          verP.current = a.version;
+          const rows = safe(a.rows).map(normProduct).filter((p) => !!s(p.name).trim());
+          setProducts(rows); writeLS("products", rows);
+        }
+      } catch { }
+      if (alive) t = setTimeout(loop, 10000);
     };
     loop(); return () => { alive = false; clearTimeout(t); };
   }, []);
-
-  const [rowNew, setRowNew] = useState({
-    name: "", category: "", type: "", active: true, images: [], priceBySize: {}, description: "", banner: false, tags: ""
-  });
-  const canSaveNew = !!(s(rowNew.name).trim());
-  const dirtyNew = !!rowNew.name || !!rowNew.category || !!rowNew.type ||
-    Object.keys(rowNew.priceBySize || {}).length > 0 || !!rowNew.description || !!rowNew.tags;
 
   const [editId, setEditId] = useState(null);
   const [draft, setDraft] = useState(null);
 
-  const view = products.filter((p) => {
-    const hay = (p.name + " " + displayCategory(catMap, p.category) + " " + p.type).toLowerCase();
-    return hay.includes(q.toLowerCase());
-  });
-  const list = [{ id: "__new__" }, ...view];
+    /* Category label map from Menu sheet */
+  const [catMap, setCatMap] = useState(new Map());
+  useEffect(() => {
+    const sheetId = getConfig("sheet_id");
+    const gid = getConfig("sheet_gid_menu") || getConfig("sheet_gid_categories");
+    if (!sheetId || !gid) return;
+    let alive = true;
+    (async () => {
+      try {
+        const rows = await fetchTabAsObjects({ sheetId, gid });
+        const m = new Map();
+        for (const r of rows) {
+          const slug = s(r.slug ?? r.code ?? r.value ?? r.path ?? r.key).trim();
+          const name = s(r.name ?? r.title ?? r.label ?? r.ten ?? r["t�n"]).trim();
+          if (slug && name) m.set(slug, name);
+        }
+        if (alive) setCatMap(m);
+      } catch { }
+    })();
+    return () => { alive = false; };
+  }, []);
 
-  function getAllowedSizes(typeCode) {
-    if (!typeCode) return [];
-    const t = (types || []).find((x) => x.code === typeCode);
-    const allow = t?.sizeCodes || [];
-    const byKey = new Map(sizes.map((z) => [sizeKey(z), z]));
-    const byCode = new Map(sizes.map((z) => [z.code, z]));
-    return allow.map((k) => byKey.get(k) || byCode.get(k)).filter(Boolean);
-  }
+  const catLabel = (slug) => catMap.get(slug) || slug;
 
-  function saveNew() {
-    if (!canSaveNew) return;
-    const allowed = getAllowedSizes(rowNew.type);
-    const keysHaveAt = (types.find((t) => t.code === rowNew.type)?.sizeCodes || []).some((x) => String(x).includes("@@"));
-    const keyFor = (s) => (keysHaveAt ? sizeKey(s) : s.code);
+  const categories = useMemo(() => {
+    const set = new Set();
+    products.forEach(p => { if (p.category) set.add(p.category); });
+    return [...set].sort();
+  }, [products]);
 
-    const pruned = Object.fromEntries(Object.entries(rowNew.priceBySize || {}).filter(([k]) => {
-      const ok = allowed.some((sz) => keyFor(sz) === k || sz.code === k);
-      return ok;
-    }));
+  /* Sort */
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState("asc");
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortKey(key); setSortDir("asc"); }
+  };
 
-    const item = normProduct({
-      id: genId(),
-      name: rowNew.name,
-      category: rowNew.category,
-      type: rowNew.type,
-      active: true,
-      images: normImages(rowNew.images || []),
-      priceBySize: pruned,
-      description: rowNew.description || "",
-      banner: !!rowNew.banner,
-      tags: rowNew.tags || "",
+  const view = useMemo(() => {
+    let arr = products.filter((p) => {
+      const hay = (p.name + " " + p.category + " " + s(p.tags) + " " + p.id).toLowerCase();
+      if (q && !hay.includes(q.toLowerCase())) return false;
+      if (catFilter && p.category !== catFilter) return false;
+      return true;
     });
-
-    insertToSheet("Products", item);
-    const next = [item, ...products];
-    setProducts(next); writeLS("products", next);
-    setRowNew({ name: "", category: "", type: "", active: true, images: [], priceBySize: {}, description: "", banner: false, tags: "" });
-  }
-
-  function startEdit(row) {
-    setEditId(row.id);
-    setDraft({
-      ...row,
-      image: firstImg(row),
-      images: [...(row.images || [])],
-      priceBySize: { ...(row.priceBySize || {}) },
+    const dir = sortDir === "asc" ? 1 : -1;
+    arr = [...arr].sort((a, b) => {
+      let va, vb;
+      if (sortKey === "name") { va = a.name; vb = b.name; }
+      else if (sortKey === "category") { va = catLabel(a.category); vb = catLabel(b.category); }
+      else if (sortKey === "status") { va = a.active ? 0 : 1; vb = b.active ? 0 : 1; return (va - vb) * dir; }
+      else if (sortKey === "id") { va = parseInt(a.id) || 0; vb = parseInt(b.id) || 0; return (va - vb) * dir; }
+      else { va = s(a[sortKey]); vb = s(b[sortKey]); }
+      return String(va).localeCompare(String(vb), "vi", { numeric: true }) * dir;
     });
-  }
+    return arr;
+  }, [products, q, catFilter, sortKey, sortDir, catMap]);
+
+  useEffect(() => { setPage(1); }, [q, catFilter, sortKey, sortDir]);
+
+  const totalPages = Math.max(1, Math.ceil(view.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paged = view.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  function startEdit(row) { setEditId(row.id); setDraft({ ...row, images: [...(row.images || [])] }); }
   function cancelEdit() { setEditId(null); setDraft(null); }
-
-  function saveEdit() {
-    const allowed = getAllowedSizes(draft.type);
-    const keysHaveAt = (types.find((t) => t.code === draft.type)?.sizeCodes || []).some((x) => String(x).includes("@@"));
-    const keyFor = (s) => (keysHaveAt ? sizeKey(s) : s.code);
-
-    const pruned = Object.fromEntries(Object.entries(draft.priceBySize || {}).filter(([k]) => {
-      const ok = allowed.some((sz) => keyFor(sz) === k || sz.code === k);
-      return ok;
-    }));
-
-    const clean = normProduct({
-      ...draft,
-      images: normImages(draft.image || draft.images),
-      priceBySize: pruned,
-    });
-
-    updateToSheet("Products", clean);
-    const next = products.map((p) => (p.id === editId ? clean : p));
-    setProducts(next); writeLS("products", next);
-    cancelEdit();
+  async function saveEdit() {
+    const clean = normProduct({ ...draft, images: normImages(draft.image || draft.images) });
+    try {
+      await updateToSheet("Products", clean);
+      const next = products.map((p) => (p.id === editId ? clean : p));
+      setProducts(next);
+      writeLS("products", next);
+      audit("product.update", { id: clean.id, name: clean.name, user: (readLS("auth") || {}).username || "?" });
+      cancelEdit();
+    } catch (e) {
+      console.error("update Products failed:", e);
+      alert("Không cập nhật được sản phẩm.");
+    }
+  }
+  async function removeRow(row) {
+    try {
+      await deleteFromSheet("Products", row.id);
+      const next = products.filter((p) => p.id !== row.id);
+      setProducts(next);
+      writeLS("products", next);
+      audit("product.delete", { id: row.id, name: row.name, user: (readLS("auth") || {}).username || "?" });
+    } catch (e) {
+      console.error("delete Products failed:", e);
+      alert("Không xoá được sản phẩm.");
+    }
   }
 
-  function removeRow(row) {
-    deleteFromSheet("Products", row.id);
-    const next = products.filter((p) => p.id !== row.id);
-    setProducts(next); writeLS("products", next);
-  }
+  /* Pagination */
+  const Pagination = () => {
+    if (totalPages <= 1) return null;
+    return (
+      <div className="flex items-center justify-between py-2 px-1">
+        <span className="text-xs text-gray-400">
+          {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, view.length)} / {view.length}
+        </span>
+        <div className="flex items-center gap-1">
+          <PgBtn onClick={() => setPage(1)} disabled={safePage === 1}>«</PgBtn>
+          <PgBtn onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1}>‹</PgBtn>
+          {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
+            const start = Math.max(1, Math.min(safePage - 3, totalPages - 6));
+            const p = start + i;
+            if (p > totalPages) return null;
+            return (
+              <button key={p} onClick={() => setPage(p)}
+                className={`px-2.5 py-1 text-xs rounded border transition ${p === safePage ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 hover:bg-gray-50'}`}
+              >{p}</button>
+            );
+          })}
+          <PgBtn onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}>›</PgBtn>
+          <PgBtn onClick={() => setPage(totalPages)} disabled={safePage === totalPages}>»</PgBtn>
+        </div>
+      </div>
+    );
+  };
+  const PgBtn = ({ children, ...p }) => <button {...p} className="px-2 py-1 text-xs rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-30 transition">{children}</button>;
 
-  const Img = ({ src }) => (
-    <img
-      src={src}
-      alt=""
-      className="w-12 h-12 object-cover rounded-lg border"
-      onError={(e) => { e.currentTarget.style.display = "none"; }}
-    />
+  /* Sort header */
+  const SortTh = ({ label, field, className = "" }) => (
+    <th className={`text-left py-2.5 px-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider bg-gray-50 cursor-pointer select-none hover:text-gray-700 transition ${className}`}
+      onClick={() => toggleSort(field)}>
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <span className="text-[9px] opacity-40">{sortKey === field ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}</span>
+      </span>
+    </th>
   );
 
   return (
-    <Section title="Sản phẩm" actions={<Toolbar><Input placeholder="Tìm..." value={q} onChange={(e) => setQ(e.target.value)} /></Toolbar>}>
-      <Table
-        columns={[
-          { title: "ID", dataIndex: "id", thClass: "w-28" },
-          { title: "Ảnh", dataIndex: "image", thClass: "w-[18rem]", tdClass: "w-[18rem]" },
-          { title: "Tên", dataIndex: "name", thClass: "w-[20rem]" },
-          { title: "Danh mục", dataIndex: "category", thClass: "w-64" },
-          { title: "Loại", dataIndex: "type", thClass: "w-48" },
-          { title: "Size / Giá", dataIndex: "sizes" },
-          { title: "Mô tả", dataIndex: "desc", thClass: "w-[22rem]" },
-          { title: "Banner", dataIndex: "banner", thClass: "w-20" },
-          { title: "Tags (CSV)", dataIndex: "tags", thClass: "w-64" },
-          { title: "Hiện", dataIndex: "active", thClass: "w-20" },
-          { title: "", dataIndex: "actions", thClass: "w-44" },
-        ]}
-        data={list}
-        rowRender={(row) => row.id === "__new__" ? (
-          <tr key="__new__">
-            <td className="px-3 py-2 text-gray-400">—</td>
+    <div className="flex flex-col" style={{ height: 'calc(100vh - 7rem)' }}>
+      {/* ===== FIXED HEADER ===== */}
+      <div className="shrink-0">
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <select className={`h-7 px-2 pr-6 text-[11px] font-medium rounded-full border appearance-none bg-no-repeat transition cursor-pointer focus:outline-none ${catFilter ? "bg-purple-50 text-purple-700 border-purple-200" : "border-gray-200 text-gray-500 hover:bg-gray-50 bg-white"}`}
+            style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")", backgroundPosition: "right 6px center" }}
+            value={catFilter} onChange={(e) => setCatFilter(e.target.value)}>
+            <option value="">📁 Tất cả danh mục ({products.length})</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>{catLabel(c)} ({products.filter(p => p.category === c).length})</option>
+            ))}
+          </select>
+          <div className="relative">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
+            <input className="h-9 pl-9 pr-4 w-60 border border-gray-200 rounded-lg bg-white text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition"
+              placeholder="Tìm theo tên, ID, tag..." value={q} onChange={(e) => setQ(e.target.value)} />
+          </div>
+        </div>
+        <Pagination />
+      </div>
 
-            <td className="px-3 py-2">
-              <div className="flex items-center gap-2">
-                <div className="w-12 h-12 rounded-lg border bg-gray-50 overflow-hidden" />
-                <Input
-                  value={Array.isArray(rowNew.images) ? rowNew.images.join(", ") : ""}
-                  onChange={(e) => setRowNew({ ...rowNew, images: normImages(e.target.value) })}
-                  placeholder="1 hoặc nhiều URL, cách nhau dấu phẩy"
-                />
-              </div>
-            </td>
-
-            <td className="px-3 py-2">
-              <Input value={rowNew.name} onChange={(e) => setRowNew({ ...rowNew, name: e.target.value })} placeholder="Tên sản phẩm" />
-            </td>
-
-            <td className="px-3 py-2">
-              <select
-                className="w-full px-2 py-1.5 border rounded-lg"
-                value={rowNew.category}
-                onChange={(e) => setRowNew({ ...rowNew, category: e.target.value })}
-              >
-                <option value="">-- chọn danh mục (lá) --</option>
-                {catOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </td>
-
-            <td className="px-3 py-2">
-              <select
-                className="w-full px-2 py-1.5 border rounded-lg"
-                value={rowNew.type}
-                onChange={(e) => {
-                  const code = e.target.value;
-                  setRowNew({ ...rowNew, type: code, priceBySize: {} });
-                }}
-              >
-                <option value="">-- chọn --</option>
-                {(types || []).map((t) => <option key={t.id} value={t.code}>{t.name}</option>)}
-              </select>
-            </td>
-
-            <td className="px-3 py-2">
-              <InlinePriceEditor
-                sizes={sizes}
-                types={types}
-                typeCode={rowNew.type}
-                value={rowNew.priceBySize}
-                onChange={(v) => setRowNew({ ...rowNew, priceBySize: v })}
-              />
-            </td>
-
-            <td className="px-3 py-2">
-              <textarea
-                className="w-full px-2 py-1.5 border rounded-lg min-h-[2.5rem]"
-                value={rowNew.description}
-                onChange={(e) => setRowNew({ ...rowNew, description: e.target.value })}
-                placeholder="Mô tả…"
-              />
-            </td>
-
-            <td className="px-3 py-2">
-              <label className="inline-flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={!!rowNew.banner} onChange={(e) => setRowNew({ ...rowNew, banner: e.target.checked })} />
-                Gắn banner
-              </label>
-            </td>
-
-            <td className="px-3 py-2">
-              <Input value={rowNew.tags} onChange={(e) => setRowNew({ ...rowNew, tags: e.target.value })} placeholder="vd: sinh nhật, cute" />
-            </td>
-
-            <td className="px-3 py-2">
-              <Badge>Ẩn</Badge>
-            </td>
-
-            <td className="px-3 py-2 text-right">
-              <div className="flex justify-end gap-2">
-                <Button disabled={!canSaveNew} onClick={saveNew}>Lưu</Button>
-                <Button variant="ghost" disabled={!dirtyNew} onClick={() => setRowNew({
-                  name: "", category: "", type: "", active: true, images: [], priceBySize: {}, description: "", banner: false, tags: ""
-                })}>Huỷ</Button>
-              </div>
-            </td>
-          </tr>
-        ) : (
-          <tr key={row.id}>
-            <td className="px-3 py-2 text-xs text-gray-500 truncate max-w-[7rem]" title={row.id}>{row.id}</td>
-
-            <td className="px-3 py-2">
-              {editId === row.id ? (
-                <div className="flex items-center gap-2">
-                  <div className="w-12 h-12 rounded-lg border bg-gray-50 overflow-hidden">
-                    {firstImg(draft) && <Img src={firstImg(draft)} />}
+      {/* ===== SCROLLABLE TABLE (single table = aligned columns) ===== */}
+      <div className="flex-1 overflow-y-auto bg-white rounded-xl border border-gray-200/80 shadow-sm">
+        <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
+          <colgroup>
+            <col style={{ width: "3.5rem" }} />
+            <col />
+            <col style={{ width: "9rem" }} />
+            <col style={{ width: "5.5rem" }} />
+            <col />
+            <col />
+            <col style={{ width: "3.5rem" }} />
+          </colgroup>
+          <thead className="sticky top-0 z-10">
+            <tr className="border-b border-gray-200">
+              <th className="py-2.5 px-3 bg-gray-50" />
+              <SortTh label="Tên SP" field="name" />
+              <SortTh label="Danh mục" field="category" />
+              <SortTh label="TT" field="status" />
+              <th className="text-left py-2.5 px-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Mô tả</th>
+              <th className="text-left py-2.5 px-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Tags</th>
+              <th className="py-2.5 px-3 bg-gray-50" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {paged.map((row) => (
+              <tr key={row.id} className="group hover:bg-blue-50/40 transition-colors">
+                {/* Thumb */}
+                <td className="py-2 px-3">
+                  <div className="h-10 w-10 rounded-lg bg-gray-100 overflow-hidden border border-gray-200/60">
+                    {firstImg(row) ? <img src={fixThumbUrl(firstImg(row), 96)} alt="" className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : null}
                   </div>
-                  <Input
-                    value={Array.isArray(draft.images) ? draft.images.join(", ") : draft.image || ""}
-                    onChange={(e) => setDraft({ ...draft, images: normImages(e.target.value), image: "" })}
-                    placeholder="1 hoặc nhiều URL, cách nhau dấu phẩy"
-                  />
-                </div>
-              ) : (
-                <div className="w-12 h-12 rounded-lg border bg-gray-50 overflow-hidden">
-                  {firstImg(row) && <Img src={firstImg(row)} />}
-                </div>
-              )}
-            </td>
-
-            <td className="px-3 py-2">
-              {editId === row.id
-                ? <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-                : <div className="font-medium">{row.name}</div>}
-            </td>
-
-            <td className="px-3 py-2">
-              {editId === row.id ? (
-                <select
-                  className="w-full px-2 py-1.5 border rounded-lg"
-                  value={draft.category}
-                  onChange={(e) => setDraft({ ...draft, category: e.target.value })}
-                >
-                  <option value="">-- chọn danh mục (lá) --</option>
-                  {catOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              ) : (
-                <span>{displayCategory(catMap, row.category) || "—"}</span>
-              )}
-            </td>
-
-            <td className="px-3 py-2">
-              {editId === row.id ? (
-                <select
-                  className="w-full px-2 py-1.5 border rounded-lg"
-                  value={draft.type}
-                  onChange={(e) => {
-                    const code = e.target.value;
-                    setDraft({ ...draft, type: code, priceBySize: {} });
-                  }}
-                >
-                  <option value="">-- chọn --</option>
-                  {(types || []).map((t) => <option key={t.id} value={t.code}>{t.name}</option>)}
-                </select>
-              ) : ((types || []).find((t) => t.code === row.type)?.name || row.type)}
-            </td>
-
-            <td className="px-3 py-2">
-              {editId === row.id ? (
-                <InlinePriceEditor
-                  sizes={sizes}
-                  types={types}
-                  typeCode={draft.type}
-                  value={draft.priceBySize || {}}
-                  onChange={(v) => setDraft({ ...draft, priceBySize: v })}
-                />
-              ) : (
-                <div className="flex flex-wrap gap-1">
-                  {Object.entries(row.priceBySize || {}).map(([k, v]) => {
-                    // support both key formats
-                    const byKey = new Map(sizes.map((z) => [sizeKey(z), z]));
-                    const byCode = new Map(sizes.map((z) => [z.code, z]));
-                    const sz = byKey.get(k) || byCode.get(k);
-                    const label = sz ? sizeLabel(sz) : k;
-                    return <Badge key={k}>{label}: {Number(v).toLocaleString()}đ</Badge>;
-                  })}
-                </div>
-              )}
-            </td>
-
-            <td className="px-3 py-2">
-              {editId === row.id ? (
-                <textarea
-                  className="w-full px-2 py-1.5 border rounded-lg min-h-[2.5rem]"
-                  value={draft.description}
-                  onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-                  placeholder="Mô tả…"
-                />
-              ) : (
-                <span className="text-sm text-gray-500 line-clamp-2">{row.description}</span>
-              )}
-            </td>
-
-            <td className="px-3 py-2">
-              {editId === row.id ? (
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={!!draft.banner} onChange={(e) => setDraft({ ...draft, banner: e.target.checked })} />
-                  Gắn banner
-                </label>
-              ) : (row.banner ? <Badge className="bg-amber-50 border-amber-300">Banner</Badge> : <span>—</span>)}
-            </td>
-
-            <td className="px-3 py-2">
-              {editId === row.id
-                ? <Input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder="vd: sinh nhật, cute" />
-                : <span className="text-sm text-gray-500">{row.tags}</span>}
-            </td>
-
-            <td className="px-3 py-2">
-              {editId === row.id
-                ? (<label className="inline-flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={!!draft.active} onChange={(e) => setDraft({ ...draft, active: e.target.checked })} />
-                    Hiển thị
-                  </label>)
-                : (row.active ? <Badge className="bg-green-100 border-green-300">Hiển</Badge> : <Badge>Ẩn</Badge>)}
-            </td>
-
-            <td className="px-3 py-2 text-right">
-              {editId === row.id ? (
-                <div className="flex justify-end gap-2">
-                  <Button onClick={saveEdit}>Lưu</Button>
-                  <Button variant="ghost" onClick={cancelEdit}>Huỷ</Button>
-                </div>
-              ) : (
-                <div className="flex justify-end gap-2">
-                  <Button variant="ghost" onClick={() => startEdit(row)}>Sửa</Button>
-                  <Button variant="danger" onClick={() => removeRow(row)}>Xoá</Button>
-                </div>
-              )}
-            </td>
-          </tr>
-        )}
-      />
-      {view.length === 0 && <div className="text-sm text-gray-500 p-3">Chưa có sản phẩm.</div>}
-    </Section>
-  );
-}
-
-/* ----------------- inline size/price editor ----------------- */
-function InlinePriceEditor({ sizes, types, typeCode, value = {}, onChange }) {
-  if (!typeCode) return <div className="text-xs text-gray-500">Chọn loại để nhập giá theo size</div>;
-  const t = (types || []).find((x) => x.code === typeCode);
-  const allow = (t?.sizeCodes || []);
-  const byKey = new Map((sizes || []).map((z) => [sizeKey(z), z]));
-  const byCode = new Map((sizes || []).map((z) => [z.code, z]));
-  const anyHasAt = allow.some((k) => String(k).includes("@@"));
-
-  const allowedSizes = allow
-    .map((k) => byKey.get(k) || byCode.get(k))
-    .filter(Boolean);
-
-  if (allowedSizes.length === 0) return <div className="text-xs text-gray-500">Loại này chưa gán size.</div>;
-
-  const keyFor = (sz) => (anyHasAt ? sizeKey(sz) : sz.code);
-
-  return (
-    <div className="flex flex-wrap gap-2">
-      {allowedSizes.map((sz) => {
-        const k = keyFor(sz);
-        const v = (value[k] ?? value[sz.code]) ?? "";
-        return (
-          <label key={sz.id} className="flex items-center gap-2 text-sm">
-            <span className="min-w-[11rem]">{sizeLabel(sz)}</span>
-            <input
-              className="w-28 px-2 py-1 border rounded"
-              type="number"
-              value={v}
-              onChange={(e) => {
-                const num = e.target.value ? Number(e.target.value) : undefined;
-                const next = { ...value, [k]: num };
-                // dọn legacy key nếu có
-                if (k !== sz.code && next.hasOwnProperty(sz.code)) delete next[sz.code];
-                onChange(next);
-              }}
-            />
-          </label>
-        );
-      })}
+                </td>
+                {/* Name */}
+                <td className="py-2 px-3">
+                  {editId === row.id
+                    ? <input className="w-full px-2 py-1 border rounded-lg text-sm" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+                    : <div><div className="font-medium text-gray-900 truncate">{row.name}</div><div className="text-[10px] text-gray-400">ID: {row.id}</div></div>}
+                </td>
+                {/* Category */}
+                <td className="py-2 px-3">
+                  {editId === row.id
+                    ? <select className="w-full px-2 py-1 border rounded-lg text-sm" value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })}><option value="">—</option>{categories.map((c) => <option key={c} value={c}>{catLabel(c)}</option>)}</select>
+                    : <span className="text-gray-600 text-xs">{catLabel(row.category) || "—"}</span>}
+                </td>
+                {/* Status */}
+                <td className="py-2 px-3">
+                  {editId === row.id
+                    ? <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer"><input type="checkbox" checked={!!draft.active} onChange={(e) => setDraft({ ...draft, active: e.target.checked })} /> Active</label>
+                    : <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full ${row.active ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-gray-100 text-gray-500 border border-gray-200"}`}><span className={`w-1.5 h-1.5 rounded-full ${row.active ? "bg-emerald-500" : "bg-gray-400"}`} />{row.active ? "Active" : "Hidden"}</span>}
+                </td>
+                {/* Description */}
+                <td className="py-2 px-3">
+                  {editId === row.id
+                    ? <textarea className="w-full px-2 py-1 border rounded-lg text-sm min-h-[2rem]" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="Mô tả…" />
+                    : <span className="text-xs text-gray-500 line-clamp-2">{row.description || "—"}</span>}
+                </td>
+                {/* Tags */}
+                <td className="py-2 px-3">
+                  {editId === row.id
+                    ? <input className="w-full px-2 py-1 border rounded-lg text-sm" value={Array.isArray(draft.tags) ? draft.tags.join(", ") : (draft.tags || "")} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder="tag1, tag2" />
+                    : <div className="flex flex-wrap gap-0.5">{tagsArr(row.tags).map((t, i) => <span key={i} className="inline-block px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px] border border-gray-200/60">{t}</span>)}{!tagsArr(row.tags).length && <span className="text-gray-300 text-xs">—</span>}</div>}
+                </td>
+                {/* Actions */}
+                <td className="py-2 px-3 text-right">
+                  {editId === row.id ? (
+                    <div className="flex flex-col gap-1">
+                      <button onClick={saveEdit} className="px-2 py-1 text-[10px] font-medium text-white bg-blue-600 hover:bg-blue-700 rounded transition">Save</button>
+                      <button onClick={cancelEdit} className="px-2 py-1 text-[10px] text-gray-500 hover:bg-gray-100 rounded transition">✕</button>
+                    </div>
+                  ) : (
+                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => startEdit(row)} className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Sửa">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
+                      </button>
+                      <button onClick={() => removeRow(row)} className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition" title="Xoá">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+                      </button>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {view.length === 0 && <div className="py-12 text-center text-gray-400 text-sm">Chưa có sản phẩm.</div>}
+      </div>
     </div>
   );
 }
+
+

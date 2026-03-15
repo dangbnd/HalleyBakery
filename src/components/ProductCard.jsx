@@ -5,15 +5,49 @@ import { PriceTag } from "./PriceTag.jsx";
 import { sizeOptions, pickDefaultSize, priceFor } from "../lib/pricing.js";
 import { cdn, prefetchImage } from "../utils/img.js";
 import { usePrefetchOnView } from "../hooks/usePrefetchOnView.js";
+import { buildProductChatLink, openChatTarget } from "../utils/chatLink.js";
 
 const toDigits = (s) => String(s || "").match(/\d+/)?.[0] || "";
+
+function MessengerIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+      <path d="M12 2C6.48 2 2 6.05 2 11.05c0 2.61 1.12 4.97 3.01 6.63v3.27l2.76-1.52c1.25.35 2.33.5 3.23.5 5.52 0 10-4.05 10-9.05S17.52 2 12 2zm.1 10.87-2.7-2.9-5.15 2.9 5.79-5.52 2.64 2.86 5.16-2.86-5.74 5.52z" />
+    </svg>
+  );
+}
+
+function ZaloIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+      <path d="M4 3h16a1 1 0 0 1 1 1v16.5a.5.5 0 0 1-.8.4L17 19H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm4 5h3l-3 5h3v2H6l3-5H6V8zm7 0h2v7h-2V8zm-3 0h2v7h-2V8z" />
+    </svg>
+  );
+}
 
 export default function ProductCard({ p, onImageClick, filter }) {
   const options = useMemo(() => sizeOptions(p), [p]);
   const [sel, setSel] = useState(() => pickDefaultSize(p, filter));
-  useEffect(() => setSel(pickDefaultSize(p, filter)), [p, filter]);
+
+  useEffect(() => {
+    setSel(pickDefaultSize(p, filter));
+  }, [p, filter]);
 
   const price = useMemo(() => priceFor(p, sel), [p, sel]);
+  const selectedSizeLabel = useMemo(() => {
+    const hit = options.find((o) => String(o.id) === String(sel));
+    return hit?.label || options[0]?.label || "";
+  }, [options, sel]);
+
+  const messengerCta = useMemo(
+    () => buildProductChatLink({ product: p, sizeLabel: selectedSizeLabel, intent: "ask_price", preferred: "messenger" }),
+    [p, selectedSizeLabel]
+  );
+
+  const zaloCta = useMemo(
+    () => buildProductChatLink({ product: p, sizeLabel: selectedSizeLabel, intent: "ask_price", preferred: "zalo" }),
+    [p, selectedSizeLabel]
+  );
 
   const srcBase = getImageUrls(p)[0] || "";
   const prefetch = useCallback(() => {
@@ -64,12 +98,42 @@ export default function ProductCard({ p, onImageClick, filter }) {
       </button>
 
       <div className="p-3">
-        <div className="flex items-baseline justify-between gap-2">
+        <div className="min-w-0">
           <div className="text-sm font-medium truncate">{p?.name}</div>
-          <PriceTag
-            value={price}
-            className="text-rose-600 text-sm font-semibold shrink-0"
-          />
+        </div>
+
+        <div className="mt-1.5 flex items-center justify-between gap-2">
+          <PriceTag value={price} className="text-rose-600 text-sm font-semibold" />
+
+          <div className="flex items-center gap-1.5 shrink-0 rounded-full border border-blue-100 bg-blue-50/60 px-1.5 py-1">
+            {messengerCta.href && messengerCta.channel === "messenger" && (
+              <a
+                href={messengerCta.href}
+                onClick={(e) => openChatTarget(messengerCta, e)}
+                target="_blank"
+                rel="noopener"
+                className="h-7 w-7 md:h-8 md:w-8 rounded-full bg-[#006AFF] text-white grid place-items-center shadow-sm hover:opacity-90 active:scale-95 transition"
+                aria-label={`Nhan Messenger ve ${p?.name || "mau banh"}`}
+                title="Nhan Messenger"
+              >
+                <MessengerIcon />
+              </a>
+            )}
+
+            {zaloCta.href && zaloCta.channel === "zalo" && (
+              <a
+                href={zaloCta.href}
+                onClick={(e) => openChatTarget(zaloCta, e)}
+                target="_blank"
+                rel="noopener"
+                className="h-7 w-7 md:h-8 md:w-8 rounded-full bg-[#0068FF] text-white grid place-items-center shadow-sm hover:opacity-90 active:scale-95 transition"
+                aria-label={`Nhan Zalo ve ${p?.name || "mau banh"}`}
+                title="Nhan Zalo"
+              >
+                <ZaloIcon />
+              </a>
+            )}
+          </div>
         </div>
 
         {sizeItems.length > 0 && (

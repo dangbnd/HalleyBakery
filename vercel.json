@@ -1,11 +1,23 @@
 {
+  "devCommand": "node scripts/vercel-dev.cjs",
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/api/all",
+      "destination": "/api/all"
+    },
+    {
+      "source": "/api/og",
+      "destination": "/api/og"
+    },
+    {
+      "source": "/:path((?!api/|@vite/|@react-refresh|__vite_ping|node_modules/)(?!.*\\.[^/]+$).*)",
       "destination": "/api/og"
     }
   ],
   "functions": {
+    "api/all.js": {
+      "memory": 256
+    },
     "api/og.js": {
       "memory": 256,
       "includeFiles": "dist/_app.html"

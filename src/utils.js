@@ -51,12 +51,12 @@ export function removeLS(key) {
 // ⚠️ CẢNH BÁO BẢO MẬT: Đây là auth client-side đơn giản (localStorage).
 // Mật khẩu hiển thị trong source code & DevTools. KHÔNG dùng cho dữ liệu nhạy cảm.
 // Nếu cần bảo mật thật: authenticate qua server (Firebase Auth, Supabase, v.v.)
-const defaultUsers = [
-  { id: 'u1', username: 'owner', password: 'owner', role: 'owner', name: 'Owner' },
-  { id: 'u2', username: 'manager', password: 'manager', role: 'manager', name: 'Manager' },
-  { id: 'u3', username: 'editor', password: 'editor', role: 'editor', name: 'Editor' },
-  { id: 'u4', username: 'staff', password: 'staff', role: 'staff', name: 'Staff' },
-];
+const defaultUsers = import.meta.env.DEV
+  ? [
+      // Seed user chỉ dành cho local dev, tránh tồn tại account mặc định trên production.
+      { id: 'u-dev-owner', username: 'dev-owner', password: 'dev-owner', role: 'owner', name: 'Dev Owner' },
+    ]
+  : [];
 
 export const authApi = {
   allUsers() {

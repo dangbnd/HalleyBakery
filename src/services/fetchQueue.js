@@ -27,9 +27,17 @@ async function doFetch(url, options, retriesLeft) {
             await delay(RETRY_DELAY_MS * (MAX_RETRIES - retriesLeft + 1));
             return doFetch(url, options, retriesLeft - 1);
         }
+        // 4xx (trừ 429) là lỗi cấu hình/request, retry thường không có ích.
+        if (!res.ok && res.status >= 400 && res.status < 500 && res.status !== 429) {
+            throw new Error(`HTTP ${res.status} for ${url}`);
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
         return res;
     } catch (e) {
+        // Timeout/abort hoặc URL lỗi: fail fast, không retry để tránh treo lâu.
+        if (e?.name === "AbortError" || /Failed to construct 'URL'|Invalid URL/i.test(String(e?.message || ""))) {
+            throw e;
+        }
         if (retriesLeft > 0) {
             await delay(RETRY_DELAY_MS * (MAX_RETRIES - retriesLeft + 1));
             return doFetch(url, options, retriesLeft - 1);

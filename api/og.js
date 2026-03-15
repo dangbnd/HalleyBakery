@@ -1,30 +1,31 @@
-// api/og.js — Vercel Serverless Function
-// Crawler → trả OG HTML động theo URL (pid, cat, view, q)
-// User thường → serve index.html (SPA)
+// api/og.js Ã¢â‚¬â€ Vercel Serverless Function
+// Crawler Ã¢â€ â€™ trÃ¡ÂºÂ£ OG HTML Ã„â€˜Ã¡Â»â„¢ng theo URL (pid, cat, view, q)
+// User thÃ†Â°Ã¡Â»Âng Ã¢â€ â€™ serve index.html (SPA)
 
 import { readFileSync } from "fs";
 import { join } from "path";
 
-/* ===== CONFIG (đọc từ .env đã commit) ===== */
-const SHEET_ID = "1Z-Y_yZFeOsgxHaQG39UzaPZBATBNH08g_5CsCKW4F14";
-const PRODUCT_TABS = "1320694377:100k,1704842938:Basic,1927539600:BeTrai,1855820716:BeGai,973759986:Kuromi,1095827517:ThuNoi,766424998:3D,1546645574:Doraemon,383748245:Redvelvet,1969282223:Tiramisu,551943231:Mousse,33352066:BLTM,646373821:SetHoaBanh,220270059:BanhHoa,187755764:Tulip,1629133646:HoaDacBiet,626531830:HoaQua,754409517:Nam,418952452:Nu,265132346:Noel,584148313:Love,2058100810:SetTiec,1274878583:CongTy,834006966:ThanTai,524380305:ChuaPhanLoai";
-const MENU_GID = "847800272";
+/* ===== CONFIG (Ã„â€˜Ã¡Â»Âc tÃ¡Â»Â« env) ===== */
+const SHEET_ID = process.env.OG_SHEET_ID || process.env.VITE_SHEET_ID || "";
+const PRODUCT_TABS = process.env.OG_PRODUCT_TABS || process.env.VITE_PRODUCT_TABS || "";
+const MENU_GID = process.env.OG_MENU_GID || process.env.VITE_SHEET_GID_MENU || "";
 
 const CRAWLERS = /facebookexternalhit|Facebot|Twitterbot|TelegramBot|Zalobot|LinkedInBot|Slackbot|WhatsApp|Discordbot|Pinterest|vkShare|W3C_Validator|baiduspider/i;
 
 const SITE_URL = "https://halleybakery.io.vn";
 const DEFAULT_IMAGE = `${SITE_URL}/brand/logo-desktop.png`;
-const DEFAULT_TITLE = "HALLEY BAKERY — Bánh sinh nhật & Bánh sự kiện Hà Nội";
-const DEFAULT_DESC = "Đặt bánh sinh nhật, bánh sự kiện theo yêu cầu. Thiết kế độc đáo, giao hàng tận nơi tại Hà Nội.";
+const DEFAULT_TITLE = "HALLEY BAKERY - Banh sinh nhat & Banh su kien Ha Noi";
+const DEFAULT_DESC = "Dat banh sinh nhat, banh su kien theo yeu cau. Thiet ke doc dao, giao hang tan noi tai Ha Noi.";
 
 /* ===== CACHE ===== */
 let cachedProducts = null;
 let cachedMenu = null;
 let cacheTime = 0;
-const CACHE_TTL = 10 * 60 * 1000; // 10 phút
+const CACHE_TTL = 10 * 60 * 1000; // 10 phÃƒÂºt
 
 /* ===== GViz fetch ===== */
 async function fetchGViz(gid) {
+    if (!SHEET_ID || !gid) return [];
     const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${gid}`;
     const res = await fetch(url);
     const txt = await res.text();
@@ -48,12 +49,23 @@ async function fetchGViz(gid) {
 async function loadData() {
     const now = Date.now();
     if (cachedProducts && now - cacheTime < CACHE_TTL) return;
+    if (!SHEET_ID || !PRODUCT_TABS) {
+        cachedProducts = [];
+        cachedMenu = [];
+        cacheTime = now;
+        return;
+    }
 
-    // Fetch sản phẩm từ tất cả tab
-    const tabs = PRODUCT_TABS.split(",").map(t => {
-        const [gid, key] = t.split(":");
-        return { gid, key };
-    });
+    // Fetch sÃ¡ÂºÂ£n phÃ¡ÂºÂ©m tÃ¡Â»Â« tÃ¡ÂºÂ¥t cÃ¡ÂºÂ£ tab
+    const tabs = PRODUCT_TABS
+        .split(/[\n,;]+/)
+        .map(t => t.trim())
+        .filter(Boolean)
+        .map(t => {
+            const [gid, key] = t.split(":");
+            return { gid: (gid || "").trim(), key: (key || "").trim() };
+        })
+        .filter(t => t.gid && t.key);
 
     const results = await Promise.allSettled(
         tabs.map(async t => {
@@ -86,6 +98,85 @@ function imgOf(p) {
 const esc = s => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
+function pickFirst(obj, keys) {
+    if (!obj) return "";
+    for (const k of keys) {
+        const v = obj[k];
+        if (v === 0) return "0";
+        if (v === undefined || v === null) continue;
+        const s = String(v).trim();
+        if (s) return s;
+    }
+    return "";
+}
+
+function productNameOf(p) {
+    return pickFirst(p, ["name", "ten", "title", "productname", "product_name"]);
+}
+
+function productDescOf(p) {
+    return pickFirst(p, ["description", "mota", "desc", "note", "ghichu"]);
+}
+
+const PID_KEYS = [
+    "uid",
+    "code",
+    "slug",
+    "id",
+    "productid",
+    "product_id",
+    "productcode",
+    "product_code",
+    "masanpham",
+    "masp",
+    "maso",
+    "ma",
+    "mabanh",
+];
+
+function collectCandidate(set, value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return;
+
+    set.add(raw);
+    set.add(norm(raw));
+
+    const compact = raw.replace(/[^a-zA-Z0-9]/g, "");
+    if (compact && compact !== raw) {
+        set.add(compact);
+        set.add(norm(compact));
+    }
+
+    const digitsTail = compact.match(/(\d{2,})$/)?.[1];
+    if (digitsTail) set.add(digitsTail);
+}
+
+function productPidCandidates(p) {
+    if (!p || typeof p !== "object") return [];
+    const set = new Set();
+    for (const key of PID_KEYS) collectCandidate(set, p[key]);
+
+    const id = pickFirst(p, ["id"]);
+    const category = pickFirst(p, ["category", "_tab_key", "type"]);
+    if (id && category) collectCandidate(set, `${category}:${id}`);
+
+    // Backward compatibility: old links may encode product name.
+    collectCandidate(set, productNameOf(p));
+
+    return [...set];
+}
+
+function findProductByPid(products, pid) {
+    const rawPid = String(pid || "").trim();
+    if (!rawPid) return null;
+    const targets = new Set();
+    collectCandidate(targets, rawPid);
+    return products.find(p => {
+        const cands = productPidCandidates(p);
+        return cands.some(c => targets.has(c));
+    }) || null;
+}
+
 function ogHtml({ title, description, image, url }) {
     return `<!DOCTYPE html><html lang="vi"><head>
 <meta charset="UTF-8">
@@ -94,8 +185,6 @@ function ogHtml({ title, description, image, url }) {
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(description)}">
 <meta property="og:image" content="${esc(image)}">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
 <meta property="og:locale" content="vi_VN">
 <meta property="og:site_name" content="Halley Bakery">
 <meta name="twitter:card" content="summary_large_image">
@@ -111,12 +200,31 @@ function ogHtml({ title, description, image, url }) {
 let indexHtml = null;
 function getIndexHtml() {
     if (indexHtml) return indexHtml;
-    try {
-        indexHtml = readFileSync(join(process.cwd(), "dist", "_app.html"), "utf-8");
-    } catch {
-        // Nếu dist không có, thử .output hoặc public
-        try { indexHtml = readFileSync(join(process.cwd(), ".output", "static", "_app.html"), "utf-8"); } catch { }
+
+    const isLocalDev =
+        process.env.VERCEL_DEV === "1" ||
+        process.env.NODE_ENV !== "production" ||
+        process.env.VERCEL_ENV !== "production";
+
+    const candidates = isLocalDev
+        ? [
+            join(process.cwd(), "index.html"),
+            join(process.cwd(), "dist", "_app.html"),
+            join(process.cwd(), ".output", "static", "_app.html"),
+        ]
+        : [
+            join(process.cwd(), "dist", "_app.html"),
+            join(process.cwd(), ".output", "static", "_app.html"),
+            join(process.cwd(), "index.html"),
+        ];
+
+    for (const file of candidates) {
+        try {
+            indexHtml = readFileSync(file, "utf-8");
+            break;
+        } catch { }
     }
+
     return indexHtml;
 }
 
@@ -124,7 +232,7 @@ function getIndexHtml() {
 export default async function handler(req, res) {
     const ua = req.headers["user-agent"] || "";
 
-    // User thường → serve index.html
+    // User thÃ†Â°Ã¡Â»Âng Ã¢â€ â€™ serve index.html
     if (!CRAWLERS.test(ua)) {
         const html = getIndexHtml();
         if (html) {
@@ -132,12 +240,12 @@ export default async function handler(req, res) {
             res.setHeader("Cache-Control", "public, max-age=0, s-maxage=86400, stale-while-revalidate=86400");
             return res.status(200).send(html);
         }
-        // Fallback: redirect về static
+        // Fallback: redirect vÃ¡Â»Â static
         res.writeHead(302, { Location: "/" });
         return res.end();
     }
 
-    // === Crawler → dynamic OG ===
+    // === Crawler Ã¢â€ â€™ dynamic OG ===
     await loadData();
     const products = cachedProducts || [];
     const menu = cachedMenu || [];
@@ -152,23 +260,19 @@ export default async function handler(req, res) {
 
     if (products.length) {
         if (pid) {
-            const pn = norm(pid);
-            const p = products.find(x =>
-                String(x.id || "") === pid ||
-                norm(x.name || x.ten || "") === pn ||
-                norm(String(x.id || "")) === pn
-            );
+            const p = findProductByPid(products, pid);
             if (p) {
-                const name = p.name || p.ten || pid;
-                title = `${name} — Halley Bakery`;
-                description = (p.description || p.mota || "")
-                    ? String(p.description || p.mota || "").slice(0, 200)
-                    : `Đặt ${name} tại Halley Bakery. Giao hàng tận nơi Hà Nội.`;
+                const name = productNameOf(p) || pid;
+                title = `${name} - Halley Bakery`;
+                const desc = productDescOf(p);
+                description = desc
+                    ? String(desc).slice(0, 200)
+                    : `Dat ${name} tai Halley Bakery. Giao hang tan noi tai Ha Noi.`;
                 image = imgOf(p);
             }
         } else if (cat && cat !== "all" && cat !== "home") {
             const cn = norm(cat);
-            // Tìm tên hiển thị từ menu
+            // Find display title from menu data.
             let catTitle = cat;
             for (const m of menu) {
                 const mk = norm(m.key || m.title || "");
@@ -178,22 +282,23 @@ export default async function handler(req, res) {
                 const pc = p.category || p._tab_key || "";
                 return pc === cat || norm(pc) === cn;
             });
-            title = `${catTitle} — Halley Bakery`;
+            title = `${catTitle} - Halley Bakery`;
             description = cp.length
-                ? `Xem ${cp.length} mẫu ${catTitle} tại Halley Bakery. Đặt bánh online, giao tận nơi.`
-                : `${catTitle} tại Halley Bakery. Đặt bánh online, giao tận nơi.`;
+                ? `Xem ${cp.length} mau ${catTitle} tai Halley Bakery. Dat banh online, giao tan noi.`
+                : `${catTitle} tai Halley Bakery. Dat banh online, giao tan noi.`;
             const withImg = cp.filter(p => imgOf(p) !== DEFAULT_IMAGE);
             if (withImg.length) image = imgOf(withImg[Math.floor(Math.random() * withImg.length)]);
         } else if (q) {
-            title = `Tìm "${q}" — Halley Bakery`;
-            description = `Kết quả tìm kiếm "${q}" tại Halley Bakery.`;
+            title = `Tim "${q}" - Halley Bakery`;
+            description = `Ket qua tim kiem "${q}" tai Halley Bakery.`;
             const ql = q.toLowerCase();
-            const m = products.find(p => ((p.name || p.ten || "").toLowerCase()).includes(ql));
+            const m = products.find(p => (productNameOf(p).toLowerCase()).includes(ql));
             if (m) image = imgOf(m);
         }
     }
-
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "public, max-age=300, s-maxage=300");
     res.status(200).send(ogHtml({ title, description, image, url: fullUrl }));
 }
+
+

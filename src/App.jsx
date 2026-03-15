@@ -1,6 +1,7 @@
 // src/App.jsx
 import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue, lazy, Suspense } from "react";
 import { LS, readLS, writeLS } from "./utils.js";
+import { getConfig, setConfig } from "./utils/config.js";
 import { DATA } from "./data.js";
 import { encodeState, decodeState } from "./utils/urlState.js";
 import { pidOf } from "./utils/pid.js";
@@ -20,7 +21,7 @@ import BackToTop from "./components/BackToTop.jsx";
 import AnnouncementTicker from "./components/AnnouncementTicker.jsx";
 import LoadingSkeleton from "./components/LoadingSkeleton.jsx";
 
-import { readProductTabsFromEnv, fetchProductsFromTabs, fetchUnifiedData } from "./services/sheets.multi.js";
+import { readProductTabsFromEnv, fetchProductsFromTabs, fetchUnifiedData, buildUnifiedApiUrl } from "./services/sheets.multi.js";
 import {
   fetchSheetRows, fetchTabAsObjects, fetchFbUrls,
   mapProducts, mapCategories, mapTags, mapMenu, mapPages,
@@ -275,25 +276,38 @@ function ActiveFilters({ filterState, clearTag, masterTags = [] }) {
   );
 }
 
-/* =================== Sheet config (biến env là hằng, tạo 1 lần) =================== */
-const _SHEET = {
-  id: import.meta.env.VITE_SHEET_ID,
-  gid: import.meta.env.VITE_SHEET_GID || "0",
-  gids: {
-    products: import.meta.env.VITE_SHEET_GID_PRODUCTS || import.meta.env.VITE_SHEET_GID || "0",
-    categories: import.meta.env.VITE_SHEET_GID_CATEGORIES,
-    tags: import.meta.env.VITE_SHEET_GID_TAGS,
-    menu: import.meta.env.VITE_SHEET_GID_MENU,
-    pages: import.meta.env.VITE_SHEET_GID_PAGES,
-    types: import.meta.env.VITE_SHEET_GID_TYPES,
-    levels: import.meta.env.VITE_SHEET_GID_LEVELS,
-    sizes: import.meta.env.VITE_SHEET_GID_SIZES,
-    announcements: import.meta.env.VITE_SHEET_GID_ANNOUNCEMENTS,
-  },
-};
+/* =================== Sheet config (localStorage > env > fallback) =================== */
+function readSheetConfig() {
+  return {
+    id: getConfig("sheet_id"),
+    gid: getConfig("sheet_gid_products", "0"),
+    gids: {
+      products: getConfig("sheet_gid_products", "0"),
+      categories: getConfig("sheet_gid_categories"),
+      tags: getConfig("sheet_gid_tags"),
+      menu: getConfig("sheet_gid_menu"),
+      pages: getConfig("sheet_gid_pages"),
+      types: getConfig("sheet_gid_types"),
+      levels: getConfig("sheet_gid_levels"),
+      sizes: getConfig("sheet_gid_sizes"),
+      announcements: getConfig("sheet_gid_announcements"),
+      fb: getConfig("sheet_gid_fb"),
+    },
+  };
+}
 
-/* =================== App =================== */
+function isUsableRemoteUrl(v = "") {
+  const s = String(v || "").trim();
+  if (!/^https?:\/\//i.test(s)) return false;
+  // Ignore placeholder values like "https://.../..."
+  if (s.includes("...")) return false;
+  return true;
+}
+
+
+
 export default function App() {
+  const [configTick, setConfigTick] = useState(0);
   const [route, setRoute] = useState("home");
   const [q, setQ] = useState("");
   const qDeb = useDebounced(q, 200);
@@ -311,6 +325,51 @@ export default function App() {
   const [filtersResetKey, setFiltersResetKey] = useState(0);
 
   const [user, setUser] = useState(() => readLS(LS.AUTH, null));
+
+  // Cập nhật config runtime khi Settings lưu (same-tab + cross-tab).
+  useEffect(() => {
+    const refresh = () => setConfigTick((n) => n + 1);
+    const onStorage = (e) => {
+      if (!e?.key || String(e.key).startsWith("cfg:")) refresh();
+    };
+    window.addEventListener("hb:config-changed", refresh);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("hb:config-changed", refresh);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
+  const visitorTrackingEnabled = useMemo(
+    () => /^(1|true|yes|on)$/i.test(String(getConfig("enable_visitor_tracking", "false"))),
+    [configTick]
+  );
+
+  /* Visitor access tracking (opt-in) */
+  useEffect(() => {
+    if (!visitorTrackingEnabled) return;
+    try {
+      const entry = {
+        id: Math.random().toString(36).slice(2) + Date.now().toString(36),
+        ts: Date.now(),
+        path: (() => {
+          const p = window.location.pathname;
+          const sp = new URLSearchParams(window.location.search);
+          sp.sort();
+          const qs = sp.toString();
+          return qs ? `${p}?${qs}` : p;
+        })(),
+        ua: navigator.userAgent,
+        screen: `${window.screen.width}×${window.screen.height}`,
+        referrer: document.referrer || "",
+        lang: navigator.language || "",
+        ip: "",
+      };
+      const visitors = readLS("visitors", []);
+      visitors.unshift(entry);
+      writeLS("visitors", visitors.slice(0, 1000));
+    } catch { }
+  }, [visitorTrackingEnabled]);
   /* ---------------- State ---------------- */
   const [fbUrls, setFbUrls] = useState(() => readLS(LS.FB_URLS, []));
   const [products, setProducts] = useState(() => readLS(LS.PRODUCTS, DATA.products || []));
@@ -333,13 +392,13 @@ export default function App() {
   const [pages, setPages] = useState(() => readLS(LS.PAGES, DATA.pages || []));
   const [tags, setTags] = useState(() => readLS(LS.TAGS, DATA.tags || []));
 
-  const SHEET = _SHEET;
+  const SHEET = useMemo(() => readSheetConfig(), [configTick]);
 
   const [announcements, setAnnouncements] =
     useState(() => readLS(LS.ANNOUNCEMENTS, DATA.announcements || []));
   useEffect(() => writeLS(LS.ANNOUNCEMENTS, announcements), [announcements]);
 
-  const SYNC_MS = Number(import.meta.env.VITE_SYNC_INTERVAL_MS || 600000);
+  const SYNC_MS = 600000; // 10 phút
 
   // P3: Batch localStorage writes — tránh block main thread khi syncAll cập nhật nhiều state
   const lsQueue = useRef(new Map());
@@ -410,14 +469,14 @@ export default function App() {
 
   /* FB urls */
   useEffect(() => {
-    const SHEET_ID = import.meta.env.VITE_SHEET_ID;
-    const FB_GID = import.meta.env.VITE_SHEET_FB_GID || import.meta.env.VITE_SHEET_GID_FB;
+    const SHEET_ID = getConfig("sheet_id");
+    const FB_GID = getConfig("sheet_gid_fb");
     if (!SHEET_ID || !FB_GID) return;
     (async () => {
       try { const urls = await fetchFbUrls({ sheetId: SHEET_ID, gid: FB_GID }); setFbUrls([...new Set(urls.map(normFb))]); }
       catch (e) { console.error("load FB sheet fail:", e); }
     })();
-  }, []);
+  }, [configTick]);
   useEffect(() => {
     if (!filterState?.tags?.size || !tags?.length) return;
     const hasAllLabels = [...filterState.tags].every(k => filterState.tagLabels?.[k]);
@@ -480,21 +539,52 @@ export default function App() {
       const hasCache = currentProducts.length > 1;
       if (!hasCache && isFirstSync) setDataLoading(true);
       isFirstSync = false;
+
+      let uiRevealed = hasCache;
+      const revealContentEarly = () => {
+        if (uiRevealed) return;
+        uiRevealed = true;
+        setDataLoading(false);
+      };
+
       try {
         let prodRows;
         let unifiedOk = false;
 
         // 1. Ưu tiên fetch từ API gộp (nhanh, 1 request) - chỉ khi user cấu hình
-        const allUrl = import.meta.env.VITE_API_ALL_URL;
+        const allUrl = buildUnifiedApiUrl({
+          apiAllUrl: getConfig("api_all_url").trim(),
+          sheetId: SHEET.id,
+          productTabs: getConfig("product_tabs").trim(),
+          gids: SHEET.gids,
+        });
         if (allUrl) {
           const unified = await fetchUnifiedData(allUrl);
           if (unified && unified.products && unified.products.length) {
+            if (unified?._meta?.refreshedAt) {
+              setConfig("last_sync_at", unified._meta.refreshedAt);
+            }
             // Set metadata
-            if (unified.categories?.length) { setCategories(mapCategories(unified.categories)); writeLS(LS.CATEGORIES, unified.categories); }
-            if (unified.tags?.length) { setTags(mapTags(unified.tags)); writeLS(LS.TAGS, unified.tags); }
-            if (unified.menu?.length) { setMenu(mapMenu(unified.menu)); writeLS(LS.MENU, unified.menu); }
-            if (unified.pages?.length) { setPages(mapPages(unified.pages)); writeLS(LS.PAGES, unified.pages); }
-            if (unified.announcements?.length) { setAnnouncements(mapAnnouncements(unified.announcements)); writeLS(LS.ANNOUNCEMENTS, unified.announcements); }
+            if (unified.categories?.length) {
+              const mapped = mapCategories(unified.categories);
+              setCategories(mapped); writeLS(LS.CATEGORIES, mapped);
+            }
+            if (unified.tags?.length) {
+              const mapped = mapTags(unified.tags);
+              setTags(mapped); writeLS(LS.TAGS, mapped);
+            }
+            if (unified.menu?.length) {
+              const mapped = mapMenu(unified.menu);
+              setMenu(mapped); writeLS(LS.MENU, mapped);
+            }
+            if (unified.pages?.length) {
+              const mapped = mapPages(unified.pages);
+              setPages(mapped); writeLS(LS.PAGES, mapped);
+            }
+            if (unified.announcements?.length) {
+              const mapped = mapAnnouncements(unified.announcements);
+              setAnnouncements(mapped); writeLS(LS.ANNOUNCEMENTS, mapped);
+            }
             if (unified.types?.length) { writeLS(LS.TYPES, mapTypes(unified.types)); }
             if (unified.levels?.length) { writeLS(LS.LEVELS, mapLevels(unified.levels)); }
 
@@ -522,65 +612,72 @@ export default function App() {
 
         // 2. Fallback: multi-tab (chỉ khi API gộp không trả được data)
         if (!prodRows) {
-          const tabsEnv = (import.meta.env?.VITE_PRODUCT_TABS || "").trim();
-          if (tabsEnv) {
-            const tabs = readProductTabsFromEnv();
+          if (SHEET.id) {
+            const tabsEnv = getConfig("product_tabs").trim();
+            if (tabsEnv) {
+              const tabs = readProductTabsFromEnv();
+              if (!tabs.length) {
+                prodRows = await fetchSheetRows({ sheetId: SHEET.id, gid: SHEET.gids.products || "0" });
+              } else {
+                // Hàm chuẩn hoá row (dùng chung)
+                const normalizeRow = (r) => ({
+                  ...r,
+                  images: String(r.images || r.image || "")
+                    .replace(/\|/g, ",").replace(/\n/g, ",").split(",").map((s) => s.trim()).filter(Boolean).join(","),
+                  price: String(r.price || r.gia || ""),
+                  sizes: String(r.sizes || r.size || r.Sizes || r.Size || ""),
+                  priceBySize: (r.pricebysize ?? r.priceBySize ?? ""),
+                  visibility: String(r.visibility ?? r.Visibility ?? r.show ?? r.hienthi ?? r["hiển thị"] ?? "public").trim().toLowerCase(),
+                  priceVisibility: String(r.priceVisibility ?? r.pricevisibility ?? r.showPrice ?? r.showprice ?? r.show_price ?? r.hienGia ?? r["hiển thị giá"] ?? "").trim().toLowerCase(),
+                  description: String(r.description || r.desc || r.mo_ta || "").trim(),
+                  descriptionVisibility: String(
+                    r.descriptionVisibility ?? r.descriptionvisibility ??
+                    r.descVisibility ?? r.descvisibility ??
+                    r.showDesc ?? r.showdesc ??
+                    r.showDescription ?? r.showdescription ??
+                    r.hienMoTa ?? r["hiển thị mô tả"] ?? r["hien thi mo ta"] ?? ""
+                  ).trim().toLowerCase(),
+                });
 
-            // Hàm chuẩn hoá row (dùng chung)
-            const normalizeRow = (r) => ({
-              ...r,
-              images: String(r.images || r.image || "")
-                .replace(/\|/g, ",").replace(/\n/g, ",").split(",").map((s) => s.trim()).filter(Boolean).join(","),
-              price: String(r.price || r.gia || ""),
-              sizes: String(r.sizes || r.size || r.Sizes || r.Size || ""),
-              priceBySize: (r.pricebysize ?? r.priceBySize ?? ""),
-              visibility: String(r.visibility ?? r.Visibility ?? r.show ?? r.hienthi ?? r["hiển thị"] ?? "public").trim().toLowerCase(),
-              priceVisibility: String(r.priceVisibility ?? r.pricevisibility ?? r.showPrice ?? r.showprice ?? r.show_price ?? r.hienGia ?? r["hiển thị giá"] ?? "").trim().toLowerCase(),
-              description: String(r.description || r.desc || r.mo_ta || "").trim(),
-              descriptionVisibility: String(
-                r.descriptionVisibility ?? r.descriptionvisibility ??
-                r.descVisibility ?? r.descvisibility ??
-                r.showDesc ?? r.showdesc ??
-                r.showDescription ?? r.showdescription ??
-                r.hienMoTa ?? r["hiển thị mô tả"] ?? r["hien thi mo ta"] ?? ""
-              ).trim().toLowerCase(),
-            });
+                // Tìm tab ưu tiên theo URL (?cat=xxx)
+                const urlCat = new URL(location.href).searchParams.get("cat") || "";
+                let priorityIdx = urlCat
+                  ? tabs.findIndex(t => t.key.toLowerCase() === urlCat.toLowerCase())
+                  : -1;
+                if (priorityIdx < 0) priorityIdx = 0; // mặc định = tab đầu tiên
 
-            // Tìm tab ưu tiên theo URL (?cat=xxx)
-            const urlCat = new URL(location.href).searchParams.get("cat") || "";
-            let priorityIdx = urlCat
-              ? tabs.findIndex(t => t.key.toLowerCase() === urlCat.toLowerCase())
-              : -1;
-            if (priorityIdx < 0) priorityIdx = 0; // mặc định = tab đầu tiên
+                const priorityTab = tabs[priorityIdx];
+                const restTabs = tabs.filter((_, i) => i !== priorityIdx);
 
-            const priorityTab = tabs[priorityIdx];
-            const restTabs = tabs.filter((_, i) => i !== priorityIdx);
+                // A. Fetch tab ưu tiên TRƯỚC (~2-3s)
+                console.time(`[Halley] Priority tab "${priorityTab.key}"`);
+                const priorityRows = await fetchProductsFromTabs({
+                  sheetId: SHEET.id, tabs: [priorityTab], normalize: normalizeRow,
+                });
+                console.timeEnd(`[Halley] Priority tab "${priorityTab.key}"`);
+                console.log(`[Halley] Priority: ${priorityRows.length} products, hasCache=${hasCache}`);
 
-            // A. Fetch tab ưu tiên TRƯỚC (~2-3s)
-            console.time(`[Halley] Priority tab "${priorityTab.key}"`);
-            const priorityRows = await fetchProductsFromTabs({
-              sheetId: SHEET.id, tabs: [priorityTab], normalize: normalizeRow,
-            });
-            console.timeEnd(`[Halley] Priority tab "${priorityTab.key}"`);
-            console.log(`[Halley] Priority: ${priorityRows.length} products, hasCache=${hasCache}`);
+                // Set products sớm (nhưng GIỮ skeleton - chỉ tắt ở finally)
+                if (!hasCache && priorityRows.length) {
+                  const mapped = mapProducts(priorityRows, null);
+                  const mode = getMode(user);
+                  const sanitized = sanitizeProductsForMode(mapped, mode);
+                  setProducts(sanitized);
+                  revealContentEarly();
+                }
 
-            // Set products sớm (nhưng GIỮ skeleton - chỉ tắt ở finally)
-            if (!hasCache && priorityRows.length) {
-              const mapped = mapProducts(priorityRows, null);
-              const mode = getMode(user);
-              const sanitized = sanitizeProductsForMode(mapped, mode);
-              setProducts(sanitized);
-              // KHÔNG gọi setDataLoading(false) ở đây!
+                // B. Fetch các tab còn lại ngầm
+                const restRows = await fetchProductsFromTabs({
+                  sheetId: SHEET.id, tabs: restTabs, normalize: normalizeRow,
+                });
+
+                prodRows = [...priorityRows, ...restRows];
+              }
+            } else {
+              prodRows = await fetchSheetRows({ sheetId: SHEET.id, gid: SHEET.gids.products || "0" });
             }
-
-            // B. Fetch các tab còn lại ngầm
-            const restRows = await fetchProductsFromTabs({
-              sheetId: SHEET.id, tabs: restTabs, normalize: normalizeRow,
-            });
-
-            prodRows = [...priorityRows, ...restRows];
           } else {
-            prodRows = await fetchSheetRows({ sheetId: SHEET.id, gid: SHEET.gids.products || "0" });
+            prodRows = [];
           }
         }
 
@@ -591,56 +688,134 @@ export default function App() {
           const mode = getMode(user);
           const sanitized = sanitizeProductsForMode(fromSheet, mode);
           setProducts(sanitized);
-          // KHÔNG gọi setDataLoading(false) ở đây - chờ đến finally!
+          revealContentEarly();
         }
 
         let types = [], levels = [];
         try {
-          if (SHEET.gids.types) {
-            const trows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.types });
-            types = mapTypes(trows); writeLS(LS.TYPES, types);
-          } else types = readLS(LS.TYPES, []);
-          if (SHEET.gids.levels) {
-            const lrows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.levels });
-            levels = mapLevels(lrows); writeLS(LS.LEVELS, levels);
-          } else levels = readLS(LS.LEVELS, []);
+          const [typesResult, levelsResult] = await Promise.all([
+            (async () => {
+              if (SHEET.id && SHEET.gids.types) {
+                const trows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.types });
+                const mapped = mapTypes(trows);
+                writeLS(LS.TYPES, mapped);
+                return mapped;
+              }
+              return readLS(LS.TYPES, []);
+            })(),
+            (async () => {
+              if (SHEET.id && SHEET.gids.levels) {
+                const lrows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.levels });
+                const mapped = mapLevels(lrows);
+                writeLS(LS.LEVELS, mapped);
+                return mapped;
+              }
+              return readLS(LS.LEVELS, []);
+            })(),
+          ]);
+          types = typesResult || [];
+          levels = levelsResult || [];
         } catch (e) { console.error("load types/levels fail:", e); }
+
 
         if (fromSheet?.length) {
           const enriched = fromSheet.map((p) => enrichProductPricing(p, types, levels));
           const mode = getMode(user);
           const sanitized = sanitizeProductsForMode(enriched, mode);
           setProducts(sanitized); writeLS(LS.PRODUCTS, sanitized);
+
+          // Load Menu trước để lấy label cho categories
+          let menuMap = {};
+          if (SHEET.id && SHEET.gids.menu && !unifiedOk) {
+            try {
+              const menuRows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.menu });
+              const mapped = mapMenu(menuRows);
+              if (mapped?.length) { setMenu(mapped); writeLS(LS.MENU, mapped); }
+              for (const item of (mapped || menuRows || [])) {
+                if (item.key && item.label) menuMap[item.key] = item.label;
+                if (item.key && item.title) menuMap[item.key] = item.title;
+              }
+            } catch (e) { console.warn("[Halley] skip menu load:", e.message); }
+          }
+
+          // Build categories từ product data + Menu labels
           const cats = [...new Set(sanitized.map((p) => p.category).filter(Boolean))];
           if (cats.length) {
-            const existed = new Set((categories || []).map((c) => c.key));
-            const add = cats.filter((k) => !existed.has(k)).map((k) => ({ key: k, title: k }));
-            if (add.length) { const next = [...(categories || []), ...add]; setCategories(next); writeLS(LS.CATEGORIES, next); }
+            const catList = cats.map((k) => ({
+              key: k,
+              title: menuMap[k] || k, // Dùng label từ Menu, fallback = key
+            }));
+            setCategories(catList); writeLS(LS.CATEGORIES, catList);
+          }
+
+          // Build tags từ product data
+          const tagSet = new Map();
+          for (const p of sanitized) {
+            const rawTags = String(p.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+            for (const t of rawTags) {
+              const tk = t.toLowerCase().replace(/\s+/g, "-");
+              if (!tagSet.has(tk)) tagSet.set(tk, t);
+            }
+          }
+          if (tagSet.size) {
+            const tagList = [...tagSet.entries()].map(([k, label]) => ({ key: k, label, id: k }));
+            setTags(tagList); writeLS(LS.TAGS, tagList);
           }
         }
 
         const loadOpt = async (gid, mapper, setter, lsKey) => {
-          if (!gid) return;
-          if (unifiedOk) return; // Chỉ skip khi API gộp THẬT SỰ thành công
-
-          const rows = await fetchTabAsObjects({ sheetId: SHEET.id, gid });
-          const mapped = mapper(rows);
-          if (mapped?.length) { setter(mapped); writeLS(lsKey, mapped); }
+          if (!SHEET.id || !gid) return;
+          if (unifiedOk) return;
+          try {
+            const rows = await fetchTabAsObjects({ sheetId: SHEET.id, gid });
+            const mapped = mapper(rows);
+            if (mapped?.length) { setter(mapped); writeLS(lsKey, mapped); }
+          } catch (e) {
+            console.warn(`[Halley] skip GID ${gid}:`, e.message);
+          }
         };
         await Promise.all([
-          loadOpt(SHEET.gids.categories, mapCategories, setCategories, LS.CATEGORIES),
-          loadOpt(SHEET.gids.tags, mapTags, setTags, LS.TAGS),
-          loadOpt(SHEET.gids.menu, mapMenu, setMenu, LS.MENU),
+          // Categories và Tags đã được build từ product data hoặc unified API
+          SHEET.gids.categories ? Promise.resolve() : null,
+          SHEET.gids.tags ? Promise.resolve() : null,
+          // Menu đã load ở trên, skip nếu đã load
+          SHEET.gids.menu ? Promise.resolve() : null,
           loadOpt(SHEET.gids.pages, mapPages, setPages, LS.PAGES),
           loadOpt(SHEET.gids.sizes, mapSizes, () => { }, LS.SIZES),
           loadOpt(SHEET.gids.announcements, mapAnnouncements, setAnnouncements, LS.ANNOUNCEMENTS),
-        ]).catch(e => console.error("loadOpt fail:", e));
+        ].filter(Boolean)).catch(e => console.error("loadOpt fail:", e));
       } finally {
         setDataLoading(false);
       }
     }
-    if (SHEET.id) { syncAll(); const t = setInterval(syncAll, SYNC_MS); return () => clearInterval(t); }
-  }, [SHEET.id, SHEET.gid, SYNC_MS]); // eslint-disable-line
+    const hasUnifiedEndpoint = !!buildUnifiedApiUrl({
+      apiAllUrl: getConfig("api_all_url").trim(),
+      sheetId: SHEET.id,
+      productTabs: getConfig("product_tabs").trim(),
+      gids: SHEET.gids,
+    });
+    if (SHEET.id || hasUnifiedEndpoint) {
+      syncAll();
+      const t = setInterval(syncAll, SYNC_MS);
+      return () => clearInterval(t);
+    }
+    setDataLoading(false);
+  }, [
+    SYNC_MS,
+    configTick,
+    SHEET.id,
+    SHEET.gid,
+    SHEET.gids.products,
+    SHEET.gids.categories,
+    SHEET.gids.tags,
+    SHEET.gids.menu,
+    SHEET.gids.pages,
+    SHEET.gids.types,
+    SHEET.gids.levels,
+    SHEET.gids.sizes,
+    SHEET.gids.announcements,
+    SHEET.gids.fb,
+  ]);
 
   /* lọc */
   function applyFilters(list = []) {
@@ -693,6 +868,10 @@ export default function App() {
   /* ======= danh mục ======= */
   const productCatsFromMenu = useMemo(() => getProductCategoriesFromMenu(menu), [menu]);
   const descByKey = useMemo(() => buildDescIndex(menu), [menu]);
+  const categoryTitleMap = useMemo(
+    () => Object.fromEntries((categories || []).map((c) => [String(c.key || ""), String(c.title || c.key || "")])),
+    [categories]
+  );
 
   const menuCatsWithAll = useMemo(() => [{ key: "all", title: "Tất cả" }, ...productCatsFromMenu], [productCatsFromMenu]);
   const categoryKeysFromMenu = useMemo(() => new Set(productCatsFromMenu.map((c) => c.key)), [productCatsFromMenu]);
@@ -749,17 +928,20 @@ export default function App() {
     return applyFilters(base);
   }, [route, listForSearch, baseForRoute, filterState]);
 
+  const homeSectionCats = useMemo(() => productCatsFromMenu, [productCatsFromMenu]);
+  const homeMenuReady = productCatsFromMenu.length > 0;
+
   const homeSections = useMemo(() => {
     if (route !== "home") return [];
     const arr = [];
     const sortFn = cmpGrid;
-    for (const cat of productCatsFromMenu) {
+    for (const cat of homeSectionCats) {
       const limit = HOME_LIMITS?.[cat.key] ?? HOME_LIMITS?.default ?? 6;
       const items = (filtered || []).filter((p) => p.category === cat.key).sort(sortFn).slice(0, limit);
       if (items.length) arr.push({ key: cat.key, title: cat.title, items });
     }
     return arr;
-  }, [route, productCatsFromMenu, filtered]);
+  }, [route, homeSectionCats, filtered]);
 
   const getOffset = useCallback(() => {
     const el = catbarRef.current; if (!el) return 0;
@@ -916,6 +1098,7 @@ export default function App() {
   }
 
   const currentKeyForBar = route === "home" ? homeActive : route === "search" ? activeCat : route;
+  const showCatBar = route === "home" ? homeMenuReady : route === "search" ? homeMenuReady : true;
 
   const CatBar = (
     <div ref={catbarRef} id="hb-catbar" className="sticky top-[96px] md:top-[117px] z-30">
@@ -1007,7 +1190,7 @@ export default function App() {
     const list = filtered;
     mainContent = (
       <>
-        {CatBar}
+        {showCatBar ? CatBar : null}
         <section className="max-w-6xl mx-auto p-4">
           <HeaderRow
             count={list.length}
@@ -1047,7 +1230,7 @@ export default function App() {
             }}
           />
         )}
-        {CatBar}
+        {showCatBar ? CatBar : null}
 
         {isHome ? (
           <section className="max-w-6xl mx-auto p-4 space-y-10">
@@ -1064,7 +1247,8 @@ export default function App() {
                 );
               });
               const hasContent = sections.some(Boolean);
-              if (!hasContent && (dataLoading || products.length > 1)) return <LoadingSkeleton count={8} message="Đang tải sản phẩm…" />;
+              if (!homeMenuReady) return <LoadingSkeleton count={8} message="?ang t?i danh m?c..." />;
+              if (!hasContent && dataLoading) return <LoadingSkeleton count={8} message="?ang t?i s?n ph?m..." />;
               return sections;
             })()}
           </section>
@@ -1082,7 +1266,7 @@ export default function App() {
                 onImageClick={openQuick}
                 filter={filterState}
               />
-            ) : (dataLoading || products.length > 1) ? (
+            ) : dataLoading ? (
               <LoadingSkeleton count={8} message="Đang tải sản phẩm…" />
             ) : (
               <div className="py-16 text-center text-gray-400 text-sm">Không có sản phẩm trong danh mục này</div>

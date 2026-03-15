@@ -181,22 +181,37 @@ function TypesTable({ data, allSizes, onLocalChange }) {
   const dirtyNew = !!(rowNew.code || rowNew.name || (rowNew.sizeCodes||[]).length);
   const canSaveNew = !!(s(rowNew.code).trim() && s(rowNew.name).trim());
 
-  function commitNew(){
+  async function commitNew(){
     if (!canSaveNew) return;
     const item = normType({ id: genId(), code: rowNew.code, name: rowNew.name, sizeCodes: rowNew.sizeCodes });
-    insertToSheet("Types", item);                 // fire-and-forget
-    onLocalChange([item, ...rows]);               // optimistic
-    setRowNew({ code: "", name: "", sizeCodes: [] });
+    try {
+      await insertToSheet("Types", item);
+      onLocalChange([item, ...rows]);
+      setRowNew({ code: "", name: "", sizeCodes: [] });
+    } catch (e) {
+      console.error("insert Types failed:", e);
+      alert("Không lưu được loại bánh. Vui lòng thử lại.");
+    }
   }
-  function commitEdit(row){
+  async function commitEdit(row){
     const clean = normType({ ...row, code: draft.code, name: draft.name, sizeCodes: draft.sizeCodes });
-    updateToSheet("Types", clean);
-    onLocalChange(rows.map(r => r.id === row.id ? clean : r));
-    setEditId(null); setDraft(null);
+    try {
+      await updateToSheet("Types", clean);
+      onLocalChange(rows.map(r => r.id === row.id ? clean : r));
+      setEditId(null); setDraft(null);
+    } catch (e) {
+      console.error("update Types failed:", e);
+      alert("Không cập nhật được loại bánh.");
+    }
   }
-  function remove(row){
-    deleteFromSheet("Types", row.id);
-    onLocalChange(rows.filter(r => r.id !== row.id));
+  async function remove(row){
+    try {
+      await deleteFromSheet("Types", row.id);
+      onLocalChange(rows.filter(r => r.id !== row.id));
+    } catch (e) {
+      console.error("delete Types failed:", e);
+      alert("Không xoá được loại bánh.");
+    }
   }
 
   const list = [{ id: "__new__" }, ...rows];
@@ -270,22 +285,37 @@ function SizesTable({ data, onLocalChange }) {
   const dirtyNew = !!(rowNew.code || rowNew.label || rowNew.height);
   const canSaveNew = !!(s(rowNew.code).trim() && s(rowNew.label).trim());
 
-  function commitNew(){
+  async function commitNew(){
     if (!canSaveNew) return;
     const item = normSize({ id: genId(), code: rowNew.code, label: rowNew.label, height: rowNew.height });
-    insertToSheet("Sizes", item);
-    onLocalChange([item, ...rows]);
-    setRowNew({ code: "", label: "", height: "" });
+    try {
+      await insertToSheet("Sizes", item);
+      onLocalChange([item, ...rows]);
+      setRowNew({ code: "", label: "", height: "" });
+    } catch (e) {
+      console.error("insert Sizes failed:", e);
+      alert("Không thêm được size.");
+    }
   }
-  function commitEdit(row){
+  async function commitEdit(row){
     const clean = normSize({ ...row, code: draft.code, label: draft.label, height: draft.height });
-    updateToSheet("Sizes", clean);
-    onLocalChange(rows.map(r => r.id === row.id ? clean : r));
-    setEditId(null); setDraft(null);
+    try {
+      await updateToSheet("Sizes", clean);
+      onLocalChange(rows.map(r => r.id === row.id ? clean : r));
+      setEditId(null); setDraft(null);
+    } catch (e) {
+      console.error("update Sizes failed:", e);
+      alert("Không cập nhật được size.");
+    }
   }
-  function remove(row){
-    deleteFromSheet("Sizes", row.id);
-    onLocalChange(rows.filter(r => r.id !== row.id));
+  async function remove(row){
+    try {
+      await deleteFromSheet("Sizes", row.id);
+      onLocalChange(rows.filter(r => r.id !== row.id));
+    } catch (e) {
+      console.error("delete Sizes failed:", e);
+      alert("Không xoá được size.");
+    }
   }
 
   const list = [{ id: "__new__" }, ...rows];
@@ -327,7 +357,7 @@ function SizesTable({ data, onLocalChange }) {
               </div>
             ) : (
               <div className="flex justify-end gap-2">
-                <Button variant="ghost" onClick={()=>{ setEditId[row.id]; setDraft({...row}); }}>Sửa</Button>
+                <Button variant="ghost" onClick={()=>{ setEditId(row.id); setDraft({...row}); }}>Sửa</Button>
                 <Button variant="danger" onClick={()=>remove(row)}>Xoá</Button>
               </div>
             )}

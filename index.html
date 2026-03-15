@@ -23,9 +23,7 @@
   <meta property="og:title" content="HALLEY BAKERY — Bánh sinh nhật & Bánh sự kiện Hà Nội">
   <meta property="og:description"
     content="Đặt bánh sinh nhật, bánh sự kiện theo yêu cầu. Thiết kế độc đáo, giao hàng tận nơi tại Hà Nội.">
-  <meta property="og:image" content="https://halleybakery.io.vn/brand/logo-desktop.png">
-  <meta property="og:image:width" content="1200">
-  <meta property="og:image:height" content="630">
+  <meta property="og:image" content="https://halleybakery.io.vn/brand/logo-mobile.png">
   <meta property="og:locale" content="vi_VN">
   <meta property="og:site_name" content="Halley Bakery">
 
@@ -99,6 +97,25 @@
       window.addEventListener('error', function (e) { show(e.error || e.message); });
       window.addEventListener('unhandledrejection', function (e) { show(e.reason || e); });
     })();
+  </script>
+
+  <script type="module">
+    if (
+      location.hostname === "localhost" ||
+      location.hostname === "127.0.0.1" ||
+      location.hostname === "0.0.0.0"
+    ) {
+      const refreshPath = "/" + "@react-refresh";
+      import(refreshPath)
+        .then(({ default: RefreshRuntime }) => {
+          if (window.__vite_plugin_react_preamble_installed__) return;
+          RefreshRuntime.injectIntoGlobalHook(window);
+          window.$RefreshReg$ = () => {};
+          window.$RefreshSig$ = () => (type) => type;
+          window.__vite_plugin_react_preamble_installed__ = true;
+        })
+        .catch(() => {});
+    }
   </script>
 
   <script type="module" src="/src/main.jsx"></script>

@@ -16,6 +16,8 @@ export default function FbPost({ url, width = 320, height = 340 }) {
       style={{ width: "100%", height: h, border: "none", overflow: "hidden" }}
       scrolling="no"
       frameBorder="0"
+      loading="lazy"
+      referrerPolicy="strict-origin-when-cross-origin"
       allow="clipboard-write; encrypted-media; picture-in-picture; web-share"
     />
   );

@@ -38,7 +38,7 @@ export function normalizeImageUrl(u, maxWidth = 2048) {
     s.match(/uc\?[^#?]*id=([A-Za-z0-9_-]+)/);
   if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w${maxWidth}`;
   if (/^https?:\/\//i.test(s)) return s;
-  const base = (import.meta.env.VITE_IMAGE_BASE || "/images/").replace(/\/+$/, "") + "/";
+  const base = "/images/";
   return encodeURI(base + s.replace(/^\/+/, ""));
 }
 

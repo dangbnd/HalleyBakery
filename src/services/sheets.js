@@ -1,5 +1,6 @@
 import { tagKey, toTagArray } from "../utils/tagKey.js";
 import { normalizeImageUrl } from "../utils/img.js";
+import { cachedText } from "./cache.js";
 
 /* ===================== Fetch helpers ===================== */
 function makeUid(r) {
@@ -17,7 +18,7 @@ function makeUid(r) {
 // gviz JSON (ổn cho tab tổng quát)
 export async function fetchSheetRows({ sheetId, gid = "0" }) {
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&gid=${gid}`;
-  const txt = await (await import('./cache.js')).cachedText(url);
+  const txt = await cachedText(url);
   const json = JSON.parse(txt.substring(txt.indexOf("{"), txt.lastIndexOf("}") + 1));
   const cols = json.table.cols.map((c) => (c.label || "").trim().toLowerCase());
   return (json.table.rows || []).map((r) =>
@@ -51,7 +52,7 @@ function parseCSV(text = "") {
 // CSV export (ổn cho tab có dấu phẩy)
 export async function fetchTabAsObjects({ sheetId, gid }) {
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
-  const txt = await (await import('./cache.js')).cachedText(url);
+  const txt = await cachedText(url);
   const rows = parseCSV(txt.replace(/^\uFEFF/, ""));
   const head = (rows.shift() || []).map((s) => String(s || "").trim().toLowerCase());
   return rows
@@ -229,7 +230,7 @@ export function mapProducts(rows = [], imageIndex) {
           String(r.category || r.danh_muc || r["danh mục"] || r.loai || r.type || "").trim(),
         typeId: r.typeid || r.type || "",
         images,
-        banner: /^(1|true|yes|x)$/i.test(r.banner || ""),
+        banner: !!(r.active || r.banner || "").toString().trim(),
         tags: toTagArray(r.tags ?? r.tag ?? r["nhãn"]),
         price,
         sizes: parseSizesCell(r.sizes ?? r.size ?? r.Sizes ?? r.Size),
