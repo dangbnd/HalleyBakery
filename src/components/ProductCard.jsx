@@ -102,17 +102,17 @@ export default function ProductCard({ p, onImageClick, filter }) {
           <div className="text-sm font-medium truncate">{p?.name}</div>
         </div>
 
-        <div className="mt-1.5 flex items-center justify-between gap-2">
-          <PriceTag value={price} className="text-rose-600 text-sm font-semibold" />
+        <div className="mt-1.5 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
+          <PriceTag value={price} className="min-w-0 truncate whitespace-nowrap text-rose-600 text-sm font-semibold" />
 
-          <div className="flex items-center gap-1.5 shrink-0 rounded-full border border-blue-100 bg-blue-50/60 px-1.5 py-1">
+          <div className="flex items-center gap-1 shrink-0">
             {messengerCta.href && messengerCta.channel === "messenger" && (
               <a
                 href={messengerCta.href}
                 onClick={(e) => openChatTarget(messengerCta, e)}
                 target="_blank"
                 rel="noopener"
-                className="h-7 w-7 md:h-8 md:w-8 rounded-full bg-[#006AFF] text-white grid place-items-center shadow-sm hover:opacity-90 active:scale-95 transition"
+                className="h-6 w-6 md:h-8 md:w-8 rounded-full bg-[#006AFF] text-white grid place-items-center shadow-sm hover:opacity-90 active:scale-95 transition"
                 aria-label={`Nhan Messenger ve ${p?.name || "mau banh"}`}
                 title="Nhan Messenger"
               >
@@ -126,7 +126,7 @@ export default function ProductCard({ p, onImageClick, filter }) {
                 onClick={(e) => openChatTarget(zaloCta, e)}
                 target="_blank"
                 rel="noopener"
-                className="h-7 w-7 md:h-8 md:w-8 rounded-full bg-[#0068FF] text-white grid place-items-center shadow-sm hover:opacity-90 active:scale-95 transition"
+                className="h-6 w-6 md:h-8 md:w-8 rounded-full bg-[#0068FF] text-white grid place-items-center shadow-sm hover:opacity-90 active:scale-95 transition"
                 aria-label={`Nhan Zalo ve ${p?.name || "mau banh"}`}
                 title="Nhan Zalo"
               >
