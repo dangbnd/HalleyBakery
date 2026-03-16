@@ -34,8 +34,8 @@ const ROLES = [
     { value: "manager", label: "Manager" },
     { value: "owner", label: "Owner" },
 ];
-const SUPER_ADMIN_USERNAME = String(import.meta.env.VITE_SUPER_ADMIN_USERNAME || "").trim();
-const SUPER_ADMIN_NAME = String(import.meta.env.VITE_SUPER_ADMIN_NAME || "Super Admin").trim();
+const SUPER_ADMIN_USERNAME = String(import.meta.env.VITE_SUPER_ADMIN_USERNAME || import.meta.env.VITE_ADMIN_USER || "").trim();
+const SUPER_ADMIN_NAME = String(import.meta.env.VITE_SUPER_ADMIN_NAME || import.meta.env.VITE_ADMIN_NAME || "Super Admin").trim();
 const HAS_SUPER_ADMIN = Boolean(SUPER_ADMIN_USERNAME);
 
 function genId() { return "u_" + Math.random().toString(36).slice(2, 8) + Date.now().toString(36); }

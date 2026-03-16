@@ -3,10 +3,10 @@ import { LS, authApi, writeLS, audit } from "../../utils.js";
 
 // Super Admin lấy từ env để tránh lộ credential trong source.
 const SUPER_ADMIN = {
-  username: String(import.meta.env.VITE_SUPER_ADMIN_USERNAME || "").trim(),
-  password: String(import.meta.env.VITE_SUPER_ADMIN_PASSWORD || "").trim(),
+  username: String(import.meta.env.VITE_SUPER_ADMIN_USERNAME || import.meta.env.VITE_ADMIN_USER || "").trim(),
+  password: String(import.meta.env.VITE_SUPER_ADMIN_PASSWORD || import.meta.env.VITE_ADMIN_PASS || "").trim(),
   role: "owner",
-  name: String(import.meta.env.VITE_SUPER_ADMIN_NAME || "Super Admin").trim(),
+  name: String(import.meta.env.VITE_SUPER_ADMIN_NAME || import.meta.env.VITE_ADMIN_NAME || "Super Admin").trim(),
   isSuper: true,
 };
 
