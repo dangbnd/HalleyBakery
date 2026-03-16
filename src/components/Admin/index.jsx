@@ -178,7 +178,7 @@ export default function AdminIndex() {
   };
 
   return (
-    <AuthGuard minRole="editor">
+    <AuthGuard minRole="staff">
       {/* Mobile overlay */}
       {mobileOpen && (
         <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setMobileOpen(false)} />
