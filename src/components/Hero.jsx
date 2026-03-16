@@ -36,6 +36,7 @@ function useMediaQuery(query, defaultValue = false) {
 function FbCarousel({ urls = [], interval = 3000, className = "", height = 340 }) {
   const list = useMemo(() => (urls || []).filter(Boolean), [urls]);
   const n = list.length;
+  const view = n > 1 ? [list[n - 1], ...list, list[0]] : list;
 
   const wrapRef = useRef(null);
   const [wLive, setWLive] = useState(320);
@@ -60,24 +61,68 @@ function FbCarousel({ urls = [], interval = 3000, className = "", height = 340 }
     return () => clearTimeout(debRef.current);
   }, [wLive, wStable]);
 
-  const [i, setI] = useState(0);
+  const [i, setI] = useState(n > 1 ? 1 : 0);
+  const [anim, setAnim] = useState(true);
   const [pause, setPause] = useState(false);
+  const [mounted, setMounted] = useState(() => new Set([n > 1 ? 1 : 0]));
+  const trackRef = useRef(null);
 
   useEffect(() => {
-    if (i >= n) setI(0);
-  }, [n, i]);
+    setI(n > 1 ? 1 : 0);
+    setAnim(true);
+    setMounted(new Set([n > 1 ? 1 : 0]));
+  }, [n]);
+
+  useEffect(() => {
+    if (!view.length) return;
+    setMounted((prev) => {
+      const next = new Set(prev);
+      [i - 1, i, i + 1].forEach((idx) => {
+        if (idx >= 0 && idx < view.length) next.add(idx);
+      });
+      return next;
+    });
+  }, [i, view.length]);
 
   useEffect(() => {
     if (pause || n <= 1) return;
-    const t = setInterval(() => setI((x) => (x + 1) % n), interval);
+    const t = setInterval(() => setI((x) => x + 1), interval);
     return () => clearInterval(t);
   }, [pause, n, interval]);
 
   if (!n) return null;
 
-  const activeUrl = list[i] || list[0];
-  const next = () => setI((x) => (x + 1) % n);
-  const prev = () => setI((x) => (x - 1 + n) % n);
+  const instantJump = (to) => {
+    const el = trackRef.current;
+    setAnim(false);
+    setI(to);
+    if (el) {
+      el.style.transition = "none";
+      el.style.transform = `translate3d(-${to * 100}%,0,0)`;
+      void el.offsetHeight;
+      requestAnimationFrame(() => {
+        el.style.transition = "";
+        setAnim(true);
+      });
+    } else {
+      requestAnimationFrame(() => setAnim(true));
+    }
+  };
+
+  const onEnd = () => {
+    if (n <= 1) return;
+    if (i === n + 1) instantJump(1);
+    else if (i === 0) instantJump(n);
+  };
+
+  const next = () => {
+    setAnim(true);
+    setI((x) => x + 1);
+  };
+  const prev = () => {
+    setAnim(true);
+    setI((x) => x - 1);
+  };
 
   return (
     <div
@@ -87,9 +132,25 @@ function FbCarousel({ urls = [], interval = 3000, className = "", height = 340 }
       onMouseEnter={() => setPause(true)}
       onMouseLeave={() => setPause(false)}
     >
-      <div className="relative h-full">
-        <div className="absolute inset-0" style={{ contain: "layout paint", backfaceVisibility: "hidden" }}>
-          <FbPost key={activeUrl} url={activeUrl} width={wStable} height={height} />
+      <div className="relative h-full overflow-hidden">
+        <div
+          ref={trackRef}
+          className={
+            "h-full flex will-change-transform [backface-visibility:hidden] " +
+            (anim ? "transition-transform duration-500 ease-[cubic-bezier(.4,0,.2,1)]" : "")
+          }
+          style={{ transform: `translate3d(-${i * 100}%,0,0)` }}
+          onTransitionEnd={onEnd}
+        >
+          {view.map((u, idx) => (
+            <div key={`${u}-${idx}`} className="w-full h-full basis-full shrink-0" style={{ contain: "layout paint" }}>
+              {mounted.has(idx) ? (
+                <FbPost url={u} width={wStable} height={height} />
+              ) : (
+                <div className="w-full h-full bg-white" />
+              )}
+            </div>
+          ))}
         </div>
 
         {n > 1 && (
@@ -97,14 +158,14 @@ function FbCarousel({ urls = [], interval = 3000, className = "", height = 340 }
             <button
               aria-label="Prev"
               onClick={prev}
-              className="absolute left-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-white/90 ring-1 ring-gray-200"
+              className="absolute left-3 top-1/2 -translate-y-1/2 grid place-items-center h-10 w-10 rounded-full bg-white/90 ring-1 ring-gray-200 hover:bg-white shadow"
             >
               {"<"}
             </button>
             <button
               aria-label="Next"
               onClick={next}
-              className="absolute right-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-white/90 ring-1 ring-gray-200"
+              className="absolute right-3 top-1/2 -translate-y-1/2 grid place-items-center h-10 w-10 rounded-full bg-white/90 ring-1 ring-gray-200 hover:bg-white shadow"
             >
               {">"}
             </button>
