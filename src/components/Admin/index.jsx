@@ -1,7 +1,8 @@
-import React, { useMemo, useState, useEffect } from "react";
+﻿import React, { useMemo, useState, useEffect } from "react";
 import AuthGuard from "./core/AuthGuard.jsx";
 
 import ProductsPanel from "./panels/ProductsPanel.jsx";
+import UploadPanel from "./panels/UploadPanel.jsx";
 import TypeSizePanel from "./panels/TypeSizePanel.jsx";
 import SettingsPanel from "./panels/SettingsPanel.jsx";
 import AuditPanel from "./panels/AuditPanel.jsx";
@@ -10,15 +11,16 @@ import AITagsPanel from "./panels/AITagsPanel.jsx";
 import { LS, readLS, removeLS, audit } from "../../utils.js";
 
 const NAVS = [
-  { key: "products", label: "Sản phẩm", icon: "🛍️" },
-  { key: "typesize", label: "Loại & Size", icon: "📐" },
-  { key: "categories", label: "Danh mục", icon: "🏷️" },
-  { key: "tags", label: "Tag", icon: "🔖" },
-  { key: "pages", label: "Trang", icon: "📄" },
-  { key: "users", label: "Người dùng", icon: "👥" },
-  { key: "aitags", label: "AI Tags", icon: "✨" },
-  { key: "audit", label: "Nhật ký", icon: "📋" },
-  { key: "settings", label: "Cấu hình", icon: "⚙️" },
+  { key: "products", label: "Sáº£n pháº©m", icon: "ðŸ›ï¸" },
+  { key: "upload", label: "Upload", icon: "â¬†ï¸" },
+  { key: "typesize", label: "Loáº¡i & Size", icon: "ðŸ“" },
+  { key: "categories", label: "Danh má»¥c", icon: "ðŸ·ï¸" },
+  { key: "tags", label: "Tag", icon: "ðŸ”–" },
+  { key: "pages", label: "Trang", icon: "ðŸ“„" },
+  { key: "users", label: "NgÆ°á»i dÃ¹ng", icon: "ðŸ‘¥" },
+  { key: "aitags", label: "AI Tags", icon: "âœ¨" },
+  { key: "audit", label: "Nháº­t kÃ½", icon: "ðŸ“‹" },
+  { key: "settings", label: "Cáº¥u hÃ¬nh", icon: "âš™ï¸" },
 ];
 
 /* ===== Sidebar ===== */
@@ -81,7 +83,7 @@ function Sidebar({ tab, setTab, collapsed, toggle }) {
           <svg className={`w-4 h-4 transition-transform duration-300 ${collapsed ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
           </svg>
-          {!collapsed && <span>Thu gọn</span>}
+          {!collapsed && <span>Thu gá»n</span>}
         </button>
       </div>
     </aside>
@@ -113,11 +115,11 @@ function TopBar({ tab, toggleSidebar }) {
           if (!u) return null;
           return (
             <>
-              <span className="text-xs text-gray-400">{u.name || u.username}{u.isSuper ? " 👑" : ""}</span>
+              <span className="text-xs text-gray-400">{u.name || u.username}{u.isSuper ? " ðŸ‘‘" : ""}</span>
               <button onClick={() => { audit("user.logout", { username: u.username }); removeLS(LS.AUTH); window.location.reload(); }}
                 className="text-xs text-red-400 hover:text-red-600 transition flex items-center gap-1">
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
-                Đăng xuất
+                ÄÄƒng xuáº¥t
               </button>
             </>
           );
@@ -131,9 +133,9 @@ function TopBar({ tab, toggleSidebar }) {
 function Stub({ title, icon }) {
   return (
     <div className="flex flex-col items-center justify-center py-24 text-gray-400">
-      <span className="text-5xl mb-4 opacity-30">{icon || "🚧"}</span>
+      <span className="text-5xl mb-4 opacity-30">{icon || "ðŸš§"}</span>
       <p className="text-lg font-medium text-gray-500">Panel "{title}"</p>
-      <p className="text-sm mt-1">Sẽ được hoàn thiện trong phiên bản sau</p>
+      <p className="text-sm mt-1">Sáº½ Ä‘Æ°á»£c hoÃ n thiá»‡n trong phiÃªn báº£n sau</p>
     </div>
   );
 }
@@ -165,10 +167,11 @@ export default function AdminIndex() {
   const render = () => {
     switch (tab) {
       case "products": return <ProductsPanel />;
+      case "upload": return <UploadPanel />;
       case "typesize": return <TypeSizePanel />;
-      case "categories": return <Stub title="Danh mục" icon="🏷️" />;
-      case "tags": return <Stub title="Tag" icon="🔖" />;
-      case "pages": return <Stub title="Trang" icon="📄" />;
+      case "categories": return <Stub title="Danh má»¥c" icon="ðŸ·ï¸" />;
+      case "tags": return <Stub title="Tag" icon="ðŸ”–" />;
+      case "pages": return <Stub title="Trang" icon="ðŸ“„" />;
       case "users": return <UsersPanel />;
       case "aitags": return <AITagsPanel />;
       case "audit": return <AuditPanel />;
@@ -184,7 +187,7 @@ export default function AdminIndex() {
         <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setMobileOpen(false)} />
       )}
 
-      {/* Sidebar — desktop always, mobile toggle */}
+      {/* Sidebar â€” desktop always, mobile toggle */}
       <div className={`hidden lg:block`}>
         <Sidebar tab={tab} setTab={setTab} collapsed={collapsed} toggle={toggleCollapse} />
       </div>
@@ -202,3 +205,5 @@ export default function AdminIndex() {
     </AuthGuard>
   );
 }
+
+
