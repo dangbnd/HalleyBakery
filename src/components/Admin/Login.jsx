@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import { LS, authApi, writeLS, audit } from "../../utils.js";
 
-// Super Admin lấy từ env để tránh lộ credential trong source.
+// Super Admin láº¥y tá»« env Ä‘á»ƒ trÃ¡nh lá»™ credential trong source.
 const SUPER_ADMIN = {
   username: String(import.meta.env.VITE_SUPER_ADMIN_USERNAME || import.meta.env.VITE_ADMIN_USER || "").trim(),
   password: String(import.meta.env.VITE_SUPER_ADMIN_PASSWORD || import.meta.env.VITE_ADMIN_PASS || "").trim(),
@@ -23,6 +23,7 @@ export default function Login() {
   const [u, setU] = useState("");
   const [p, setP] = useState("");
   const [err, setErr] = useState("");
+  const [showPass, setShowPass] = useState(false);
 
   function submit(e) {
     e.preventDefault();
@@ -56,7 +57,7 @@ export default function Login() {
       return;
     }
 
-    setErr("Sai tài khoản hoặc mật khẩu");
+    setErr("Sai tÃ i khoáº£n hoáº·c máº­t kháº©u");
   }
 
   return (
@@ -64,22 +65,50 @@ export default function Login() {
       <form onSubmit={submit} className="w-full max-w-sm bg-white border border-gray-200 rounded-2xl p-8 shadow-xl space-y-5">
         <div className="text-center">
           <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center text-2xl font-bold text-white shadow-lg shadow-pink-500/20 mb-3">H</div>
-          <h1 className="text-xl font-bold text-gray-800">Đăng nhập Admin</h1>
+          <h1 className="text-xl font-bold text-gray-800">ÄÄƒng nháº­p Admin</h1>
           <p className="text-xs text-gray-400 mt-1">Halley Bakery Management</p>
         </div>
         {err && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{err}</div>}
         <div>
-          <label className="text-sm font-medium text-gray-700 mb-1.5 block">Tài khoản</label>
+          <label className="text-sm font-medium text-gray-700 mb-1.5 block">TÃ i khoáº£n</label>
           <input className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition"
-            value={u} onChange={e => setU(e.target.value)} placeholder="Nhập tên đăng nhập" autoFocus />
+            value={u} onChange={e => setU(e.target.value)} placeholder="Nháº­p tÃªn Ä‘Äƒng nháº­p" autoFocus />
         </div>
         <div>
-          <label className="text-sm font-medium text-gray-700 mb-1.5 block">Mật khẩu</label>
-          <input className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition" type="password"
-            value={p} onChange={e => setP(e.target.value)} placeholder="••••••••" />
+          <label className="text-sm font-medium text-gray-700 mb-1.5 block">Máº­t kháº©u</label>
+          <div className="relative">
+            <input
+              className="w-full border border-gray-200 rounded-xl pl-4 pr-11 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition"
+              type={showPass ? "text" : "password"}
+              value={p}
+              onChange={e => setP(e.target.value)}
+              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPass((v) => !v)}
+              className="absolute inset-y-0 right-0 w-10 grid place-items-center text-gray-500 hover:text-gray-700"
+              aria-label={showPass ? "An mat khau" : "Hien mat khau"}
+              title={showPass ? "An mat khau" : "Hien mat khau"}
+            >
+              {showPass ? (
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 3l18 18" />
+                  <path d="M10.58 10.58A2 2 0 0 0 13.42 13.42" />
+                  <path d="M9.88 4.24A10.94 10.94 0 0 1 12 4c5 0 9.27 3.11 11 8-1 2.82-3.02 5.06-5.61 6.33" />
+                  <path d="M6.61 6.61C4.62 7.95 3.08 9.8 2 12c1.73 4.89 6 8 10 8 1.52 0 2.97-.36 4.27-1" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M2 12s3.5-8 10-8 10 8 10 8-3.5 8-10 8-10-8-10-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
         <button className="w-full bg-gradient-to-r from-gray-800 to-gray-900 hover:from-gray-900 hover:to-black text-white rounded-xl py-2.5 font-medium text-sm transition-all shadow-md hover:shadow-lg active:scale-[0.98]">
-          Đăng nhập
+          ÄÄƒng nháº­p
         </button>
       </form>
     </div>
