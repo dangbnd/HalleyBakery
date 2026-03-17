@@ -42,6 +42,16 @@ const MANUAL_FIELDS = [
     icon: "🔐",
   },
   {
+    key: KEYS.ADMIN_ALLOWED_EMAILS,
+    label: "Admin Allowed Emails",
+    placeholder: "owner@halleybakery.io.vn\nmanager@halleybakery.io.vn\n@halleybakery.io.vn",
+    desc: "Moi dong 1 email hoac domain (@domain.com). De trong neu chi muon quan ly bang OAuth test users.",
+    icon: "👥",
+    type: "textarea",
+    rows: 4,
+    span: "sm:col-span-2 lg:col-span-3",
+  },
+  {
     key: KEYS.GS_WEBAPP_TOKEN,
     label: "GS WebApp Admin Token",
     placeholder: "HB_ADMIN_TOKEN",
@@ -363,6 +373,14 @@ function ConfigSection({ icon, title, badge, children }) {
 
 function Field({ field, value, onChange, disabled = false }) {
   const id = `cfg-${field.key}`;
+  const isDisabled = field.readOnly || disabled;
+  const inputClassName = `w-full border rounded-xl px-3 py-2 text-xs font-mono
+                   focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400
+                   outline-none transition-all duration-200
+                    ${isDisabled
+            ? "bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed"
+            : "bg-white border-gray-200 hover:border-gray-300 text-gray-800"
+          }`;
   return (
     <div className={field.span || ""}>
       <label htmlFor={id} className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
@@ -370,21 +388,27 @@ function Field({ field, value, onChange, disabled = false }) {
         {field.label}
       </label>
       {field.desc && <p className="text-[10px] text-gray-400 mb-1 leading-4">{field.desc}</p>}
-      <input
-        id={id}
-        type={field.type || "text"}
-        className={`w-full border rounded-xl px-3 py-2 text-xs font-mono
-                   focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400
-                   outline-none transition-all duration-200
-                    ${field.readOnly || disabled
-            ? "bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed"
-            : "bg-white border-gray-200 hover:border-gray-300 text-gray-800"
-          }`}
-        value={value}
-        onChange={(e) => { if (!field.readOnly && !disabled) onChange(field.key, e.target.value); }}
-        placeholder={field.placeholder}
-        disabled={field.readOnly || disabled}
-      />
+      {field.type === "textarea" ? (
+        <textarea
+          id={id}
+          rows={field.rows || 3}
+          className={`${inputClassName} leading-5 resize-y`}
+          value={value}
+          onChange={(e) => { if (!isDisabled) onChange(field.key, e.target.value); }}
+          placeholder={field.placeholder}
+          disabled={isDisabled}
+        />
+      ) : (
+        <input
+          id={id}
+          type={field.type || "text"}
+          className={inputClassName}
+          value={value}
+          onChange={(e) => { if (!isDisabled) onChange(field.key, e.target.value); }}
+          placeholder={field.placeholder}
+          disabled={isDisabled}
+        />
+      )}
     </div>
   );
 }

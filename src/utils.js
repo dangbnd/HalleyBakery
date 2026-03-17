@@ -202,6 +202,36 @@ export function guard(user, action, resource, fn) {
   return (...args) => { if (!can(user, action, resource)) return; return fn(...args); };
 }
 
+export function parseEmailAllowlist(raw = "") {
+  return new Set(
+    String(raw || "")
+      .split(/[\n,;]+/)
+      .map((x) => String(x || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+export function isAllowedEmail(email = "", allowlistRaw = "") {
+  const target = String(email || "").trim().toLowerCase();
+  if (!target) return false;
+  const allow = parseEmailAllowlist(allowlistRaw);
+  if (!allow.size) return false;
+  if (allow.has(target)) return true;
+
+  const at = target.indexOf("@");
+  if (at < 0) return false;
+  const domain = target.slice(at + 1);
+  if (!domain) return false;
+
+  for (const entry of allow) {
+    const rule = String(entry || "").trim().toLowerCase();
+    if (!rule) continue;
+    if (rule.startsWith("@") && domain === rule.slice(1)) return true;
+    if (rule.startsWith("*@") && domain === rule.slice(2)) return true;
+  }
+  return false;
+}
+
 function uid() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 
 export function audit(event, payload) {
