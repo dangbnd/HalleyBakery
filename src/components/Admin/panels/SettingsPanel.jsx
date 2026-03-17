@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { getAllConfig, setAllConfig, setConfig, resetAllConfig, KEYS } from "../../../utils/config.js";
 import { LS, audit, readLS } from "../../../utils.js";
 import { buildUnifiedApiUrl } from "../../../services/sheets.multi.js";
+import { DEFAULT_SUPER_ADMIN_EMAIL } from "../shared/superAdmin.js";
 
 const MANUAL_FIELDS = [
   {
@@ -40,6 +41,14 @@ const MANUAL_FIELDS = [
     placeholder: "1234567890-xxxx.apps.googleusercontent.com",
     desc: "Dung cho direct upload Drive (giu chat luong 100%).",
     icon: "🔐",
+  },
+  {
+    key: KEYS.SUPER_ADMIN_EMAIL,
+    label: "Super Admin Email (Google)",
+    placeholder: "dangbnd@gmail.com",
+    desc: "Email dang nhap Google se auto thanh super admin.",
+    icon: "👑",
+    span: "sm:col-span-2",
   },
   {
     key: KEYS.ADMIN_ALLOWED_EMAILS,
@@ -428,6 +437,9 @@ export default function SettingsPanel({ canEdit = true }) {
 
   useEffect(() => {
     const vals = getAllConfig();
+    if (!String(vals[KEYS.SUPER_ADMIN_EMAIL] || "").trim()) {
+      vals[KEYS.SUPER_ADMIN_EMAIL] = DEFAULT_SUPER_ADMIN_EMAIL;
+    }
     try {
       const aiKeys = JSON.parse(localStorage.getItem("ai_gemini_keys") || "[]");
       if (Array.isArray(aiKeys) && aiKeys.length > 0) {
@@ -552,6 +564,9 @@ export default function SettingsPanel({ canEdit = true }) {
   const save = async () => {
     if (!canEdit) return;
     const finalValues = await withAutoInferredMissing(values);
+    if (!String(finalValues[KEYS.SUPER_ADMIN_EMAIL] || "").trim()) {
+      finalValues[KEYS.SUPER_ADMIN_EMAIL] = DEFAULT_SUPER_ADMIN_EMAIL;
+    }
     const host = String(window.location?.hostname || "").toLowerCase();
     const isLocal = host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0";
     if (!isLocal && !String(finalValues[KEYS.API_ALL_URL] || "").trim()) finalValues[KEYS.API_ALL_URL] = "/api/all";
@@ -569,6 +584,7 @@ export default function SettingsPanel({ canEdit = true }) {
     resetAllConfig(); clearDataCache();
     window.dispatchEvent(new Event("hb:config-changed"));
     const vals = getAllConfig();
+    vals[KEYS.SUPER_ADMIN_EMAIL] = DEFAULT_SUPER_ADMIN_EMAIL;
     try {
       const aiKeys = JSON.parse(localStorage.getItem("ai_gemini_keys") || "[]");
       if (Array.isArray(aiKeys) && aiKeys.length > 0) vals[KEYS.GEMINI_API_KEY] = `Đã đồng bộ ${aiKeys.length} keys từ AI Tags`;

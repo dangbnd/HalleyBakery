@@ -26,6 +26,7 @@ const KEYS = {
   GS_WEBAPP_URL: "gs_webapp_url",
   GS_WEBAPP_TOKEN: "gs_webapp_token",
   GOOGLE_OAUTH_CLIENT_ID: "google_oauth_client_id",
+  SUPER_ADMIN_EMAIL: "super_admin_email",
   ADMIN_ALLOWED_EMAILS: "admin_allowed_emails",
   GEMINI_API_KEY: "gemini_api_key",
   ENABLE_VISITOR_TRACKING: "enable_visitor_tracking",
@@ -49,6 +50,7 @@ const SHARED_KEYS = new Set([
   KEYS.MESSENGER_LINK,
   KEYS.ZALO_LINK,
   KEYS.API_ALL_URL,
+  KEYS.SUPER_ADMIN_EMAIL,
   KEYS.ADMIN_ALLOWED_EMAILS,
   KEYS.ENABLE_VISITOR_TRACKING,
   KEYS.LAST_SYNC_AT,
@@ -101,6 +103,7 @@ function normalizeValue(key, value) {
   if (!raw) return "";
   if (key === KEYS.SHEET_ID) return extractSheetId(raw);
   if (key === KEYS.DRIVE_FOLDER_ID) return extractDriveFolderId(raw);
+  if (key === KEYS.SUPER_ADMIN_EMAIL) return raw.toLowerCase();
   return raw;
 }
 

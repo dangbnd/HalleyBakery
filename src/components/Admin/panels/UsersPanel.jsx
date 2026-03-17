@@ -1,6 +1,7 @@
 // src/components/Admin/panels/UsersPanel.jsx
 import React, { useState } from "react";
 import { LS, readLS, writeLS, audit } from "../../../utils.js";
+import { SUPER_ADMIN_NAME, SUPER_ADMIN_USERNAME } from "../shared/superAdmin.js";
 
 /* ===== DANH SÁCH QUYỀN ===== */
 const PERMISSIONS = [
@@ -38,9 +39,7 @@ const ROLES = [
     { value: "manager", label: "Manager" },
     { value: "owner", label: "Owner" },
 ];
-const SUPER_ADMIN_USERNAME = String(import.meta.env.VITE_SUPER_ADMIN_USERNAME || import.meta.env.VITE_ADMIN_USER || "").trim();
-const SUPER_ADMIN_NAME = String(import.meta.env.VITE_SUPER_ADMIN_NAME || import.meta.env.VITE_ADMIN_NAME || "Super Admin").trim();
-const HAS_SUPER_ADMIN = Boolean(SUPER_ADMIN_USERNAME);
+const HAS_SUPER_ADMIN = true;
 
 function genId() { return "u_" + Math.random().toString(36).slice(2, 8) + Date.now().toString(36); }
 function hasManageUsersPermission(user) {
@@ -410,7 +409,7 @@ export default function UsersPanel() {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
-                        {/* Super Admin (from env) */}
+                        {/* Built-in Super Admin */}
                         {HAS_SUPER_ADMIN && (
                             <tr className="bg-amber-50/30">
                                 <td className="py-3 px-3 text-center"><span className="text-base">👑</span></td>
@@ -424,7 +423,7 @@ export default function UsersPanel() {
                                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Active
                                     </span>
                                 </td>
-                                <td className="py-3 px-3 text-[10px] text-gray-400">Env</td>
+                                <td className="py-3 px-3 text-[10px] text-gray-400">Built-in</td>
                                 <td className="py-3 px-3 text-center text-[10px] text-gray-300">—</td>
                             </tr>
                         )}
@@ -504,5 +503,3 @@ export default function UsersPanel() {
         </div>
     );
 }
-
-

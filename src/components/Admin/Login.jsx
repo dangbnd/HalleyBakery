@@ -1,6 +1,13 @@
 import React, { useMemo, useState } from "react";
 import { LS, authApi, writeLS, audit, isAllowedEmail } from "../../utils.js";
 import { getConfig, KEYS } from "../../utils/config.js";
+import {
+  DEFAULT_SUPER_ADMIN_EMAIL,
+  SUPER_ADMIN_NAME,
+  SUPER_ADMIN_USERNAME,
+  isSuperAdminEmail,
+  isSuperAdminPasswordLogin,
+} from "./shared/superAdmin.js";
 
 const GIS_SRC = "https://accounts.google.com/gsi/client";
 const GOOGLE_PROFILE_SCOPE = "openid email profile";
@@ -10,15 +17,6 @@ let gisLoadPromise = null;
 function s(v) {
   return v == null ? "" : String(v).trim();
 }
-
-// Super Admin lấy từ env để tránh lộ credential trong source.
-const SUPER_ADMIN = {
-  username: String(import.meta.env.VITE_SUPER_ADMIN_USERNAME || import.meta.env.VITE_ADMIN_USER || "").trim(),
-  password: String(import.meta.env.VITE_SUPER_ADMIN_PASSWORD || import.meta.env.VITE_ADMIN_PASS || "").trim(),
-  role: "owner",
-  name: String(import.meta.env.VITE_SUPER_ADMIN_NAME || import.meta.env.VITE_ADMIN_NAME || "Super Admin").trim(),
-  isSuper: true,
-};
 
 function inferRoleFromPermissions(perms = []) {
   const set = new Set(Array.isArray(perms) ? perms : []);
@@ -145,26 +143,26 @@ export default function Login() {
   const [err, setErr] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
+  const superAdminEmail = normalizeEmail(getConfig(KEYS.SUPER_ADMIN_EMAIL, DEFAULT_SUPER_ADMIN_EMAIL));
 
   const allowlistHint = useMemo(() => {
     const raw = s(getConfig(KEYS.ADMIN_ALLOWED_EMAILS, ""));
-    if (!raw) return "Allowlist trống: dùng test users trong Google OAuth Console.";
+    if (!raw) return `Allowlist trống. Super admin Google: ${superAdminEmail || DEFAULT_SUPER_ADMIN_EMAIL}.`;
     const count = raw
       .split(/[\n,;]+/)
       .map((x) => x.trim())
       .filter(Boolean).length;
-    return `Allowlist đang bật (${count} mục).`;
-  }, []);
+    return `Allowlist đang bật (${count} mục). Super admin Google: ${superAdminEmail || DEFAULT_SUPER_ADMIN_EMAIL}.`;
+  }, [superAdminEmail]);
 
   function submit(e) {
     e.preventDefault();
     setErr("");
 
-    const hasSuperCreds = !!(SUPER_ADMIN.username && SUPER_ADMIN.password);
-    if (hasSuperCreds && u === SUPER_ADMIN.username && p === SUPER_ADMIN.password) {
-      const session = { username: u, role: SUPER_ADMIN.role, name: SUPER_ADMIN.name, isSuper: true };
+    if (isSuperAdminPasswordLogin(u, p)) {
+      const session = { username: SUPER_ADMIN_USERNAME, role: "owner", name: SUPER_ADMIN_NAME, isSuper: true };
       writeLS(LS.AUTH, session);
-      audit("user.login", { username: u, role: SUPER_ADMIN.role });
+      audit("user.login", { username: SUPER_ADMIN_USERNAME, role: "owner" });
       window.location.reload();
       return;
     }
@@ -204,26 +202,27 @@ export default function Login() {
       const email = normalizeEmail(profile?.email);
       if (!email) throw new Error("Google không trả email hợp lệ.");
       if (profile?.email_verified === false) throw new Error("Email Google chưa xác minh.");
+      const isGoogleSuperAdmin = isSuperAdminEmail(email, superAdminEmail);
 
       const allowlistRaw = s(getConfig(KEYS.ADMIN_ALLOWED_EMAILS, ""));
-      if (allowlistRaw && !isAllowedEmail(email, allowlistRaw)) {
+      if (!isGoogleSuperAdmin && allowlistRaw && !isAllowedEmail(email, allowlistRaw)) {
         throw new Error("Email này chưa được cấp quyền vào admin.");
       }
 
       const users = authApi.allUsers();
       const found = findUserByEmail(users, email);
-      if (found?.active === false) {
+      if (!isGoogleSuperAdmin && found?.active === false) {
         throw new Error("Tài khoản này đã bị khóa.");
       }
 
-      const role = found?.role || inferRoleFromPermissions(found?.permissions || []);
+      const role = isGoogleSuperAdmin ? "owner" : (found?.role || inferRoleFromPermissions(found?.permissions || []));
       const session = {
-        username: found?.username || email,
+        username: isGoogleSuperAdmin ? SUPER_ADMIN_USERNAME : (found?.username || email),
         email,
-        name: found?.name || s(profile?.name) || email,
+        name: isGoogleSuperAdmin ? SUPER_ADMIN_NAME : (found?.name || s(profile?.name) || email),
         role,
-        permissions: found?.permissions || [],
-        isSuper: !!found?.isSuper,
+        permissions: isGoogleSuperAdmin ? [] : (found?.permissions || []),
+        isSuper: isGoogleSuperAdmin || !!found?.isSuper,
         authProvider: "google",
         picture: s(profile?.picture),
       };
