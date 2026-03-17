@@ -202,11 +202,19 @@ export default function AITagsPanel() {
         let t, alive = true;
         const loop = async () => {
             try {
-                const a = await listSheet("Products");
+                const a = await listSheet("Products").catch(() => null);
                 if (a?.ok && a.version !== verP.current) {
                     verP.current = a.version;
                     const rows = safe(a.rows).map(normProduct).filter(p => !!s(p.name).trim());
                     setProducts(rows); writeLS("products", rows);
+                } else if (!a?.ok) {
+                    const sheetId = getConfig("sheet_id");
+                    const gid = getConfig("sheet_gid_products");
+                    if (sheetId) {
+                        const rawRows = await fetchTabAsObjects({ sheetId, gid: (gid || "0") });
+                        const rows = rawRows.map(normProduct).filter(p => !!s(p.name).trim());
+                        setProducts(rows); writeLS("products", rows);
+                    }
                 }
             } catch { }
             if (alive) t = setTimeout(loop, 15000);
