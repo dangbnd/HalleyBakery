@@ -131,7 +131,13 @@ export function Footer({ data = {}, pages = [] }) {
       {/* Bottom line */}
       <div className="border-t">
         <div className="max-w-6xl mx-auto px-4 py-4 text-sm text-gray-600 flex flex-col sm:flex-row items-center gap-2">
-          <div className="grow">© {new Date().getFullYear()} {brandName}. All rights reserved.</div>
+          <div className="grow flex items-center gap-2">
+            <span>© {new Date().getFullYear()} {brandName}. All rights reserved.</span>
+            <span className="text-gray-300 hidden sm:inline">•</span>
+            <a href="/admin" className="text-gray-400 hover:text-rose-500 transition-colors uppercase text-[10px] font-bold tracking-wider opacity-50 hover:opacity-100">
+              Admin Login
+            </a>
+          </div>
           <div className="flex items-center gap-4">
             {pages.some(p => p.key === "policy") && <a href="?view=policy" className="hover:underline">Chính sách bảo mật</a>}
             {pages.some(p => p.key === "terms") && <a href="?view=terms" className="hover:underline">Điều khoản</a>}
