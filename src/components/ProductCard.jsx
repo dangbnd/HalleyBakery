@@ -1,13 +1,10 @@
-import React, { useMemo, useState, useEffect, useCallback } from "react";
+import React, { useMemo, useCallback } from "react";
 import ProductImage, { getImageUrls } from "./ProductImage.jsx";
-import { SizeSelector } from "./SizeSelector.jsx";
 import { PriceTag } from "./PriceTag.jsx";
-import { sizeOptions, pickDefaultSize, priceFor } from "../lib/pricing.js";
+import { pickDefaultSize, priceFor } from "../lib/pricing.js";
 import { cdn, prefetchImage } from "../utils/img.js";
 import { usePrefetchOnView } from "../hooks/usePrefetchOnView.js";
 import { buildProductChatLink, openChatTarget } from "../utils/chatLink.js";
-
-const toDigits = (s) => String(s || "").match(/\d+/)?.[0] || "";
 
 function MessengerIcon() {
   return (
@@ -26,27 +23,17 @@ function ZaloIcon() {
 }
 
 export default function ProductCard({ p, onImageClick, filter }) {
-  const options = useMemo(() => sizeOptions(p), [p]);
-  const [sel, setSel] = useState(() => pickDefaultSize(p, filter));
-
-  useEffect(() => {
-    setSel(pickDefaultSize(p, filter));
-  }, [p, filter]);
-
+  const sel = useMemo(() => pickDefaultSize(p, filter), [p, filter]);
   const price = useMemo(() => priceFor(p, sel), [p, sel]);
-  const selectedSizeLabel = useMemo(() => {
-    const hit = options.find((o) => String(o.id) === String(sel));
-    return hit?.label || options[0]?.label || "";
-  }, [options, sel]);
 
   const messengerCta = useMemo(
-    () => buildProductChatLink({ product: p, sizeLabel: selectedSizeLabel, intent: "ask_price", preferred: "messenger" }),
-    [p, selectedSizeLabel]
+    () => buildProductChatLink({ product: p, sizeLabel: "", intent: "ask_price", preferred: "messenger" }),
+    [p]
   );
 
   const zaloCta = useMemo(
-    () => buildProductChatLink({ product: p, sizeLabel: selectedSizeLabel, intent: "ask_price", preferred: "zalo" }),
-    [p, selectedSizeLabel]
+    () => buildProductChatLink({ product: p, sizeLabel: "", intent: "ask_price", preferred: "zalo" }),
+    [p]
   );
 
   const srcBase = getImageUrls(p)[0] || "";
@@ -55,23 +42,6 @@ export default function ProductCard({ p, onImageClick, filter }) {
     prefetchImage(cdn(srcBase, { w: 960, q: 62 }));
   }, [srcBase]);
   const prefetchRef = usePrefetchOnView(prefetch, "600px");
-
-  const sizeItems = useMemo(
-    () =>
-      options.map(({ id, label }) => {
-        const d = toDigits(label);
-        return {
-          id,
-          label: (
-            <>
-              <span className="hidden text-[13.5px] md:inline">{label}</span>
-              <span className="md:hidden text-[11px]">{d || label} cm</span>
-            </>
-          ),
-        };
-      }),
-    [options]
-  );
 
   return (
     <article
@@ -136,9 +106,6 @@ export default function ProductCard({ p, onImageClick, filter }) {
           </div>
         </div>
 
-        {sizeItems.length > 0 && (
-          <SizeSelector sizes={sizeItems} value={sel} onChange={setSel} className="mt-2" />
-        )}
       </div>
     </article>
   );
