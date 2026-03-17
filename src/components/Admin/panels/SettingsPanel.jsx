@@ -616,11 +616,12 @@ export default function SettingsPanel({ canEdit = true }) {
       finalValues[KEYS.GEMINI_API_KEYS] = geminiKeys.join("\n");
       finalValues[KEYS.GEMINI_API_KEY] = geminiKeys[0] || "";
       const authToken = String(finalValues[KEYS.GS_WEBAPP_TOKEN] || "").trim();
+      const webappUrl = String(finalValues[KEYS.GS_WEBAPP_URL] || "").trim();
 
       let remoteSyncNote = "";
       let remoteSyncOk = false;
       try {
-        const pushed = await saveRuntimeConfigToSheet(finalValues, { authToken });
+        const pushed = await saveRuntimeConfigToSheet(finalValues, { authToken, webappUrl });
         remoteSyncOk = true;
         remoteSyncNote = `✅ Đã đồng bộ ${pushed.updated + pushed.inserted} mục lên tab ${pushed.sheetName}.`;
       } catch (e) {
@@ -632,7 +633,7 @@ export default function SettingsPanel({ canEdit = true }) {
       window.dispatchEvent(new Event("hb:config-changed"));
       if (remoteSyncNote) {
         setSyncMsg(remoteSyncNote);
-        setTimeout(() => setSyncMsg(""), remoteSyncOk ? 6000 : 9000);
+        if (remoteSyncOk) setTimeout(() => setSyncMsg(""), 6000);
       }
 
       audit("settings.save", {

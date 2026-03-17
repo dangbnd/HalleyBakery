@@ -2,8 +2,8 @@
 import { LS, readLS } from "../../../utils.js";
 import { KEYS, getConfig, setConfig } from "../../../utils/config.js";
 
-export function getWebappUrl() {
-  return getConfig("gs_webapp_url", "");
+export function getWebappUrl(override = "") {
+  return s(override || getConfig(KEYS.GS_WEBAPP_URL, getConfig("gs_webapp_url", "")));
 }
 
 export function setGsWebappUrl(url) {
@@ -55,8 +55,8 @@ function isUnknownAction(data) {
   return UNKNOWN_ACTION_RE.test(msg);
 }
 
-async function postBody(body = {}, { requireAuth = false, authToken = "" } = {}) {
-  const webApp = getWebappUrl();
+async function postBody(body = {}, { requireAuth = false, authToken = "", webappUrl = "" } = {}) {
+  const webApp = getWebappUrl(webappUrl);
   if (!webApp) throw new Error("Chưa cấu hình GS WebApp URL");
   const adminAuth = getAdminAuth({ tokenOverride: authToken });
   if (requireAuth && !adminAuth?.token) {
@@ -217,11 +217,11 @@ function extractRowConfigKey(row = {}) {
   return normalizeCfgKey(row?.[keyField] ?? "");
 }
 
-async function resolveConfigSheet() {
+async function resolveConfigSheet(options = {}) {
   let lastError = null;
   for (const sheetName of CONFIG_SHEET_CANDIDATES) {
     try {
-      const data = await listSheet(sheetName);
+      const data = await listSheet(sheetName, options);
       if (data?.ok) return { sheetName, rows: pickArray(data, ["rows", "data", "items"]) };
       lastError = new Error(responseMessage(data) || `Không đọc được tab ${sheetName}`);
     } catch (e) {
@@ -231,11 +231,12 @@ async function resolveConfigSheet() {
   throw lastError || new Error("Không tìm thấy tab URL/Config để đồng bộ cấu hình");
 }
 
-async function upsertConfigEntries(entries = [], { authToken = "" } = {}) {
+async function upsertConfigEntries(entries = [], { authToken = "", webappUrl = "" } = {}) {
   const auth = getAdminAuth({ tokenOverride: authToken });
   if (!auth?.token) throw new Error("Thiếu GS WebApp Admin Token để đồng bộ cấu hình");
+  const transportOptions = { authToken: auth.token, webappUrl };
 
-  const { sheetName, rows } = await resolveConfigSheet();
+  const { sheetName, rows } = await resolveConfigSheet({ webappUrl });
   const byKey = new Map();
   for (const row of Array.isArray(rows) ? rows : []) {
     const cfgKey = extractRowConfigKey(row);
@@ -258,18 +259,18 @@ async function upsertConfigEntries(entries = [], { authToken = "" } = {}) {
       if (oldValue === value) continue;
       const payload = { ...existing, [keyField]: cfgKey, [valueField]: value };
       try {
-        await updateToSheet(sheetName, payload, { authToken: auth.token });
+        await updateToSheet(sheetName, payload, transportOptions);
         updated += 1;
         byKey.set(cfgKey, payload);
       } catch {
-        await insertToSheet(sheetName, { key: cfgKey, value }, { authToken: auth.token });
+        await insertToSheet(sheetName, { key: cfgKey, value }, transportOptions);
         inserted += 1;
         byKey.set(cfgKey, { key: cfgKey, value });
       }
       continue;
     }
 
-    await insertToSheet(sheetName, { key: cfgKey, value }, { authToken: auth.token });
+    await insertToSheet(sheetName, { key: cfgKey, value }, transportOptions);
     inserted += 1;
     byKey.set(cfgKey, { key: cfgKey, value });
   }
@@ -282,7 +283,8 @@ export async function saveRuntimeConfigToSheet(config = {}, options = {}) {
     key,
     value: s(config?.[key] ?? ""),
   }));
-  return upsertConfigEntries(entries, options);
+  const effectiveWebappUrl = s(options?.webappUrl || config?.[KEYS.GS_WEBAPP_URL] || "");
+  return upsertConfigEntries(entries, { ...options, webappUrl: effectiveWebappUrl });
 }
 
 export async function saveGeminiKeysToSheet(keys = [], options = {}) {
