@@ -114,6 +114,18 @@ const AUTO_FIELDS = [
 
 const AUTO_VISIBLE_KEYS = AUTO_FIELDS.map((f) => f.key);
 const AUTO_KEYS = [...AUTO_VISIBLE_KEYS, KEYS.PRODUCT_TABS, KEYS.SHEET_GID_CONFIG];
+const AUTO_REQUIRED_KEYS = [
+  KEYS.SHEET_GID_PRODUCTS,
+  KEYS.SHEET_GID_FB,
+  KEYS.SHEET_GID_MENU,
+  KEYS.SHEET_GID_PAGES,
+  KEYS.SHEET_GID_ANNOUNCEMENTS,
+  KEYS.SHEET_GID_CATEGORIES,
+  KEYS.SHEET_GID_TAGS,
+  KEYS.SHEET_GID_TYPES,
+  KEYS.SHEET_GID_SIZES,
+];
+const AUTO_SYNC_SIGNATURE_KEY = "admin.settings.auto_sync_signature_v1";
 
 const SYSTEM_TAB_MATCHERS = {
   menu: [/^menu$/i, /^navigation$/i, /^nav$/i],
@@ -433,6 +445,7 @@ export default function SettingsPanel({ canEdit = true }) {
   const [values, setValues] = useState({});
   const [saved, setSaved] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
   const [autoBusy, setAutoBusy] = useState(false);
   const [autoMsg, setAutoMsg] = useState("");
   const [syncBusy, setSyncBusy] = useState(false);
@@ -441,6 +454,19 @@ export default function SettingsPanel({ canEdit = true }) {
   const autoReqRef = useRef(0);
   const autoLastSignatureRef = useRef("");
   const autoFilledRef = useRef({});
+  const readPersistedAutoSignature = () => {
+    try {
+      return String(localStorage.getItem(AUTO_SYNC_SIGNATURE_KEY) || "");
+    } catch {
+      return "";
+    }
+  };
+  const writePersistedAutoSignature = (value = "") => {
+    try {
+      if (value) localStorage.setItem(AUTO_SYNC_SIGNATURE_KEY, String(value));
+      else localStorage.removeItem(AUTO_SYNC_SIGNATURE_KEY);
+    } catch {}
+  };
 
   useEffect(() => {
     const vals = getAllConfig();
@@ -452,9 +478,10 @@ export default function SettingsPanel({ canEdit = true }) {
   }, []);
 
   const update = (key, val) => {
-    if (!canEdit) return;
+    if (!canEdit || saveBusy) return;
     if (key === KEYS.SHEET_ID || key === KEYS.DRIVE_FOLDER_ID) {
       autoLastSignatureRef.current = "";
+      writePersistedAutoSignature("");
       if (key === KEYS.SHEET_ID && !String(val || "").trim()) {
         autoFilledRef.current = {};
       }
@@ -490,14 +517,19 @@ export default function SettingsPanel({ canEdit = true }) {
     if (!canEdit) { setAutoBusy(false); setAutoMsg(""); return; }
     if (!sheetValue) { setAutoBusy(false); setAutoMsg(""); return; }
     const signature = `${sheetValue}::${driveValue}`;
-    const hasMissingAuto = AUTO_KEYS.some((k) => !String(values[k] || "").trim());
+    const persistedSignature = readPersistedAutoSignature();
+    const hasMissingAuto = AUTO_REQUIRED_KEYS.some((k) => !String(values[k] || "").trim());
     if (!hasMissingAuto) {
       autoLastSignatureRef.current = signature;
+      writePersistedAutoSignature(signature);
       setAutoBusy(false);
       setAutoMsg("");
       return;
     }
-    if (signature === autoLastSignatureRef.current) return;
+    if (signature === autoLastSignatureRef.current || signature === persistedSignature) {
+      setAutoBusy(false);
+      return;
+    }
     const timer = setTimeout(async () => {
       const reqId = ++autoReqRef.current;
       setAutoBusy(true);
@@ -510,6 +542,7 @@ export default function SettingsPanel({ canEdit = true }) {
           return next;
         });
         autoLastSignatureRef.current = signature;
+        writePersistedAutoSignature(signature);
         setAutoMsg(`Tự động nhận: ${tabsCount} tab, ${productTabCount} product tab.`);
       } catch (e) {
         if (reqId !== autoReqRef.current) return;
@@ -537,7 +570,7 @@ export default function SettingsPanel({ canEdit = true }) {
     const current = { ...(baseValues || {}) };
     const sheetId = String(current[KEYS.SHEET_ID] || "").trim();
     if (!sheetId) return current;
-    const hasMissingAuto = AUTO_KEYS.some((k) => !String(current[k] || "").trim());
+    const hasMissingAuto = AUTO_REQUIRED_KEYS.some((k) => !String(current[k] || "").trim());
     if (!hasMissingAuto) return current;
     try {
       const { inferred } = await inferConfigFromSheet(sheetId);
@@ -548,7 +581,7 @@ export default function SettingsPanel({ canEdit = true }) {
   };
 
   const syncNow = async () => {
-    if (!canEdit) return;
+    if (!canEdit || saveBusy) return;
     if (!canSyncNow) { setSyncMsg("Thiếu API URL hoặc Sheet ID."); return; }
     setSyncBusy(true); setSyncMsg("");
     try {
@@ -569,39 +602,61 @@ export default function SettingsPanel({ canEdit = true }) {
   };
 
   const save = async () => {
-    if (!canEdit) return;
-    const finalValues = await withAutoInferredMissing(values);
-    if (!String(finalValues[KEYS.SUPER_ADMIN_EMAIL] || "").trim()) {
-      finalValues[KEYS.SUPER_ADMIN_EMAIL] = DEFAULT_SUPER_ADMIN_EMAIL;
-    }
-    const host = String(window.location?.hostname || "").toLowerCase();
-    const isLocal = host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0";
-    if (!isLocal && !String(finalValues[KEYS.API_ALL_URL] || "").trim()) finalValues[KEYS.API_ALL_URL] = "/api/all";
-    const geminiKeys = getGeminiKeys();
-    finalValues[KEYS.GEMINI_API_KEYS] = geminiKeys.join("\n");
-    finalValues[KEYS.GEMINI_API_KEY] = geminiKeys[0] || "";
-    const authToken = String(finalValues[KEYS.GS_WEBAPP_TOKEN] || "").trim();
-
-    let remoteSyncNote = "";
+    if (!canEdit || saveBusy) return false;
+    setSaveBusy(true);
     try {
-      const pushed = await saveRuntimeConfigToSheet(finalValues, { authToken });
-      remoteSyncNote = `✅ Đã đồng bộ ${pushed.updated + pushed.inserted} mục lên tab ${pushed.sheetName}.`;
-    } catch (e) {
-      remoteSyncNote = `⚠ Lưu local thành công nhưng chưa đồng bộ toàn máy: ${e?.message || "lỗi không xác định"}`;
-    }
+      const finalValues = await withAutoInferredMissing(values);
+      if (!String(finalValues[KEYS.SUPER_ADMIN_EMAIL] || "").trim()) {
+        finalValues[KEYS.SUPER_ADMIN_EMAIL] = DEFAULT_SUPER_ADMIN_EMAIL;
+      }
+      const host = String(window.location?.hostname || "").toLowerCase();
+      const isLocal = host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0";
+      if (!isLocal && !String(finalValues[KEYS.API_ALL_URL] || "").trim()) finalValues[KEYS.API_ALL_URL] = "/api/all";
+      const geminiKeys = getGeminiKeys();
+      finalValues[KEYS.GEMINI_API_KEYS] = geminiKeys.join("\n");
+      finalValues[KEYS.GEMINI_API_KEY] = geminiKeys[0] || "";
+      const authToken = String(finalValues[KEYS.GS_WEBAPP_TOKEN] || "").trim();
 
-    setAllConfig(finalValues);
-    clearDataCache();
-    window.dispatchEvent(new Event("hb:config-changed"));
-    if (remoteSyncNote) setSyncMsg(remoteSyncNote);
-    setSaved(true); setHasChanges(false);
-    setTimeout(() => setSaved(false), 3000);
-    if (remoteSyncNote) setTimeout(() => setSyncMsg(""), 6000);
-    audit("settings.save", { user: (readLS(LS.AUTH, {}) || {}).username || "?" });
+      let remoteSyncNote = "";
+      let remoteSyncOk = false;
+      try {
+        const pushed = await saveRuntimeConfigToSheet(finalValues, { authToken });
+        remoteSyncOk = true;
+        remoteSyncNote = `✅ Đã đồng bộ ${pushed.updated + pushed.inserted} mục lên tab ${pushed.sheetName}.`;
+      } catch (e) {
+        remoteSyncNote = `⚠ Chưa đồng bộ toàn máy: ${e?.message || "lỗi không xác định"}`;
+      }
+
+      setAllConfig(finalValues);
+      clearDataCache();
+      window.dispatchEvent(new Event("hb:config-changed"));
+      if (remoteSyncNote) {
+        setSyncMsg(remoteSyncNote);
+        setTimeout(() => setSyncMsg(""), remoteSyncOk ? 6000 : 9000);
+      }
+
+      audit("settings.save", {
+        user: (readLS(LS.AUTH, {}) || {}).username || "?",
+        remoteSyncOk,
+      });
+
+      if (!remoteSyncOk) {
+        setSaved(false);
+        setHasChanges(true);
+        return false;
+      }
+
+      setSaved(true);
+      setHasChanges(false);
+      setTimeout(() => setSaved(false), 3000);
+      return true;
+    } finally {
+      setSaveBusy(false);
+    }
   };
 
   const reset = () => {
-    if (!canEdit) return;
+    if (!canEdit || saveBusy) return;
     if (!confirm("Xoá toàn bộ config đã lưu local?\nGiá trị sẽ fallback về .env (nếu có).")) return;
     resetAllConfig(); clearDataCache();
     window.dispatchEvent(new Event("hb:config-changed"));
@@ -614,8 +669,9 @@ export default function SettingsPanel({ canEdit = true }) {
   };
 
   const reload = async () => {
-    if (!canEdit) return;
-    await save();
+    if (!canEdit || saveBusy) return;
+    const ok = await save();
+    if (!ok) return;
     window.location.reload();
   };
 
@@ -649,7 +705,7 @@ export default function SettingsPanel({ canEdit = true }) {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
             {MANUAL_FIELDS.map(f => (
-              <Field key={f.key} field={f} value={values[f.key] || ""} onChange={update} disabled={!canEdit} />
+              <Field key={f.key} field={f} value={values[f.key] || ""} onChange={update} disabled={!canEdit || saveBusy} />
             ))}
           </div>
         </ConfigSection>
@@ -664,7 +720,7 @@ export default function SettingsPanel({ canEdit = true }) {
                 ? <span className="flex items-center gap-1 text-[10px] text-indigo-500 font-medium"><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Đang nhận...</span>
                 : lastSyncAt ? <span className="text-[9px] text-gray-500">{formatSyncTime(lastSyncAt).slice(0,16)}</span> : null
               }
-              <button onClick={syncNow} disabled={!canEdit || !canSyncNow || syncBusy}
+              <button onClick={syncNow} disabled={!canEdit || !canSyncNow || syncBusy || saveBusy}
                 className="h-6 px-2 text-[10px] font-medium rounded-md border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-40 transition">
                 {syncBusy ? "Syncing..." : "⚡ Sync"}
               </button>
@@ -678,7 +734,7 @@ export default function SettingsPanel({ canEdit = true }) {
           )}
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2">
             {AUTO_FIELDS.map(f => (
-              <Field key={f.key} field={f} value={values[f.key] || ""} onChange={update} disabled={!canEdit} />
+              <Field key={f.key} field={f} value={values[f.key] || ""} onChange={update} disabled={!canEdit || saveBusy} />
             ))}
           </div>
         </ConfigSection>
@@ -690,18 +746,18 @@ export default function SettingsPanel({ canEdit = true }) {
           <span className="text-[11px] text-gray-500 mr-auto">
             {hasChanges ? "Có thay đổi chưa lưu" : "Không có thay đổi"}
           </span>
-          <button onClick={save} disabled={!canEdit || !hasChanges}
+          <button onClick={save} disabled={!canEdit || !hasChanges || saveBusy}
             className="h-8 px-3 border border-gray-200 rounded-lg text-xs font-medium text-gray-600
                        hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200">
-            Lưu
+            {saveBusy ? "Đang lưu..." : "Lưu"}
           </button>
-          <button onClick={reload} disabled={!canEdit || !hasChanges}
+          <button onClick={reload} disabled={!canEdit || !hasChanges || saveBusy}
             className="h-8 px-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg text-xs font-semibold
                        hover:from-indigo-700 hover:to-purple-700 disabled:opacity-40 disabled:cursor-not-allowed
                        shadow-sm transition-all duration-200">
-            Lưu & Tải lại
+            {saveBusy ? "Đang lưu..." : "Lưu & Tải lại"}
           </button>
-          <button onClick={reset} disabled={!canEdit}
+          <button onClick={reset} disabled={!canEdit || saveBusy}
             className="h-8 px-3 text-red-500 border border-red-100 rounded-lg text-xs font-medium
                        hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shrink-0">
             Reset
