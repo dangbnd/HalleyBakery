@@ -55,6 +55,7 @@ const normProduct = (row) => ({
 /* ====================== MAIN ====================== */
 export default function ProductsPanel() {
   const [products, setProducts] = useState(() => safe(readLS("products") || []));
+  const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
   const [catFilter, setCatFilter] = useState("");
   const [page, setPage] = useState(1);
@@ -71,6 +72,7 @@ export default function ProductsPanel() {
           setProducts(rows); writeLS("products", rows);
         }
       } catch { }
+      setLoading(false);
       if (alive) t = setTimeout(loop, 10000);
     };
     loop(); return () => { alive = false; clearTimeout(t); };
@@ -112,6 +114,7 @@ export default function ProductsPanel() {
   /* Sort */
   const [sortKey, setSortKey] = useState("name");
   const [sortDir, setSortDir] = useState("asc");
+  const [imgModal, setImgModal] = useState(null);
   const toggleSort = (key) => {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortKey(key); setSortDir("asc"); }
@@ -175,31 +178,46 @@ export default function ProductsPanel() {
   /* Pagination */
   const Pagination = () => {
     if (totalPages <= 1) return null;
+    // Smart pages: show first, last, current±1, with ellipsis
+    const pages = [];
+    const addPage = (n) => { if (n >= 1 && n <= totalPages && !pages.includes(n)) pages.push(n); };
+    addPage(1);
+    addPage(safePage - 1);
+    addPage(safePage);
+    addPage(safePage + 1);
+    addPage(totalPages);
+    pages.sort((a, b) => a - b);
+
     return (
-      <div className="flex items-center justify-between py-2 px-1">
-        <span className="text-xs text-gray-400">
+      <div className="flex items-center justify-between py-1.5 px-0.5">
+        <span className="text-[11px] text-gray-400">
           {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, view.length)} / {view.length}
         </span>
-        <div className="flex items-center gap-1">
-          <PgBtn onClick={() => setPage(1)} disabled={safePage === 1}>«</PgBtn>
-          <PgBtn onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1}>‹</PgBtn>
-          {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
-            const start = Math.max(1, Math.min(safePage - 3, totalPages - 6));
-            const p = start + i;
-            if (p > totalPages) return null;
+        <div className="flex items-center gap-0.5">
+          <PgBtn onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m15 18-6-6 6-6"/></svg>
+          </PgBtn>
+          {pages.map((p, idx) => {
+            const prev = pages[idx - 1];
+            const showDot = prev && p - prev > 1;
             return (
-              <button key={p} onClick={() => setPage(p)}
-                className={`px-2.5 py-1 text-xs rounded border transition ${p === safePage ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 hover:bg-gray-50'}`}
-              >{p}</button>
+              <span key={p} className="flex items-center gap-0.5">
+                {showDot && <span className="px-1 text-xs text-gray-300">…</span>}
+                <button onClick={() => setPage(p)}
+                  className={`min-w-[28px] h-7 px-1.5 text-xs rounded-md border transition ${
+                    p === safePage ? 'bg-blue-600 text-white border-blue-600 font-semibold' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                  }`}>{p}</button>
+              </span>
             );
           })}
-          <PgBtn onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}>›</PgBtn>
-          <PgBtn onClick={() => setPage(totalPages)} disabled={safePage === totalPages}>»</PgBtn>
+          <PgBtn onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m9 18 6-6-6-6"/></svg>
+          </PgBtn>
         </div>
       </div>
     );
   };
-  const PgBtn = ({ children, ...p }) => <button {...p} className="px-2 py-1 text-xs rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-30 transition">{children}</button>;
+  const PgBtn = ({ children, ...p }) => <button {...p} className="w-7 h-7 flex items-center justify-center text-xs rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 transition">{children}</button>;
 
   /* Sort header */
   const SortTh = ({ label, field, className = "" }) => (
@@ -212,30 +230,85 @@ export default function ProductsPanel() {
     </th>
   );
 
-  return (
+  return (<>
     <div className="flex flex-col" style={{ height: 'calc(100vh - 7rem)' }}>
-      {/* ===== FIXED HEADER ===== */}
-      <div className="shrink-0">
-        <div className="flex items-center justify-between gap-3 mb-2">
-          <select className={`h-7 px-2 pr-6 text-[11px] font-medium rounded-full border appearance-none bg-no-repeat transition cursor-pointer focus:outline-none ${catFilter ? "bg-purple-50 text-purple-700 border-purple-200" : "border-gray-200 text-gray-500 hover:bg-gray-50 bg-white"}`}
+      {/* Header */}
+      <div className="shrink-0 space-y-2 mb-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <select className={`h-8 px-2 pr-6 text-[11px] font-medium rounded-full border appearance-none bg-no-repeat transition cursor-pointer focus:outline-none flex-1 min-w-0 sm:flex-none ${catFilter ? "bg-purple-50 text-purple-700 border-purple-200" : "border-gray-200 text-gray-500 hover:bg-gray-50 bg-white"}`}
             style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")", backgroundPosition: "right 6px center" }}
             value={catFilter} onChange={(e) => setCatFilter(e.target.value)}>
-            <option value="">📁 Tất cả danh mục ({products.length})</option>
+            <option value="">📁 Tất cả ({products.length})</option>
             {categories.map((c) => (
               <option key={c} value={c}>{catLabel(c)} ({products.filter(p => p.category === c).length})</option>
             ))}
           </select>
-          <div className="relative">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
-            <input className="h-9 pl-9 pr-4 w-60 border border-gray-200 rounded-lg bg-white text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition"
+          <div className="relative flex-1 min-w-0">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
+            <input className="h-8 pl-8 pr-3 w-full border border-gray-200 rounded-lg bg-white text-xs placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition"
               placeholder="Tìm theo tên, ID, tag..." value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
         </div>
         <Pagination />
       </div>
 
-      {/* ===== SCROLLABLE TABLE (single table = aligned columns) ===== */}
-      <div className="flex-1 overflow-y-auto bg-white rounded-xl border border-gray-200/80 shadow-sm">
+      {/* Mobile Card View - compact */}
+      <div className="flex-1 overflow-y-auto md:hidden space-y-1.5">
+        {paged.map((row) => (
+          <div key={row.id} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+            {editId === row.id ? (
+              /* Edit mode */
+              <div className="p-3 space-y-1.5">
+                <input className="w-full px-2 py-1 border rounded-lg text-sm" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+                <select className="w-full px-2 py-1 border rounded-lg text-xs" value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })}>
+                  <option value="">— Danh mục —</option>{categories.map((c) => <option key={c} value={c}>{catLabel(c)}</option>)}
+                </select>
+                <input className="w-full px-2 py-1 border rounded-lg text-xs" value={Array.isArray(draft.tags) ? draft.tags.join(", ") : (draft.tags || "")} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder="tag1, tag2" />
+                <div className="flex items-center justify-between">
+                  <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer"><input type="checkbox" checked={!!draft.active} onChange={(e) => setDraft({ ...draft, active: e.target.checked })} /> Active</label>
+                  <div className="flex gap-1.5">
+                    <button onClick={saveEdit} className="px-3 py-1 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition">✓ Lưu</button>
+                    <button onClick={cancelEdit} className="px-3 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded-lg transition">Huỷ</button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* View mode - compact single row */
+              <div className="flex items-center gap-2 px-2.5 py-2">
+                <div className="h-10 w-10 rounded-lg bg-gray-100 overflow-hidden border border-gray-100 shrink-0 cursor-pointer" onClick={() => { const raw = firstImg(row); raw && setImgModal(raw); }}>
+                  {firstImg(row) ? <img src={fixThumbUrl(firstImg(row), 80)} alt="" className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : null}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium text-gray-900 text-xs truncate">{row.name}</span>
+                    <span className={`shrink-0 inline-flex items-center text-[9px] font-medium px-1 py-px rounded-full ${
+                      row.active ? "bg-emerald-50 text-emerald-600" : "bg-gray-100 text-gray-400"
+                    }`}>{row.active ? "●" : "○"}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                    <span className="text-[10px] text-gray-400 truncate max-w-[100px]">{catLabel(row.category) || "—"}</span>
+                    {tagsArr(row.tags).length > 0 && (
+                      <span className="text-[9px] text-gray-400">· {tagsArr(row.tags).slice(0,2).join(", ")}{tagsArr(row.tags).length > 2 ? ` +${tagsArr(row.tags).length - 2}` : ""}</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-0.5 shrink-0">
+                  <button onClick={() => startEdit(row)} className="p-1.5 text-gray-300 hover:text-blue-500 rounded-lg transition">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
+                  </button>
+                  <button onClick={() => removeRow(row)} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg transition">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+        {view.length === 0 && <div className="py-12 text-center text-gray-400 text-sm">Chưa có sản phẩm.</div>}
+      </div>
+
+      {/* Desktop Table View */}
+      <div className="hidden md:block flex-1 overflow-y-auto bg-white rounded-xl border border-gray-200/80 shadow-sm">
         <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
           <colgroup>
             <col style={{ width: "3.5rem" }} />
@@ -260,43 +333,37 @@ export default function ProductsPanel() {
           <tbody className="divide-y divide-gray-50">
             {paged.map((row) => (
               <tr key={row.id} className="group hover:bg-blue-50/40 transition-colors">
-                {/* Thumb */}
                 <td className="py-2 px-3">
-                  <div className="h-10 w-10 rounded-lg bg-gray-100 overflow-hidden border border-gray-200/60">
+                  <div className="h-10 w-10 rounded-lg bg-gray-100 overflow-hidden border border-gray-200/60 cursor-pointer hover:ring-2 hover:ring-blue-400 transition"
+                    onClick={() => { const raw = firstImg(row); raw && setImgModal(raw); }}>
                     {firstImg(row) ? <img src={fixThumbUrl(firstImg(row), 96)} alt="" className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : null}
                   </div>
                 </td>
-                {/* Name */}
                 <td className="py-2 px-3">
                   {editId === row.id
                     ? <input className="w-full px-2 py-1 border rounded-lg text-sm" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
                     : <div><div className="font-medium text-gray-900 truncate">{row.name}</div><div className="text-[10px] text-gray-400">ID: {row.id}</div></div>}
                 </td>
-                {/* Category */}
                 <td className="py-2 px-3">
                   {editId === row.id
                     ? <select className="w-full px-2 py-1 border rounded-lg text-sm" value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })}><option value="">—</option>{categories.map((c) => <option key={c} value={c}>{catLabel(c)}</option>)}</select>
                     : <span className="text-gray-600 text-xs">{catLabel(row.category) || "—"}</span>}
                 </td>
-                {/* Status */}
                 <td className="py-2 px-3">
                   {editId === row.id
                     ? <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer"><input type="checkbox" checked={!!draft.active} onChange={(e) => setDraft({ ...draft, active: e.target.checked })} /> Active</label>
                     : <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full ${row.active ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-gray-100 text-gray-500 border border-gray-200"}`}><span className={`w-1.5 h-1.5 rounded-full ${row.active ? "bg-emerald-500" : "bg-gray-400"}`} />{row.active ? "Active" : "Hidden"}</span>}
                 </td>
-                {/* Description */}
                 <td className="py-2 px-3">
                   {editId === row.id
                     ? <textarea className="w-full px-2 py-1 border rounded-lg text-sm min-h-[2rem]" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="Mô tả…" />
                     : <span className="text-xs text-gray-500 line-clamp-2">{row.description || "—"}</span>}
                 </td>
-                {/* Tags */}
                 <td className="py-2 px-3">
                   {editId === row.id
                     ? <input className="w-full px-2 py-1 border rounded-lg text-sm" value={Array.isArray(draft.tags) ? draft.tags.join(", ") : (draft.tags || "")} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder="tag1, tag2" />
                     : <div className="flex flex-wrap gap-0.5">{tagsArr(row.tags).map((t, i) => <span key={i} className="inline-block px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px] border border-gray-200/60">{t}</span>)}{!tagsArr(row.tags).length && <span className="text-gray-300 text-xs">—</span>}</div>}
                 </td>
-                {/* Actions */}
                 <td className="py-2 px-3 text-right">
                   {editId === row.id ? (
                     <div className="flex flex-col gap-1">
@@ -321,7 +388,29 @@ export default function ProductsPanel() {
         {view.length === 0 && <div className="py-12 text-center text-gray-400 text-sm">Chưa có sản phẩm.</div>}
       </div>
     </div>
+
+      {/* Image Lightbox Modal */}
+      {imgModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 backdrop-blur-sm"
+          onClick={() => setImgModal(null)}>
+          <div className="relative" onClick={e => e.stopPropagation()}>
+            <img src={imgModal} alt=""
+              className="block rounded-2xl shadow-2xl object-contain"
+              style={{ width: 320, height: 320 }}
+              onError={e => {
+                const m = imgModal.match(/[?&]id=([a-zA-Z0-9_-]+)/) || imgModal.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                if (m && !e.currentTarget.src.includes('lh3')) {
+                  e.currentTarget.src = `https://lh3.googleusercontent.com/d/${m[1]}=w400`;
+                }
+              }}
+            />
+            <button onClick={() => setImgModal(null)}
+              className="absolute -top-3 -right-3 w-8 h-8 rounded-full bg-white shadow-lg flex items-center justify-center text-gray-500 hover:text-gray-900 transition">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
-
-

@@ -21,6 +21,7 @@ const KEYS = {
     ZALO_LINK: "zalo_link",
     API_ALL_URL: "api_all_url",
     GS_WEBAPP_URL: "gs_webapp_url",
+    GOOGLE_OAUTH_CLIENT_ID: "google_oauth_client_id",
     GEMINI_API_KEY: "gemini_api_key",
     ENABLE_VISITOR_TRACKING: "enable_visitor_tracking",
     LAST_SYNC_AT: "last_sync_at",
@@ -44,6 +45,7 @@ const ENV_MAP = {
     [KEYS.ZALO_LINK]: "VITE_ZALO_LINK",
     [KEYS.API_ALL_URL]: "VITE_API_ALL_URL",
     [KEYS.GS_WEBAPP_URL]: "VITE_GS_WEBAPP_URL",
+    [KEYS.GOOGLE_OAUTH_CLIENT_ID]: "VITE_GOOGLE_OAUTH_CLIENT_ID",
     [KEYS.GEMINI_API_KEY]: "VITE_GEMINI_API_KEY",
     [KEYS.ENABLE_VISITOR_TRACKING]: "VITE_ENABLE_VISITOR_TRACKING",
 };
@@ -84,10 +86,16 @@ function envValueFor(key) {
     }
 }
 
-/**
- * Đọc config value: localStorage ưu tiên, fallback .env.
- */
 export function getConfig(key, fallback = "") {
+    if (key === KEYS.GEMINI_API_KEY) {
+        try {
+            const aiKeys = JSON.parse(localStorage.getItem("ai_gemini_keys"));
+            if (Array.isArray(aiKeys) && aiKeys.length > 0 && aiKeys[0]) {
+                return aiKeys[0];
+            }
+        } catch {}
+    }
+
     try {
         const ls = localStorage.getItem(PREFIX + key);
         if (ls !== null && ls !== "") return normalizeValue(key, ls);
@@ -127,6 +135,7 @@ export function getAllConfig() {
  */
 export function setAllConfig(configObj) {
     for (const [key, value] of Object.entries(configObj)) {
+        if (key === KEYS.GEMINI_API_KEY) continue;
         setConfig(key, value);
     }
 }

@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { getAllConfig, setAllConfig, setConfig, resetAllConfig, KEYS } from "../../../utils/config.js";
 import { audit, readLS } from "../../../utils.js";
 import { buildUnifiedApiUrl } from "../../../services/sheets.multi.js";
@@ -35,11 +35,19 @@ const MANUAL_FIELDS = [
     icon: "📱",
   },
   {
+    key: KEYS.GOOGLE_OAUTH_CLIENT_ID,
+    label: "Google OAuth Client ID",
+    placeholder: "1234567890-xxxx.apps.googleusercontent.com",
+    desc: "Dung cho direct upload Drive (giu chat luong 100%).",
+    icon: "🔐",
+  },
+  {
     key: KEYS.GEMINI_API_KEY,
-    label: "Gemini API Key",
-    placeholder: "AIzaSy...",
-    desc: "Nhap key neu su dung AI Tags.",
+    label: "Gemini API Keys",
+    placeholder: "Chưa cấu hình",
+    desc: "Được tự động đồng bộ từ tab AI Tags.",
     icon: "✨",
+    readOnly: true,
   },
   {
     key: KEYS.ENABLE_VISITOR_TRACKING,
@@ -331,20 +339,15 @@ function unifiedParamsFromValues(values = {}) {
   };
 }
 
-function ConfigCard({ icon, title, desc, right, children }) {
+function ConfigSection({ icon, title, badge, children }) {
   return (
-    <div className="rounded-2xl border border-gray-100 bg-white shadow-sm overflow-hidden">
-      <div className="px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100 flex items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">{icon}</span>
-          <div>
-            <h3 className="font-semibold text-gray-800">{title}</h3>
-            {desc && <p className="text-xs text-gray-400 mt-0.5">{desc}</p>}
-          </div>
-        </div>
-        {right}
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-gray-100 bg-gray-50/60">
+        <span className="text-base">{icon}</span>
+        <span className="text-xs font-semibold text-gray-700 flex-1">{title}</span>
+        {badge}
       </div>
-      <div className="px-6 py-5">{children}</div>
+      <div className="p-3 space-y-2">{children}</div>
     </div>
   );
 }
@@ -353,21 +356,25 @@ function Field({ field, value, onChange }) {
   const id = `cfg-${field.key}`;
   return (
     <div className={field.span || ""}>
-      <label htmlFor={id} className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-1.5">
-        <span className="text-base">{field.icon}</span>
+      <label htmlFor={id} className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+        <span className="text-sm">{field.icon}</span>
         {field.label}
       </label>
-      {field.desc && <p className="text-xs text-gray-400 mb-1.5 ml-7 leading-4">{field.desc}</p>}
+      {field.desc && <p className="text-[10px] text-gray-400 mb-1 leading-4">{field.desc}</p>}
       <input
         id={id}
         type="text"
-        className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-mono
-                   bg-gray-50/50 focus:bg-white
+        className={`w-full border rounded-xl px-3 py-2 text-xs font-mono
                    focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400
-                   outline-none transition-all duration-200"
+                   outline-none transition-all duration-200
+                   ${field.readOnly
+            ? "bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed"
+            : "bg-white border-gray-200 hover:border-gray-300 text-gray-800"
+          }`}
         value={value}
-        onChange={(e) => onChange(field.key, e.target.value)}
+        onChange={(e) => { if (!field.readOnly) onChange(field.key, e.target.value); }}
         placeholder={field.placeholder}
+        disabled={field.readOnly}
       />
     </div>
   );
@@ -387,7 +394,16 @@ export default function SettingsPanel() {
   const autoFilledRef = useRef({});
 
   useEffect(() => {
-    setValues(getAllConfig());
+    const vals = getAllConfig();
+    try {
+      const aiKeys = JSON.parse(localStorage.getItem("ai_gemini_keys") || "[]");
+      if (Array.isArray(aiKeys) && aiKeys.length > 0) {
+        vals[KEYS.GEMINI_API_KEY] = `Đã đồng bộ ${aiKeys.length} keys từ AI Tags`;
+      } else {
+        vals[KEYS.GEMINI_API_KEY] = "";
+      }
+    } catch {}
+    setValues(vals);
   }, []);
 
   const update = (key, val) => {
@@ -425,250 +441,176 @@ export default function SettingsPanel() {
   const canSyncNow = !!unifiedApiUrl;
 
   useEffect(() => {
-    if (!sheetValue) {
-      setAutoBusy(false);
-      setAutoMsg("");
-      return;
-    }
-
+    if (!sheetValue) { setAutoBusy(false); setAutoMsg(""); return; }
     const signature = `${sheetValue}::${driveValue}`;
     if (signature === autoLastSignatureRef.current) return;
-
     const timer = setTimeout(async () => {
       const reqId = ++autoReqRef.current;
       setAutoBusy(true);
       try {
         const { inferred, tabsCount, productTabCount } = await inferConfigFromSheet(sheetValue);
         if (reqId !== autoReqRef.current) return;
-
         setValues((prev) => {
           const { next, changed } = mergeAutoValues(prev, inferred, autoFilledRef.current, false);
-          if (changed) {
-            setHasChanges(true);
-            setSaved(false);
-          }
+          if (changed) { setHasChanges(true); setSaved(false); }
           return next;
         });
-
         autoLastSignatureRef.current = signature;
-        setAutoMsg(`Tu dong nhan: ${tabsCount} tab, ${productTabCount} product tab.`);
+        setAutoMsg(`Tự động nhận: ${tabsCount} tab, ${productTabCount} product tab.`);
       } catch (e) {
         if (reqId !== autoReqRef.current) return;
-        setAutoMsg(e?.message || "Khong the tu dong nhan du lieu tu sheet.");
+        setAutoMsg(e?.message || "Không thể tự động nhận dữ liệu.");
       } finally {
         if (reqId === autoReqRef.current) setAutoBusy(false);
       }
     }, 500);
-
     return () => clearTimeout(timer);
   }, [sheetValue, driveValue]);
 
   const clearDataCache = () => {
-    const dataCacheKeys = [
-      "products",
-      "categories",
-      "menu",
-      "pages",
-      "tags",
-      "schemes",
-      "types",
-      "levels",
-      "sizes",
-      "fb_urls",
-      "halley_announcements",
-    ];
-    dataCacheKeys.forEach((k) => {
-      try {
-        localStorage.removeItem(k);
-      } catch {
-        // ignore
-      }
+    ["products","categories","menu","pages","tags","schemes","types","levels","sizes","fb_urls","halley_announcements"].forEach(k => {
+      try { localStorage.removeItem(k); } catch {}
     });
     try {
       for (let i = localStorage.length - 1; i >= 0; i--) {
         const k = localStorage.key(i);
         if (k && k.startsWith("cache:")) localStorage.removeItem(k);
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
   const withAutoInferredMissing = async (baseValues) => {
     const current = { ...(baseValues || {}) };
     const sheetId = String(current[KEYS.SHEET_ID] || "").trim();
     if (!sheetId) return current;
-
     const hasMissingAuto = AUTO_KEYS.some((k) => !String(current[k] || "").trim());
     if (!hasMissingAuto) return current;
-
     try {
       const { inferred } = await inferConfigFromSheet(sheetId);
       const { next, changed } = mergeAutoValues(current, inferred, autoFilledRef.current, true);
-      if (changed) {
-        setValues(next);
-        setHasChanges(true);
-      }
+      if (changed) { setValues(next); setHasChanges(true); }
       return next;
-    } catch {
-      return current;
-    }
+    } catch { return current; }
   };
 
   const syncNow = async () => {
-    if (!canSyncNow) {
-      setSyncMsg("Thieu API all URL hoac Sheet ID de sync.");
-      return;
-    }
-    setSyncBusy(true);
-    setSyncMsg("");
+    if (!canSyncNow) { setSyncMsg("Thiếu API URL hoặc Sheet ID."); return; }
+    setSyncBusy(true); setSyncMsg("");
     try {
-      const url = buildUnifiedApiUrl({
-        ...unifiedParamsFromValues(values),
-        forceLocal: true,
-        force: true,
-        meta: true,
-      });
+      const url = buildUnifiedApiUrl({ ...unifiedParamsFromValues(values), forceLocal: true, force: true, meta: true });
       const res = await fetch(url, { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.ok === false) {
-        throw new Error(data?.error || `Sync that bai (HTTP ${res.status})`);
-      }
+      if (!res.ok || data?.ok === false) throw new Error(data?.error || `Sync thất bại (HTTP ${res.status})`);
       const syncedAt = data?._meta?.refreshedAt || new Date().toISOString();
       setConfig(KEYS.LAST_SYNC_AT, syncedAt);
       setValues((prev) => ({ ...prev, [KEYS.LAST_SYNC_AT]: syncedAt }));
       clearDataCache();
       window.dispatchEvent(new Event("hb:config-changed"));
-      setSyncMsg("Sync xong. Du lieu moi da san sang.");
+      setSyncMsg("✅ Sync xong. Dữ liệu mới đã sẵn sàng.");
       setTimeout(() => setSyncMsg(""), 4000);
     } catch (e) {
-      setSyncMsg(e?.message || "Khong the sync ngay.");
-    } finally {
-      setSyncBusy(false);
-    }
+      setSyncMsg(e?.message || "Không thể sync ngay.");
+    } finally { setSyncBusy(false); }
   };
 
   const save = async () => {
     const finalValues = await withAutoInferredMissing(values);
     const host = String(window.location?.hostname || "").toLowerCase();
     const isLocal = host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0";
-    if (!isLocal && !String(finalValues[KEYS.API_ALL_URL] || "").trim()) {
-      finalValues[KEYS.API_ALL_URL] = "/api/all";
-    }
+    if (!isLocal && !String(finalValues[KEYS.API_ALL_URL] || "").trim()) finalValues[KEYS.API_ALL_URL] = "/api/all";
     setAllConfig(finalValues);
     clearDataCache();
     window.dispatchEvent(new Event("hb:config-changed"));
-    setSaved(true);
-    setHasChanges(false);
+    setSaved(true); setHasChanges(false);
     setTimeout(() => setSaved(false), 3000);
     audit("settings.save", { user: (readLS("auth") || {}).username || "?" });
   };
 
   const reset = () => {
-    if (!confirm("Xoa toan bo config da luu local?\nGia tri se fallback ve .env (neu co).")) return;
-    resetAllConfig();
-    clearDataCache();
+    if (!confirm("Xoá toàn bộ config đã lưu local?\nGiá trị sẽ fallback về .env (nếu có).")) return;
+    resetAllConfig(); clearDataCache();
     window.dispatchEvent(new Event("hb:config-changed"));
-    setValues(getAllConfig());
-    setHasChanges(false);
-    setSaved(false);
-    setAutoMsg("");
-    autoFilledRef.current = {};
-    autoLastSignatureRef.current = "";
+    const vals = getAllConfig();
+    try {
+      const aiKeys = JSON.parse(localStorage.getItem("ai_gemini_keys") || "[]");
+      if (Array.isArray(aiKeys) && aiKeys.length > 0) vals[KEYS.GEMINI_API_KEY] = `Đã đồng bộ ${aiKeys.length} keys từ AI Tags`;
+      else vals[KEYS.GEMINI_API_KEY] = "";
+    } catch {}
+    setValues(vals);
+    setHasChanges(false); setSaved(false); setAutoMsg("");
+    autoFilledRef.current = {}; autoLastSignatureRef.current = "";
   };
 
-  const reload = async () => {
-    await save();
-    window.location.reload();
-  };
+  const reload = async () => { await save(); window.location.reload(); };
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <span className="bg-gradient-to-br from-indigo-500 to-purple-600 text-white w-10 h-10 rounded-xl flex items-center justify-center text-lg shadow-md">
-              ⚙
-            </span>
-            Cau hinh he thong
-          </h2>
-          <p className="text-sm text-gray-500 mt-2 ml-12">
-            Nhom tren: thong tin can nhap tay. Nhom duoi: cac gia tri he thong tu nhan tu Sheet.
-          </p>
-        </div>
+    <div className="flex flex-col" style={{ height: "calc(100vh - 7rem)" }}>
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto space-y-3 pb-4">
+
+        {/* ── Section 1: Manual ── */}
+        <ConfigSection icon="📝" title="Thông tin nhập tay">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {MANUAL_FIELDS.map(f => (
+              <Field key={f.key} field={f} value={values[f.key] || ""} onChange={update} />
+            ))}
+          </div>
+        </ConfigSection>
+
+        {/* ── Section 2: Auto GIDs ── */}
+        <ConfigSection
+          icon="🤖"
+          title="Tự động nhận từ Sheet"
+          badge={
+            <div className="flex items-center gap-1.5">
+              {autoBusy
+                ? <span className="flex items-center gap-1 text-[10px] text-indigo-500 font-medium"><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Đang nhận...</span>
+                : lastSyncAt ? <span className="text-[9px] text-gray-400">sync: {formatSyncTime(lastSyncAt).slice(0,10)}</span> : null
+              }
+              <button onClick={syncNow} disabled={!canSyncNow || syncBusy}
+                className="h-6 px-2 text-[10px] font-medium rounded-lg border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-40 transition">
+                {syncBusy ? "Syncing..." : "⚡ Sync"}
+              </button>
+            </div>
+          }
+        >
+          {(autoMsg || syncMsg) && (
+            <div className={`text-[10px] rounded-lg px-3 py-1.5 ${syncMsg ? "bg-emerald-50 text-emerald-600" : "bg-blue-50 text-blue-600"}`}>
+              {syncMsg || autoMsg}
+            </div>
+          )}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {AUTO_FIELDS.map(f => (
+              <Field key={f.key} field={f} value={values[f.key] || ""} onChange={update} />
+            ))}
+          </div>
+        </ConfigSection>
       </div>
 
-      <ConfigCard icon="📝" title="Thong Tin Nhap Tay" desc="Nhap thong tin nguon du lieu va lien ket quan tri.">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {MANUAL_FIELDS.map((f) => (
-            <Field key={f.key} field={f} value={values[f.key] || ""} onChange={update} />
-          ))}
-        </div>
-      </ConfigCard>
-
-      <ConfigCard
-        icon="🤖"
-        title="Thong Tin Tu Dong Nhan"
-        desc="Khi Sheet ID thay doi, he thong quet tabs va dien gia tri co the nhan duoc."
-        right={
-          <div className="text-right space-y-1.5">
-            <div className={`text-xs font-medium ${autoBusy ? "text-indigo-600" : "text-gray-500"}`}>
-              {autoBusy ? "Dang tu dong nhan..." : "Tu dong nhan khi doi Sheet ID"}
-            </div>
-            <div className="text-[11px] text-gray-400">Last synced: {formatSyncTime(lastSyncAt)}</div>
-            <button
-              onClick={syncNow}
-              disabled={!canSyncNow || syncBusy}
-              className="inline-flex items-center justify-center rounded-lg border border-indigo-200 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {syncBusy ? "Dang sync..." : "Sync ngay"}
-            </button>
-            {autoMsg && <div className="text-[11px] text-gray-400 mt-1 max-w-[280px]">{autoMsg}</div>}
-            {syncMsg && <div className="text-[11px] text-indigo-500 max-w-[280px]">{syncMsg}</div>}
-          </div>
-        }
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {AUTO_FIELDS.map((f) => (
-            <Field key={f.key} field={f} value={values[f.key] || ""} onChange={update} />
-          ))}
-        </div>
-      </ConfigCard>
-
-      <div className="sticky bottom-4 z-20">
-        <div className="rounded-2xl border border-gray-200 bg-white/80 backdrop-blur-xl shadow-lg px-6 py-4 flex items-center gap-3 flex-wrap">
-          <button
-            onClick={reload}
-            disabled={!hasChanges}
-            className="px-6 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl text-sm font-semibold
-                       hover:from-indigo-700 hover:to-purple-700 active:scale-[0.98]
-                       disabled:opacity-40 disabled:cursor-not-allowed
-                       shadow-md hover:shadow-lg transition-all duration-200"
-          >
-            Luu & Tai lai
+      {/* ── Sticky action bar ── */}
+      <div className="shrink-0 pt-2">
+        <div className="bg-white/90 backdrop-blur-md border border-gray-200 rounded-2xl px-3 py-2.5 flex items-center gap-2 shadow-sm">
+          <button onClick={reload} disabled={!hasChanges}
+            className="flex-1 h-9 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl text-xs font-semibold
+                       hover:from-indigo-700 hover:to-purple-700 disabled:opacity-40 disabled:cursor-not-allowed
+                       shadow-sm transition-all duration-200">
+            💾 Lưu & Tải lại
           </button>
-          <button
-            onClick={save}
-            disabled={!hasChanges}
-            className="px-5 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-700
-                       hover:bg-gray-50 active:scale-[0.98]
-                       disabled:opacity-40 disabled:cursor-not-allowed
-                       transition-all duration-200"
-          >
-            Luu (khong tai lai)
+          <button onClick={save} disabled={!hasChanges}
+            className="flex-1 h-9 border border-gray-200 rounded-xl text-xs font-medium text-gray-600
+                       hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200">
+            Lưu (không tải lại)
           </button>
-          <button
-            onClick={reset}
-            className="px-5 py-2.5 text-red-600 border border-red-100 rounded-xl text-sm font-medium
-                       hover:bg-red-50 active:scale-[0.98]
-                       transition-all duration-200 ml-auto"
-          >
-            Reset mac dinh
+          <button onClick={reset}
+            className="h-9 px-3 text-red-500 border border-red-100 rounded-xl text-xs font-medium
+                       hover:bg-red-50 transition-all duration-200 shrink-0">
+            🗑️
           </button>
-
-          <div className={`text-sm font-medium transition-all duration-500 ${saved ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"}`}>
-            <span className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-full">Da luu</span>
-          </div>
+          {saved && (
+            <span className="text-[10px] font-medium bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full shrink-0 animate-pulse">
+              ✓ Đã lưu
+            </span>
+          )}
         </div>
       </div>
     </div>

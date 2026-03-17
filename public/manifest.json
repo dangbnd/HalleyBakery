@@ -1,0 +1,44 @@
+{
+  "name": "HALLEY BAKERY",
+  "short_name": "Halley",
+  "description": "Bánh sinh nhật & Bánh sự kiện Hà Nội - Đặt bánh online, giao hàng tận nơi",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#f43f5e",
+  "lang": "vi",
+  "dir": "ltr",
+  "categories": ["food", "shopping"],
+  "icons": [
+    {
+      "src": "/brand/logo-mobile.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/brand/logo-desktop.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Sản phẩm",
+      "short_name": "Bánh",
+      "description": "Xem danh mục bánh",
+      "url": "/",
+      "icons": [{ "src": "/brand/logo-mobile.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Admin",
+      "short_name": "Admin",
+      "description": "Quản trị viên",
+      "url": "/admin",
+      "icons": [{ "src": "/brand/logo-mobile.png", "sizes": "192x192" }]
+    }
+  ]
+}

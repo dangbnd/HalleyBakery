@@ -1,8 +1,8 @@
-import React from "react";
+﻿import React from "react";
 import Login from "../Login.jsx";
 import { LS, readLS } from "../../../utils.js";
 
-const LEVEL = { viewer:1, staff:2, editor:3, manager:4, owner:5 };
+const LEVEL = { viewer: 1, staff: 2, editor: 3, manager: 4, owner: 5 };
 
 function levelFromPermissions(perms = []) {
   const set = new Set(Array.isArray(perms) ? perms : []);
@@ -19,10 +19,8 @@ export default function AuthGuard({ minRole = "editor", children }) {
   if (!user) return <Login />;
 
   const need = LEVEL[minRole] ?? 3;
-  const have =
-    user?.isSuper
-      ? 99
-      : (LEVEL[user.role] ?? levelFromPermissions(user?.permissions));
+  const have = user?.isSuper ? 99 : (LEVEL[user.role] ?? levelFromPermissions(user?.permissions));
+
   if (have < need) {
     return (
       <div className="p-6 text-sm text-red-600">
