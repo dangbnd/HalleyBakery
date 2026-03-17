@@ -9,7 +9,7 @@ const MANUAL_FIELDS = [
     key: KEYS.SHEET_ID,
     label: "Google Sheet ID",
     placeholder: "1Z-Y_yZFe...",
-    desc: "Dan ID hoac full link Google Sheet.",
+    desc: "Dán ID hoặc full link Google Sheet.",
     icon: "📊",
     span: "sm:col-span-2 lg:col-span-3",
   },
@@ -17,7 +17,7 @@ const MANUAL_FIELDS = [
     key: KEYS.DRIVE_FOLDER_ID,
     label: "Google Drive Folder ID",
     placeholder: "1kc6cjMe...",
-    desc: "Dan ID hoac full link folder Drive.",
+    desc: "Dán ID hoặc full link thư mục Drive.",
     icon: "📁",
     span: "sm:col-span-2 lg:col-span-3",
   },
@@ -25,28 +25,28 @@ const MANUAL_FIELDS = [
     key: KEYS.MESSENGER_LINK,
     label: "Messenger Link",
     placeholder: "https://m.me/...",
-    desc: "Link lien he Messenger cho nut nhan tin.",
+    desc: "Link liên hệ Messenger cho nút nhắn tin.",
     icon: "💬",
   },
   {
     key: KEYS.ZALO_LINK,
     label: "Zalo Link",
     placeholder: "https://zalo.me/...",
-    desc: "Link lien he Zalo cho nut nhan tin.",
+    desc: "Link liên hệ Zalo cho nút nhắn tin.",
     icon: "📱",
   },
   {
     key: KEYS.GOOGLE_OAUTH_CLIENT_ID,
     label: "Google OAuth Client ID",
     placeholder: "1234567890-xxxx.apps.googleusercontent.com",
-    desc: "Dung cho direct upload Drive (giu chat luong 100%).",
+    desc: "Dùng cho direct upload Drive (giữ chất lượng 100%).",
     icon: "🔐",
   },
   {
     key: KEYS.SUPER_ADMIN_EMAIL,
     label: "Super Admin Email (Google)",
     placeholder: "dangbnd@gmail.com",
-    desc: "Email dang nhap Google se auto thanh super admin.",
+    desc: "Email đăng nhập Google sẽ tự thành super admin.",
     icon: "👑",
     span: "sm:col-span-2",
   },
@@ -54,7 +54,7 @@ const MANUAL_FIELDS = [
     key: KEYS.ADMIN_ALLOWED_EMAILS,
     label: "Admin Allowed Emails",
     placeholder: "owner@halleybakery.io.vn\nmanager@halleybakery.io.vn\n@halleybakery.io.vn",
-    desc: "Moi dong 1 email hoac domain (@domain.com). De trong neu chi muon quan ly bang OAuth test users.",
+    desc: "Mỗi dòng 1 email hoặc domain (@domain.com). Để trống nếu chỉ muốn quản lý bằng OAuth test users.",
     icon: "👥",
     type: "textarea",
     rows: 4,
@@ -63,9 +63,9 @@ const MANUAL_FIELDS = [
   {
     key: KEYS.GS_WEBAPP_TOKEN,
     label: "GS WebApp Admin Token",
-    placeholder: "HB_ADMIN_TOKEN",
-    desc: "Can trung voi Script Property HB_ADMIN_TOKEN tren Apps Script.",
-    icon: "ðŸ”—",
+    placeholder: "Dán GIÁ TRỊ token (không phải chữ HB_ADMIN_TOKEN)",
+    desc: "Lấy value của key HB_ADMIN_TOKEN trong Apps Script > Project settings > Script properties.",
+    icon: "🔑",
     type: "password",
     span: "sm:col-span-2",
   },
@@ -81,7 +81,7 @@ const MANUAL_FIELDS = [
     key: KEYS.ENABLE_VISITOR_TRACKING,
     label: "Visitor Tracking",
     placeholder: "false",
-    desc: "true/false de bat tat ghi log local.",
+    desc: "true/false để bật/tắt ghi log local.",
     icon: "👀",
   },
 ];
@@ -90,11 +90,11 @@ const AUTO_FIELDS = [
   { key: KEYS.SHEET_GID_PRODUCTS, label: "Products GID", placeholder: "541884820", icon: "🧁" },
   { key: KEYS.SHEET_GID_FB, label: "Facebook Posts", placeholder: "1250492303", icon: "📘" },
   { key: KEYS.SHEET_GID_MENU, label: "Menu", placeholder: "0", icon: "📜" },
-  { key: KEYS.SHEET_GID_PAGES, label: "Trang noi dung", placeholder: "993105126", icon: "📄" },
-  { key: KEYS.SHEET_GID_ANNOUNCEMENTS, label: "Thong bao", placeholder: "1621494911", icon: "📢" },
-  { key: KEYS.SHEET_GID_CATEGORIES, label: "Danh muc", placeholder: "", icon: "🏷️" },
+  { key: KEYS.SHEET_GID_PAGES, label: "Trang nội dung", placeholder: "993105126", icon: "📄" },
+  { key: KEYS.SHEET_GID_ANNOUNCEMENTS, label: "Thông báo", placeholder: "1621494911", icon: "📢" },
+  { key: KEYS.SHEET_GID_CATEGORIES, label: "Danh mục", placeholder: "", icon: "🏷️" },
   { key: KEYS.SHEET_GID_TAGS, label: "Tags", placeholder: "", icon: "🔖" },
-  { key: KEYS.SHEET_GID_TYPES, label: "Loai banh", placeholder: "", icon: "🎂" },
+  { key: KEYS.SHEET_GID_TYPES, label: "Loại bánh", placeholder: "", icon: "🎂" },
   { key: KEYS.SHEET_GID_SIZES, label: "Size", placeholder: "", icon: "📐" },
   { key: KEYS.SHEET_GID_LEVELS, label: "Levels", placeholder: "", icon: "⭐" },
   {
@@ -224,7 +224,7 @@ function pickCfgValue(obj = {}, aliases = []) {
 async function fetchConfigFromTab(sheetId, gid) {
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Khong doc duoc tab config (HTTP ${res.status})`);
+  if (!res.ok) throw new Error(`Không đọc được tab config (HTTP ${res.status})`);
   const text = await res.text();
   return parseKeyValueTable(text);
 }
@@ -255,15 +255,15 @@ function pickGidByMatcher(tabs = [], matchers = []) {
 
 async function inferConfigFromSheet(sheetId = "") {
   const id = String(sheetId || "").trim();
-  if (!id) throw new Error("Thieu Sheet ID");
+  if (!id) throw new Error("Thiếu Sheet ID");
 
   const url = `https://docs.google.com/spreadsheets/d/${id}/edit`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Khong doc duoc sheet (HTTP ${res.status})`);
+  if (!res.ok) throw new Error(`Không đọc được sheet (HTTP ${res.status})`);
 
   const html = await res.text();
   const tabs = parseTabsFromEditHtml(html);
-  if (!tabs.length) throw new Error("Khong phan tich duoc danh sach tab tu sheet");
+  if (!tabs.length) throw new Error("Không phân tích được danh sách tab từ sheet");
 
   const inferred = {
     [KEYS.SHEET_GID_MENU]: pickGidByMatcher(tabs, SYSTEM_TAB_MATCHERS.menu),
@@ -341,7 +341,7 @@ function mergeAutoValues(baseValues, inferredValues, lastAutoMap, onlyMissing = 
 
 function formatSyncTime(ts = "") {
   const v = String(ts || "").trim();
-  if (!v) return "Chua co";
+  if (!v) return "Chưa có";
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return v;
   return d.toLocaleString("vi-VN");
@@ -369,9 +369,9 @@ function unifiedParamsFromValues(values = {}) {
 
 function ConfigSection({ icon, title, badge, children }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-gray-100 bg-gray-50/60">
-        <span className="text-base">{icon}</span>
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 bg-gray-50/80">
+        <span className="text-sm">{icon}</span>
         <span className="text-xs font-semibold text-gray-700 flex-1">{title}</span>
         {badge}
       </div>
@@ -383,7 +383,7 @@ function ConfigSection({ icon, title, badge, children }) {
 function Field({ field, value, onChange, disabled = false }) {
   const id = `cfg-${field.key}`;
   const isDisabled = field.readOnly || disabled;
-  const inputClassName = `w-full border rounded-xl px-3 py-2 text-xs font-mono
+  const inputClassName = `w-full border rounded-lg px-3 h-9 text-xs
                    focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400
                    outline-none transition-all duration-200
                     ${isDisabled
@@ -392,8 +392,8 @@ function Field({ field, value, onChange, disabled = false }) {
           }`;
   return (
     <div className={field.span || ""}>
-      <label htmlFor={id} className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
-        <span className="text-sm">{field.icon}</span>
+      <label htmlFor={id} className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-600 mb-1">
+        <span className="text-xs">{field.icon}</span>
         {field.label}
       </label>
       {field.desc && <p className="text-[10px] text-gray-400 mb-1 leading-4">{field.desc}</p>}
@@ -401,7 +401,7 @@ function Field({ field, value, onChange, disabled = false }) {
         <textarea
           id={id}
           rows={field.rows || 3}
-          className={`${inputClassName} leading-5 resize-y`}
+          className={`${inputClassName} h-auto py-2 leading-5 resize-y`}
           value={value}
           onChange={(e) => { if (!isDisabled) onChange(field.key, e.target.value); }}
           placeholder={field.placeholder}
@@ -604,16 +604,32 @@ export default function SettingsPanel({ canEdit = true }) {
   return (
     <div className="flex flex-col" style={{ height: "calc(100vh - 7rem)" }}>
       {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto space-y-3 pb-4">
+      <div className="flex-1 overflow-y-auto space-y-2.5 pb-3">
         {!canEdit && (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
             Tài khoản này chỉ có quyền xem cấu hình. Các thao tác lưu, reset và sync đã bị khóa.
           </div>
         )}
 
+        <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 flex flex-wrap items-center gap-2 text-[11px]">
+          <span className={`px-2 py-0.5 rounded-full border ${hasChanges ? "border-amber-300 bg-amber-50 text-amber-700" : "border-emerald-300 bg-emerald-50 text-emerald-700"}`}>
+            {hasChanges ? "Chưa lưu thay đổi" : "Cấu hình đã đồng bộ"}
+          </span>
+          {lastSyncAt && (
+            <span className="text-gray-500">Sync gần nhất: {formatSyncTime(lastSyncAt)}</span>
+          )}
+          {!lastSyncAt && (
+            <span className="text-gray-500">Chưa có mốc sync.</span>
+          )}
+        </div>
+
         {/* ── Section 1: Manual ── */}
         <ConfigSection icon="📝" title="Thông tin nhập tay">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2 text-[11px] text-blue-700 leading-4">
+            <b>HB_ADMIN_TOKEN</b> là tên key ở Apps Script (<span className="font-medium">Project settings &gt; Script properties</span>). Ô
+            <b> GS WebApp Admin Token</b> cần dán <b>value</b> của key đó.
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
             {MANUAL_FIELDS.map(f => (
               <Field key={f.key} field={f} value={values[f.key] || ""} onChange={update} disabled={!canEdit} />
             ))}
@@ -628,10 +644,10 @@ export default function SettingsPanel({ canEdit = true }) {
             <div className="flex items-center gap-1.5">
               {autoBusy
                 ? <span className="flex items-center gap-1 text-[10px] text-indigo-500 font-medium"><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Đang nhận...</span>
-                : lastSyncAt ? <span className="text-[9px] text-gray-400">sync: {formatSyncTime(lastSyncAt).slice(0,10)}</span> : null
+                : lastSyncAt ? <span className="text-[9px] text-gray-500">{formatSyncTime(lastSyncAt).slice(0,16)}</span> : null
               }
               <button onClick={syncNow} disabled={!canEdit || !canSyncNow || syncBusy}
-                className="h-6 px-2 text-[10px] font-medium rounded-lg border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-40 transition">
+                className="h-6 px-2 text-[10px] font-medium rounded-md border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-40 transition">
                 {syncBusy ? "Syncing..." : "⚡ Sync"}
               </button>
             </div>
@@ -642,7 +658,7 @@ export default function SettingsPanel({ canEdit = true }) {
               {syncMsg || autoMsg}
             </div>
           )}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2">
             {AUTO_FIELDS.map(f => (
               <Field key={f.key} field={f} value={values[f.key] || ""} onChange={update} disabled={!canEdit} />
             ))}
@@ -652,25 +668,28 @@ export default function SettingsPanel({ canEdit = true }) {
 
       {/* ── Sticky action bar ── */}
       <div className="shrink-0 pt-2">
-        <div className="bg-white/90 backdrop-blur-md border border-gray-200 rounded-2xl px-3 py-2.5 flex items-center gap-2 shadow-sm">
+        <div className="bg-white/90 backdrop-blur-md border border-gray-200 rounded-xl px-3 py-2 flex flex-wrap items-center gap-2 shadow-sm">
+          <span className="text-[11px] text-gray-500 mr-auto">
+            {hasChanges ? "Có thay đổi chưa lưu" : "Không có thay đổi"}
+          </span>
+          <button onClick={save} disabled={!canEdit || !hasChanges}
+            className="h-8 px-3 border border-gray-200 rounded-lg text-xs font-medium text-gray-600
+                       hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200">
+            Lưu
+          </button>
           <button onClick={reload} disabled={!canEdit || !hasChanges}
-            className="flex-1 h-9 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl text-xs font-semibold
+            className="h-8 px-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg text-xs font-semibold
                        hover:from-indigo-700 hover:to-purple-700 disabled:opacity-40 disabled:cursor-not-allowed
                        shadow-sm transition-all duration-200">
-            💾 Lưu & Tải lại
-          </button>
-          <button onClick={save} disabled={!canEdit || !hasChanges}
-            className="flex-1 h-9 border border-gray-200 rounded-xl text-xs font-medium text-gray-600
-                       hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200">
-            Lưu (không tải lại)
+            Lưu & Tải lại
           </button>
           <button onClick={reset} disabled={!canEdit}
-            className="h-9 px-3 text-red-500 border border-red-100 rounded-xl text-xs font-medium
+            className="h-8 px-3 text-red-500 border border-red-100 rounded-lg text-xs font-medium
                        hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shrink-0">
-            🗑️
+            Reset
           </button>
           {saved && (
-            <span className="text-[10px] font-medium bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full shrink-0 animate-pulse">
+            <span className="text-[10px] font-medium bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full shrink-0">
               ✓ Đã lưu
             </span>
           )}
