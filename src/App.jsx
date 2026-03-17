@@ -296,6 +296,51 @@ function readSheetConfig() {
   };
 }
 
+const CONFIG_SIGNATURE_KEY = "hb_public_config_signature";
+const DATA_CACHE_KEYS = [
+  LS.PRODUCTS,
+  LS.CATEGORIES,
+  LS.MENU,
+  LS.PAGES,
+  LS.TAGS,
+  LS.SCHEMES,
+  LS.TYPES,
+  LS.LEVELS,
+  LS.SIZES,
+  LS.FB_URLS,
+  LS.ANNOUNCEMENTS,
+];
+
+function clearRuntimeDataCache() {
+  try {
+    DATA_CACHE_KEYS.forEach((key) => localStorage.removeItem(key));
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("cache:")) localStorage.removeItem(key);
+    }
+  } catch {}
+}
+
+function buildConfigSignature(sheet = {}, apiAllUrl = "", productTabs = "") {
+  return JSON.stringify({
+    id: String(sheet?.id || "").trim(),
+    apiAllUrl: String(apiAllUrl || "").trim(),
+    productTabs: String(productTabs || "").trim(),
+    gids: {
+      products: String(sheet?.gids?.products || "").trim(),
+      categories: String(sheet?.gids?.categories || "").trim(),
+      tags: String(sheet?.gids?.tags || "").trim(),
+      menu: String(sheet?.gids?.menu || "").trim(),
+      pages: String(sheet?.gids?.pages || "").trim(),
+      types: String(sheet?.gids?.types || "").trim(),
+      levels: String(sheet?.gids?.levels || "").trim(),
+      sizes: String(sheet?.gids?.sizes || "").trim(),
+      announcements: String(sheet?.gids?.announcements || "").trim(),
+      fb: String(sheet?.gids?.fb || "").trim(),
+    },
+  });
+}
+
 function isUsableRemoteUrl(v = "") {
   const s = String(v || "").trim();
   if (!/^https?:\/\//i.test(s)) return false;
@@ -393,6 +438,15 @@ export default function App() {
   const [tags, setTags] = useState(() => readLS(LS.TAGS, DATA.tags || []));
 
   const SHEET = useMemo(() => readSheetConfig(), [configTick]);
+  const configSignature = useMemo(
+    () =>
+      buildConfigSignature(
+        SHEET,
+        getConfig("api_all_url").trim(),
+        getConfig("product_tabs").trim()
+      ),
+    [SHEET, configTick]
+  );
 
   const [announcements, setAnnouncements] =
     useState(() => readLS(LS.ANNOUNCEMENTS, DATA.announcements || []));
@@ -422,6 +476,26 @@ export default function App() {
     queueLS(LS.FB_URLS, fbUrls);
     flushLS();
   }, [products, categories, menu, pages, tags, fbUrls]);
+  useEffect(() => {
+    try {
+      const prev = localStorage.getItem(CONFIG_SIGNATURE_KEY) || "";
+      if (prev === configSignature) return;
+      localStorage.setItem(CONFIG_SIGNATURE_KEY, configSignature);
+      if (!prev) return;
+    } catch {
+      return;
+    }
+
+    clearRuntimeDataCache();
+    setFbUrls([]);
+    setProducts([]);
+    setCategories([]);
+    setMenu([]);
+    setPages([]);
+    setTags([]);
+    setAnnouncements([]);
+    setDataLoading(true);
+  }, [configSignature]);
   useEffect(() => {
     setLimit(24);
     const t = setTimeout(() => setLimit(9999), 150);
