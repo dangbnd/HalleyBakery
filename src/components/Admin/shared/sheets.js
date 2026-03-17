@@ -14,6 +14,10 @@ function s(v) {
   return v == null ? "" : String(v).trim();
 }
 
+function uniq(list = []) {
+  return [...new Set(list.map((v) => s(v)).filter(Boolean))];
+}
+
 function pickArray(data = {}, keys = []) {
   for (const key of keys) {
     const v = data?.[key];
@@ -135,6 +139,126 @@ export const listSheet = (sheet) => call("list", { sheet });
 export const insertToSheet = (sheet, row) => call("insert", { sheet, row }, { requireAuth: true });
 export const updateToSheet = (sheet, row) => call("update", { sheet, row }, { requireAuth: true });
 export const deleteFromSheet = (sheet, id) => call("delete", { sheet, id }, { requireAuth: true });
+
+const SHEET_TITLE_CACHE = new Map();
+
+function decodeEscapedText(raw = "") {
+  return String(raw || "")
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\"/g, "\"")
+    .replace(/\\\\/g, "\\");
+}
+
+function parseTabsFromEditHtml(html = "") {
+  const out = [];
+  const seen = new Set();
+  const re = /\[(\d+),0,\\"(\d+)\\",\[\{\\"1\\":\[\[0,0,\\"([^\\"]+)\\"/g;
+  let m;
+  while ((m = re.exec(String(html || "")))) {
+    const gid = s(m[2]);
+    if (!gid || seen.has(gid)) continue;
+    seen.add(gid);
+    out.push({ gid, title: decodeEscapedText(m[3] || "") });
+  }
+  return out;
+}
+
+async function fetchSheetTitleMap(sheetId = "") {
+  const id = s(sheetId);
+  if (!id) return new Map();
+  if (!SHEET_TITLE_CACHE.has(id)) {
+    SHEET_TITLE_CACHE.set(
+      id,
+      fetch(`https://docs.google.com/spreadsheets/d/${id}/edit`)
+        .then((res) => (res.ok ? res.text() : ""))
+        .then((html) => {
+          const map = new Map();
+          parseTabsFromEditHtml(html).forEach((tab) => {
+            if (tab.gid && tab.title) map.set(tab.gid, tab.title);
+          });
+          return map;
+        })
+        .catch(() => new Map())
+    );
+  }
+  return SHEET_TITLE_CACHE.get(id);
+}
+
+export async function resolveSheetTitleByGid({ sheetId = "", gid = "" } = {}) {
+  const cleanGid = s(gid).replace(/[^\d]/g, "");
+  if (!sheetId || !cleanGid) return "";
+  const map = await fetchSheetTitleMap(sheetId);
+  return s(map.get(cleanGid));
+}
+
+function parseProductTabLabel(raw = "") {
+  const first = String(raw || "")
+    .replace(/\r\n?/g, "\n")
+    .split(/[;\n,]+/)
+    .map((x) => x.trim())
+    .filter(Boolean)[0] || "";
+
+  const m1 = first.match(/^(\d+)\s*:\s*(.+)$/);
+  if (m1) return s(m1[2]);
+
+  const m2 = first.match(/^(.+?)\s*:\s*(\d+)$/);
+  if (m2) return s(m2[1]);
+
+  return "";
+}
+
+function titleCaseWord(v = "") {
+  const word = s(v);
+  if (!word) return "";
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+export async function getConfiguredProductSheetNames() {
+  const sheetId = s(getConfig(KEYS.SHEET_ID, ""));
+  const gid = s(getConfig(KEYS.SHEET_GID_PRODUCTS, ""));
+  const fromGid = await resolveSheetTitleByGid({ sheetId, gid }).catch(() => "");
+  const fromTabs = parseProductTabLabel(getConfig(KEYS.PRODUCT_TABS, ""));
+  return uniq([fromGid, fromTabs, titleCaseWord(fromTabs), "Product", "Products"]);
+}
+
+export async function listConfiguredProductSheet() {
+  let last = null;
+  for (const name of await getConfiguredProductSheetNames()) {
+    try {
+      const data = await listSheet(name);
+      if (data?.ok) return data;
+      last = new Error(responseMessage(data) || `Khong doc duoc tab ${name}`);
+    } catch (e) {
+      last = e;
+    }
+  }
+  if (last) throw last;
+  throw new Error("Khong xac dinh duoc tab san pham de doc");
+}
+
+export async function updateConfiguredProductRow(row) {
+  let last = null;
+  for (const name of await getConfiguredProductSheetNames()) {
+    try {
+      return await updateToSheet(name, row);
+    } catch (e) {
+      last = e;
+    }
+  }
+  throw last || new Error("Khong xac dinh duoc tab san pham de cap nhat");
+}
+
+export async function deleteConfiguredProductRow(id) {
+  let last = null;
+  for (const name of await getConfiguredProductSheetNames()) {
+    try {
+      return await deleteFromSheet(name, id);
+    } catch (e) {
+      last = e;
+    }
+  }
+  throw last || new Error("Khong xac dinh duoc tab san pham de xoa");
+}
 
 function normalizeFolderRow(row = {}) {
   const id = s(row.id || row.folderId || row.driveId || row.fileId);

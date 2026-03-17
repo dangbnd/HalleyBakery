@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { LS, audit, parseBooleanLike, readLS, writeLS } from "../../../utils.js";
 import { getConfig } from "../../../utils/config.js";
-import { listSheet, updateToSheet } from "../shared/sheets.js";
+import { listConfiguredProductSheet, updateConfiguredProductRow } from "../shared/sheets.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
 
 /* ===== Helpers ===== */
@@ -202,7 +202,7 @@ export default function AITagsPanel({ canEdit = true }) {
         let t, alive = true;
         const loop = async () => {
             try {
-                const a = await listSheet("Products").catch(() => null);
+                const a = await listConfiguredProductSheet().catch(() => null);
                 if (a?.ok && a.version !== verP.current) {
                     verP.current = a.version;
                     const rows = safe(a.rows).map(normProduct).filter(p => !!s(p.name).trim());
@@ -308,7 +308,7 @@ export default function AITagsPanel({ canEdit = true }) {
         if (!canEdit) return;
         const clean = { ...product, tags };
         try {
-            await updateToSheet("Products", clean);
+            await updateConfiguredProductRow(clean);
             const next = products.map(p => p.id === product.id ? clean : p);
             setProducts(next);
             writeLS("products", next);
@@ -316,7 +316,7 @@ export default function AITagsPanel({ canEdit = true }) {
             audit("ai.tags.apply", { productId: product.id, name: product.name, tags, user: (readLS(LS.AUTH) || {}).username || "?" });
         } catch (e) {
             console.error("AI apply tags failed:", e);
-            setErrors(err => ({ ...err, [product.id]: "Không lưu được tag vào Sheet" }));
+            setErrors(err => ({ ...err, [product.id]: e?.message || "Không lưu được tag vào Sheet" }));
         }
     }, [canEdit, products]);
 

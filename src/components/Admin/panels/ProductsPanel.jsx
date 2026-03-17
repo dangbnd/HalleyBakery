@@ -1,7 +1,11 @@
 // src/components/Admin/panels/ProductsPanel.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { LS, audit, parseBooleanLike, readLS, writeLS } from "../../../utils.js";
-import { listSheet, updateToSheet, deleteFromSheet } from "../shared/sheets.js";
+import {
+  listConfiguredProductSheet,
+  updateConfiguredProductRow,
+  deleteConfiguredProductRow,
+} from "../shared/sheets.js";
 import { getConfig } from "../../../utils/config.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
 
@@ -65,7 +69,7 @@ export default function ProductsPanel({ canEdit = true, canDelete = true }) {
     let t, alive = true;
     const loop = async () => {
       try {
-        const a = await listSheet("Products").catch(() => null);
+        const a = await listConfiguredProductSheet().catch(() => null);
         if (a?.ok && a.version !== verP.current) {
           verP.current = a.version;
           const rows = safe(a.rows).map(normProduct).filter((p) => !!s(p.name).trim());
@@ -164,7 +168,7 @@ export default function ProductsPanel({ canEdit = true, canDelete = true }) {
     if (!canEdit) return;
     const clean = normProduct({ ...draft, images: normImages(draft.image || draft.images) });
     try {
-      await updateToSheet("Products", clean);
+      await updateConfiguredProductRow(clean);
       const next = products.map((p) => (p.id === editId ? clean : p));
       setProducts(next);
       writeLS("products", next);
@@ -178,7 +182,7 @@ export default function ProductsPanel({ canEdit = true, canDelete = true }) {
   async function removeRow(row) {
     if (!canDelete) return;
     try {
-      await deleteFromSheet("Products", row.id);
+      await deleteConfiguredProductRow(row.id);
       const next = products.filter((p) => p.id !== row.id);
       setProducts(next);
       writeLS("products", next);
