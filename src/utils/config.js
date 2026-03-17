@@ -9,6 +9,7 @@ const SHARED_COOKIE_MAX_AGE = 60 * 60 * 24 * 365 * 2;
 const KEYS = {
   SHEET_ID: "sheet_id",
   DRIVE_FOLDER_ID: "drive_folder_id",
+  SHEET_GID_CONFIG: "sheet_gid_config",
   PRODUCT_TABS: "product_tabs",
   SHEET_GID_FB: "sheet_gid_fb",
   SHEET_GID_PRODUCTS: "sheet_gid_products",
@@ -29,6 +30,7 @@ const KEYS = {
   SUPER_ADMIN_EMAIL: "super_admin_email",
   ADMIN_ALLOWED_EMAILS: "admin_allowed_emails",
   GEMINI_API_KEY: "gemini_api_key",
+  GEMINI_API_KEYS: "gemini_api_keys",
   ENABLE_VISITOR_TRACKING: "enable_visitor_tracking",
   LAST_SYNC_AT: "last_sync_at",
 };
@@ -36,6 +38,7 @@ const KEYS = {
 const SHARED_KEYS = new Set([
   KEYS.SHEET_ID,
   KEYS.DRIVE_FOLDER_ID,
+  KEYS.SHEET_GID_CONFIG,
   KEYS.PRODUCT_TABS,
   KEYS.SHEET_GID_FB,
   KEYS.SHEET_GID_PRODUCTS,
@@ -59,6 +62,7 @@ const SHARED_KEYS = new Set([
 const ENV_MAP = {
   [KEYS.SHEET_ID]: "VITE_SHEET_ID",
   [KEYS.DRIVE_FOLDER_ID]: "VITE_DRIVE_FOLDER_ID",
+  [KEYS.SHEET_GID_CONFIG]: "VITE_SHEET_GID_CONFIG",
   [KEYS.PRODUCT_TABS]: "VITE_PRODUCT_TABS",
   [KEYS.SHEET_GID_FB]: "VITE_SHEET_GID_FB",
   [KEYS.SHEET_GID_PRODUCTS]: "VITE_SHEET_GID_PRODUCTS",
@@ -74,11 +78,156 @@ const ENV_MAP = {
   [KEYS.ZALO_LINK]: "VITE_ZALO_LINK",
   [KEYS.API_ALL_URL]: "VITE_API_ALL_URL",
   [KEYS.GS_WEBAPP_URL]: "VITE_GS_WEBAPP_URL",
+  [KEYS.GS_WEBAPP_TOKEN]: "VITE_GS_WEBAPP_TOKEN",
   [KEYS.GOOGLE_OAUTH_CLIENT_ID]: "VITE_GOOGLE_OAUTH_CLIENT_ID",
   [KEYS.ADMIN_ALLOWED_EMAILS]: "VITE_ADMIN_ALLOWED_EMAILS",
   [KEYS.GEMINI_API_KEY]: "VITE_GEMINI_API_KEY",
+  [KEYS.GEMINI_API_KEYS]: "VITE_GEMINI_API_KEYS",
   [KEYS.ENABLE_VISITOR_TRACKING]: "VITE_ENABLE_VISITOR_TRACKING",
 };
+
+const REMOTE_SNAPSHOT_KEY = `${PREFIX}remote_snapshot_v1`;
+const REMOTE_SYNC_TTL_KEY = `${PREFIX}remote_sync_ts`;
+const REMOTE_CONFIG_TTL_MS = 60 * 1000;
+const REMOTE_FETCH_TIMEOUT_MS = 8000;
+
+const CONFIG_TAB_MATCHERS = [
+  /^url$/i,
+  /^config$/i,
+  /^settings?$/i,
+  /^cau\s*hinh$/i,
+  /^configuration$/i,
+];
+
+const REMOTE_ALIAS_MAP = {
+  [KEYS.SHEET_ID]: ["sheet_id", "sheetid", "google_sheet_id", "spreadsheet_id"],
+  [KEYS.DRIVE_FOLDER_ID]: ["drive_folder_id", "drivefolderid", "google_drive_folder_id", "folder_id"],
+  [KEYS.SHEET_GID_CONFIG]: ["sheet_gid_config", "gid_config", "config_gid", "url_gid"],
+  [KEYS.PRODUCT_TABS]: ["product_tabs", "producttabs", "tabs", "products_tabs"],
+  [KEYS.SHEET_GID_PRODUCTS]: ["sheet_gid_products", "gid_products", "products_gid"],
+  [KEYS.SHEET_GID_MENU]: ["sheet_gid_menu", "gid_menu", "menu_gid"],
+  [KEYS.SHEET_GID_PAGES]: ["sheet_gid_pages", "gid_pages", "pages_gid"],
+  [KEYS.SHEET_GID_ANNOUNCEMENTS]: ["sheet_gid_announcements", "gid_announcements", "announcements_gid", "thong_bao_gid"],
+  [KEYS.SHEET_GID_CATEGORIES]: ["sheet_gid_categories", "gid_categories", "categories_gid"],
+  [KEYS.SHEET_GID_TAGS]: ["sheet_gid_tags", "gid_tags", "tags_gid"],
+  [KEYS.SHEET_GID_TYPES]: ["sheet_gid_types", "gid_types", "types_gid"],
+  [KEYS.SHEET_GID_LEVELS]: ["sheet_gid_levels", "gid_levels", "levels_gid"],
+  [KEYS.SHEET_GID_SIZES]: ["sheet_gid_sizes", "gid_sizes", "sizes_gid"],
+  [KEYS.SHEET_GID_FB]: ["sheet_gid_fb", "gid_fb", "fb_gid", "facebook_gid", "sheet_gid_facebook"],
+  [KEYS.MESSENGER_LINK]: ["messenger_link", "messenger", "fb_messenger_link"],
+  [KEYS.ZALO_LINK]: ["zalo_link", "zalo", "zalo_url"],
+  [KEYS.API_ALL_URL]: ["api_all_url", "api_all", "api_url", "all_url", "apps_script_all_url"],
+  [KEYS.GS_WEBAPP_URL]: ["gs_webapp_url", "webapp_url", "admin_webapp_url"],
+  [KEYS.GS_WEBAPP_TOKEN]: ["gs_webapp_token", "hb_admin_token", "admin_token", "webapp_admin_token"],
+  [KEYS.GOOGLE_OAUTH_CLIENT_ID]: ["google_oauth_client_id", "oauth_client_id", "google_client_id"],
+  [KEYS.SUPER_ADMIN_EMAIL]: ["super_admin_email", "google_super_admin_email", "owner_google_email"],
+  [KEYS.ADMIN_ALLOWED_EMAILS]: ["admin_allowed_emails", "allowed_admin_emails", "oauth_allowlist"],
+  [KEYS.GEMINI_API_KEYS]: ["gemini_api_keys", "gemini_keys", "ai_gemini_keys", "ai_keys"],
+  [KEYS.GEMINI_API_KEY]: ["gemini_api_key", "gemini_key", "google_gemini_api_key"],
+  [KEYS.ENABLE_VISITOR_TRACKING]: ["enable_visitor_tracking", "visitor_tracking", "track_visitors"],
+};
+
+let remoteSyncPromise = null;
+const REMOTE_SYNC_KEYS = Object.keys(REMOTE_ALIAS_MAP);
+
+function normalizeGeminiKeyList(list = []) {
+  const out = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    const value =
+      typeof item === "object"
+        ? String(item?.key || item?.value || "").trim()
+        : String(item ?? "").trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+function parseGeminiKeysRaw(raw = "") {
+  const text = String(raw || "").trim();
+  if (!text) return [];
+  if ((text.startsWith("[") && text.endsWith("]")) || (text.startsWith("{") && text.endsWith("}"))) {
+    try {
+      const parsed = JSON.parse(text);
+      return normalizeGeminiKeyList(parsed);
+    } catch {}
+  }
+  return normalizeGeminiKeyList(
+    text
+      .split(/[\r\n,;|]+/)
+      .map((x) => String(x || "").trim())
+      .filter(Boolean)
+  );
+}
+
+function readGeminiKeysLocalCache() {
+  try {
+    const raw = localStorage.getItem("ai_gemini_keys");
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return normalizeGeminiKeyList(parsed);
+  } catch {
+    return [];
+  }
+}
+
+function getConfigValueWithoutGeminiOverride(key, fallback = "") {
+  const fromRemote = remoteSnapshotValueFor(key);
+  if (fromRemote !== null) return fromRemote;
+
+  const fromShared = sharedValueFor(key);
+  if (fromShared !== "") return fromShared;
+
+  try {
+    const ls = localStorage.getItem(PREFIX + key);
+    if (ls !== null && ls !== "") return normalizeValue(key, ls);
+  } catch {}
+
+  const fromEnv = envValueFor(key);
+  if (fromEnv !== "") return fromEnv;
+  return fallback;
+}
+
+export function getGeminiKeys() {
+  const remoteListRaw = remoteSnapshotValueFor(KEYS.GEMINI_API_KEYS);
+  if (remoteListRaw !== null) {
+    const remoteList = parseGeminiKeysRaw(remoteListRaw);
+    if (remoteList.length) return remoteList;
+    const remoteSingleRaw = remoteSnapshotValueFor(KEYS.GEMINI_API_KEY);
+    const remoteSingle = String(remoteSingleRaw == null ? "" : remoteSingleRaw).trim();
+    return remoteSingle ? [remoteSingle] : [];
+  }
+
+  const fromConfigList = parseGeminiKeysRaw(getConfigValueWithoutGeminiOverride(KEYS.GEMINI_API_KEYS, ""));
+  if (fromConfigList.length) return fromConfigList;
+
+  const fromLocal = readGeminiKeysLocalCache();
+  if (fromLocal.length) return fromLocal;
+
+  const single = String(getConfigValueWithoutGeminiOverride(KEYS.GEMINI_API_KEY, "") || "").trim();
+  if (!single) return [];
+  return [single];
+}
+
+export function setGeminiKeys(nextKeys = []) {
+  const keys = normalizeGeminiKeyList(nextKeys);
+  const joined = keys.join("\n");
+
+  try {
+    localStorage.setItem("ai_gemini_keys", JSON.stringify(keys));
+  } catch {}
+
+  setConfig(KEYS.GEMINI_API_KEYS, joined);
+  setConfig(KEYS.GEMINI_API_KEY, keys[0] || "");
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("hb:config-changed"));
+  }
+
+  return keys;
+}
 
 function extractSheetId(input = "") {
   const s = String(input || "").trim();
@@ -205,6 +354,279 @@ function updateSharedConfigKey(key, value) {
   writeSharedConfig(shared);
 }
 
+function readRemoteSnapshot() {
+  try {
+    const raw = localStorage.getItem(REMOTE_SNAPSHOT_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+function writeRemoteSnapshot(snapshot = {}) {
+  try {
+    localStorage.setItem(REMOTE_SNAPSHOT_KEY, JSON.stringify(snapshot || {}));
+  } catch {}
+}
+
+function remoteSnapshotValueFor(key) {
+  try {
+    const snapshot = readRemoteSnapshot();
+    if (!Object.prototype.hasOwnProperty.call(snapshot, key)) return null;
+    return normalizeValue(key, snapshot[key] ?? "");
+  } catch {
+    return null;
+  }
+}
+
+function updateRemoteSnapshotKey(key, value) {
+  if (!REMOTE_SYNC_KEYS.includes(key)) return;
+  const snapshot = readRemoteSnapshot();
+  const normalized = normalizeValue(key, value);
+  snapshot[key] = normalized;
+  writeRemoteSnapshot(snapshot);
+}
+
+function bootstrapValueFor(key) {
+  const shared = sharedValueFor(key);
+  if (shared !== "") return shared;
+  try {
+    const ls = localStorage.getItem(PREFIX + key);
+    if (ls !== null) return normalizeValue(key, ls);
+  } catch {}
+  return envValueFor(key);
+}
+
+function normalizeCfgKey(k = "") {
+  return String(k || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function parseCSV(text = "") {
+  const out = [];
+  let row = [];
+  let cur = "";
+  let inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const nx = text[i + 1];
+    if (inQ) {
+      if (ch === '"' && nx === '"') {
+        cur += '"';
+        i++;
+      } else if (ch === '"') {
+        inQ = false;
+      } else {
+        cur += ch;
+      }
+      continue;
+    }
+    if (ch === '"') inQ = true;
+    else if (ch === ",") {
+      row.push(cur);
+      cur = "";
+    } else if (ch === "\n") {
+      row.push(cur);
+      out.push(row);
+      row = [];
+      cur = "";
+    } else if (ch !== "\r") {
+      cur += ch;
+    }
+  }
+  row.push(cur);
+  out.push(row);
+  return out;
+}
+
+function parseKeyValueTable(text = "") {
+  const rows = parseCSV(String(text || "").replace(/^\uFEFF/, ""));
+  if (!rows.length) return {};
+
+  const first = rows[0] || [];
+  const f0 = normalizeCfgKey(first[0] || "");
+  const f1 = normalizeCfgKey(first[1] || "");
+  const hasHeader =
+    (f0 === "key" || f0 === "name" || f0 === "config_key") &&
+    (f1 === "value" || f1 === "url" || f1 === "link" || f1 === "config_value");
+
+  const dataRows = hasHeader ? rows.slice(1) : rows;
+  const out = {};
+  for (const row of dataRows) {
+    const key = normalizeCfgKey(row[0] || "");
+    if (!key) continue;
+    out[key] = String(row[1] || "").trim();
+  }
+  return out;
+}
+
+function decodeEscapedText(raw = "") {
+  return String(raw || "")
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, "\\");
+}
+
+function parseTabsFromEditHtml(html = "") {
+  const out = [];
+  const seen = new Set();
+  const re = /\[(\d+),0,\\"(\d+)\\",\[\{\\"1\\":\[\[0,0,\\"([^\\"]+)\\"/g;
+  let m;
+  while ((m = re.exec(String(html || "")))) {
+    const gid = String(m[2] || "").trim();
+    if (!gid || seen.has(gid)) continue;
+    seen.add(gid);
+    out.push({ gid, title: decodeEscapedText(m[3] || "") });
+  }
+  return out;
+}
+
+function pickConfigGid(tabs = []) {
+  for (const tab of tabs) {
+    const title = String(tab?.title || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim();
+    if (CONFIG_TAB_MATCHERS.some((rx) => rx.test(title))) return String(tab.gid || "").trim();
+  }
+  return "";
+}
+
+async function fetchWithTimeout(url, timeoutMs = REMOTE_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal, cache: "no-store" });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function pickAliasEntry(map = {}, aliases = []) {
+  for (const alias of aliases) {
+    const key = normalizeCfgKey(alias);
+    if (Object.prototype.hasOwnProperty.call(map, key)) {
+      return { found: true, value: String(map[key] || "").trim() };
+    }
+  }
+  return { found: false, value: "" };
+}
+
+function mapRemoteConfig(map = {}) {
+  const out = {};
+  for (const key of REMOTE_SYNC_KEYS) {
+    const hit = pickAliasEntry(map, REMOTE_ALIAS_MAP[key] || []);
+    if (!hit.found) continue;
+    out[key] = hit.value;
+  }
+  return out;
+}
+
+async function fetchRemoteConfigViaApi({ sheetId = "", gidConfig = "" } = {}) {
+  const q = new URLSearchParams();
+  if (sheetId) q.set("sheetId", sheetId);
+  if (gidConfig) q.set("gidConfig", gidConfig);
+  const url = `/api/runtime-config${q.toString() ? `?${q}` : ""}`;
+  const res = await fetchWithTimeout(url);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.ok === false) {
+    throw new Error(data?.error || `Runtime config HTTP ${res.status}`);
+  }
+  return data;
+}
+
+async function fetchRemoteConfigDirectSheet({ sheetId = "", gidConfig = "" } = {}) {
+  const id = extractSheetId(sheetId);
+  if (!id) return { config: {}, gidConfig: "" };
+
+  let gid = String(gidConfig || "").trim().replace(/[^\d]/g, "");
+  if (!gid) {
+    const editRes = await fetchWithTimeout(`https://docs.google.com/spreadsheets/d/${id}/edit`);
+    if (editRes.ok) {
+      const html = await editRes.text();
+      gid = pickConfigGid(parseTabsFromEditHtml(html));
+    }
+  }
+  if (!gid) return { config: {}, gidConfig: "" };
+
+  const csvRes = await fetchWithTimeout(`https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid}`);
+  if (!csvRes.ok) throw new Error(`Khong doc duoc config tab (HTTP ${csvRes.status})`);
+  const csvText = await csvRes.text();
+  return { config: parseKeyValueTable(csvText), gidConfig: gid };
+}
+
+export async function syncConfigFromRemote({ force = false } = {}) {
+  if (typeof window === "undefined") return { ok: false, changed: false, reason: "ssr" };
+
+  if (!force) {
+    try {
+      const last = Number(localStorage.getItem(REMOTE_SYNC_TTL_KEY) || 0);
+      if (last && Date.now() - last < REMOTE_CONFIG_TTL_MS) {
+        return { ok: true, changed: false, cached: true };
+      }
+    } catch {}
+  }
+
+  if (remoteSyncPromise) return remoteSyncPromise;
+
+  remoteSyncPromise = (async () => {
+    const sheetId = bootstrapValueFor(KEYS.SHEET_ID);
+    const gidConfig = bootstrapValueFor(KEYS.SHEET_GID_CONFIG);
+    if (!sheetId) return { ok: false, changed: false, reason: "missing_sheet_id" };
+
+    let payload = {};
+    try {
+      payload = await fetchRemoteConfigViaApi({ sheetId, gidConfig });
+    } catch {
+      payload = await fetchRemoteConfigDirectSheet({ sheetId, gidConfig });
+    }
+
+    const rawMap = payload?.config && typeof payload.config === "object" ? payload.config : {};
+    const mapped = mapRemoteConfig(rawMap);
+    const effectiveGid = String(payload?.gidConfig || mapped[KEYS.SHEET_GID_CONFIG] || gidConfig || "").trim();
+    if (effectiveGid) mapped[KEYS.SHEET_GID_CONFIG] = effectiveGid;
+    if (!mapped[KEYS.SHEET_ID]) mapped[KEYS.SHEET_ID] = extractSheetId(sheetId);
+
+    const prevSnapshot = readRemoteSnapshot();
+    let changed = false;
+    const nextSnapshot = { ...prevSnapshot };
+    for (const key of Object.keys(mapped)) {
+      if (!REMOTE_SYNC_KEYS.includes(key)) continue;
+      const nextVal = normalizeValue(key, mapped[key] ?? "");
+      const prevVal = normalizeValue(key, prevSnapshot[key] ?? "");
+      if (!Object.prototype.hasOwnProperty.call(prevSnapshot, key) || nextVal !== prevVal) {
+        changed = true;
+      }
+      nextSnapshot[key] = nextVal;
+      if (SHARED_KEYS.has(key)) updateSharedConfigKey(key, nextVal);
+      try {
+        if (nextVal === "") localStorage.removeItem(PREFIX + key);
+        else localStorage.setItem(PREFIX + key, nextVal);
+      } catch {}
+    }
+    writeRemoteSnapshot(nextSnapshot);
+    try {
+      localStorage.setItem(REMOTE_SYNC_TTL_KEY, String(Date.now()));
+    } catch {}
+    if (changed) window.dispatchEvent(new Event("hb:config-changed"));
+    return { ok: true, changed, source: payload?.source || "remote" };
+  })()
+    .catch((error) => ({ ok: false, changed: false, error: String(error?.message || error || "sync_failed") }))
+    .finally(() => {
+      remoteSyncPromise = null;
+    });
+
+  return remoteSyncPromise;
+}
+
 function envValueFor(key) {
   const envKey = ENV_MAP[key];
   if (!envKey) return "";
@@ -217,25 +639,12 @@ function envValueFor(key) {
 
 export function getConfig(key, fallback = "") {
   if (key === KEYS.GEMINI_API_KEY) {
-    try {
-      const aiKeys = JSON.parse(localStorage.getItem("ai_gemini_keys"));
-      if (Array.isArray(aiKeys) && aiKeys.length > 0 && aiKeys[0]) {
-        return aiKeys[0];
-      }
-    } catch {}
+    const keys = getGeminiKeys();
+    return keys[0] || fallback;
   }
+  if (key === KEYS.GEMINI_API_KEYS) return getGeminiKeys().join("\n");
 
-  const fromShared = sharedValueFor(key);
-  if (fromShared !== "") return fromShared;
-
-  try {
-    const ls = localStorage.getItem(PREFIX + key);
-    if (ls !== null && ls !== "") return normalizeValue(key, ls);
-  } catch {}
-
-  const fromEnv = envValueFor(key);
-  if (fromEnv !== "") return fromEnv;
-  return fallback;
+  return getConfigValueWithoutGeminiOverride(key, fallback);
 }
 
 export function setConfig(key, value) {
@@ -244,6 +653,7 @@ export function setConfig(key, value) {
     if (normalized === "") localStorage.removeItem(PREFIX + key);
     else localStorage.setItem(PREFIX + key, normalized);
   } catch {}
+  updateRemoteSnapshotKey(key, normalized);
   updateSharedConfigKey(key, normalized);
 }
 
@@ -257,8 +667,9 @@ export function getAllConfig() {
 
 export function setAllConfig(configObj) {
   const shared = readSharedConfig();
+  const snapshot = readRemoteSnapshot();
   for (const [key, value] of Object.entries(configObj)) {
-    if (key === KEYS.GEMINI_API_KEY) continue;
+    if (key === KEYS.GEMINI_API_KEY || key === KEYS.GEMINI_API_KEYS) continue;
     const normalized = normalizeValue(key, value);
     try {
       if (normalized === "") localStorage.removeItem(PREFIX + key);
@@ -268,8 +679,10 @@ export function setAllConfig(configObj) {
       if (normalized === "") delete shared[key];
       else shared[key] = normalized;
     }
+    if (REMOTE_SYNC_KEYS.includes(key)) snapshot[key] = normalized;
   }
   writeSharedConfig(shared);
+  writeRemoteSnapshot(snapshot);
 }
 
 export function resetAllConfig() {
@@ -278,6 +691,10 @@ export function resetAllConfig() {
       localStorage.removeItem(PREFIX + key);
     } catch {}
   }
+  try {
+    localStorage.removeItem(REMOTE_SNAPSHOT_KEY);
+    localStorage.removeItem(REMOTE_SYNC_TTL_KEY);
+  } catch {}
   writeSharedConfig({});
 }
 

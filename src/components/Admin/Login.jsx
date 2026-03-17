@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
-import { LS, authApi, writeLS, audit, isAllowedEmail } from "../../utils.js";
+import { LS, authApi, writeLS, audit } from "../../utils.js";
 import { getConfig, KEYS } from "../../utils/config.js";
+import { listAdminUsersFromSheet } from "./shared/sheets.js";
 import {
   DEFAULT_SUPER_ADMIN_EMAIL,
   SUPER_ADMIN_NAME,
@@ -137,6 +138,16 @@ function findUserByEmail(users = [], email = "") {
   }) || null;
 }
 
+async function loadUsersForAuth() {
+  try {
+    const users = await listAdminUsersFromSheet();
+    return Array.isArray(users) ? users : [];
+  } catch {
+    if (import.meta.env.DEV) return authApi.allUsers();
+    return [];
+  }
+}
+
 export default function Login() {
   const [u, setU] = useState("");
   const [p, setP] = useState("");
@@ -146,16 +157,10 @@ export default function Login() {
   const superAdminEmail = normalizeEmail(getConfig(KEYS.SUPER_ADMIN_EMAIL, DEFAULT_SUPER_ADMIN_EMAIL));
 
   const allowlistHint = useMemo(() => {
-    const raw = s(getConfig(KEYS.ADMIN_ALLOWED_EMAILS, ""));
-    if (!raw) return `Allowlist trống. Super admin Google: ${superAdminEmail || DEFAULT_SUPER_ADMIN_EMAIL}.`;
-    const count = raw
-      .split(/[\n,;]+/)
-      .map((x) => x.trim())
-      .filter(Boolean).length;
-    return `Allowlist đang bật (${count} mục). Super admin Google: ${superAdminEmail || DEFAULT_SUPER_ADMIN_EMAIL}.`;
+    return `Google OAuth dạng Testing: chỉ email nằm trong Test Users của Google mới đăng nhập được.`;
   }, [superAdminEmail]);
 
-  function submit(e) {
+  async function submit(e) {
     e.preventDefault();
     setErr("");
 
@@ -167,7 +172,7 @@ export default function Login() {
       return;
     }
 
-    const users = authApi.allUsers();
+    const users = await loadUsersForAuth();
     const found = users.find((x) => x.username === u && x.password === p && x.active !== false);
     if (found) {
       const role = found.role || inferRoleFromPermissions(found.permissions || []);
@@ -204,18 +209,15 @@ export default function Login() {
       if (profile?.email_verified === false) throw new Error("Email Google chưa xác minh.");
       const isGoogleSuperAdmin = isSuperAdminEmail(email, superAdminEmail);
 
-      const allowlistRaw = s(getConfig(KEYS.ADMIN_ALLOWED_EMAILS, ""));
-      if (!isGoogleSuperAdmin && allowlistRaw && !isAllowedEmail(email, allowlistRaw)) {
-        throw new Error("Email này chưa được cấp quyền vào admin.");
-      }
-
-      const users = authApi.allUsers();
+      const users = await loadUsersForAuth();
       const found = findUserByEmail(users, email);
       if (!isGoogleSuperAdmin && found?.active === false) {
         throw new Error("Tài khoản này đã bị khóa.");
       }
 
-      const role = isGoogleSuperAdmin ? "owner" : (found?.role || inferRoleFromPermissions(found?.permissions || []));
+      const role = isGoogleSuperAdmin
+        ? "owner"
+        : (found?.role || (found ? inferRoleFromPermissions(found?.permissions || []) : "viewer"));
       const session = {
         username: isGoogleSuperAdmin ? SUPER_ADMIN_USERNAME : (found?.username || email),
         email,

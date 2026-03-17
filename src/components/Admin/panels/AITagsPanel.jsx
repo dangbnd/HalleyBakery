@@ -1,8 +1,8 @@
 // src/components/Admin/panels/AITagsPanel.jsx
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { LS, audit, parseBooleanLike, readLS, writeLS } from "../../../utils.js";
-import { getConfig } from "../../../utils/config.js";
-import { listConfiguredProductSheet, updateConfiguredProductRow } from "../shared/sheets.js";
+import { getConfig, getGeminiKeys, setGeminiKeys } from "../../../utils/config.js";
+import { listConfiguredProductSheet, updateConfiguredProductRow, saveGeminiKeysToSheet } from "../shared/sheets.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
 
 /* ===== Helpers ===== */
@@ -44,6 +44,11 @@ const fixThumbUrl = (url, size = 200) => {
     return u.replace(/sz=w\d+/, `sz=w${size}`);
 };
 const firstImg = (p) => Array.isArray(p?.images) && p.images.length ? p.images[0] : s(p?.image) || "";
+const sameStringList = (a = [], b = []) =>
+    Array.isArray(a) &&
+    Array.isArray(b) &&
+    a.length === b.length &&
+    a.every((v, idx) => String(v || "") === String(b[idx] || ""));
 
 /* ===== MODELS AVAILABLE (free tier) ===== */
 const ALL_MODELS = [
@@ -182,14 +187,10 @@ export default function AITagsPanel({ canEdit = true }) {
     const [showConfig, setShowConfig] = useState(false);
 
     // Multi-key management
-    const [keys, setKeys] = useState(() => {
-        const saved = readLS("ai_gemini_keys", null);
-        if (saved && Array.isArray(saved) && saved.length) return saved;
-        // Migrate from single key
-        const single = getConfig("gemini_api_key");
-        return single ? [single] : [];
-    });
+    const [keys, setKeys] = useState(() => getGeminiKeys());
     const [newKey, setNewKey] = useState("");
+    const [keySyncBusy, setKeySyncBusy] = useState(false);
+    const [keySyncMsg, setKeySyncMsg] = useState("");
 
     // Multi-model management (ordered)
     const [enabledModels, setEnabledModels] = useState(() =>
@@ -250,6 +251,15 @@ export default function AITagsPanel({ canEdit = true }) {
     useEffect(() => { writeLS("ai_gemini_keys", keys); }, [keys]);
     useEffect(() => { writeLS("ai_models_order", enabledModels); }, [enabledModels]);
     useEffect(() => { writeLS("ai_prompt_template", prompt); }, [prompt]);
+
+    useEffect(() => {
+        const onConfigChanged = () => {
+            const latest = getGeminiKeys();
+            setKeys((prev) => (sameStringList(prev, latest) ? prev : latest));
+        };
+        window.addEventListener("hb:config-changed", onConfigChanged);
+        return () => window.removeEventListener("hb:config-changed", onConfigChanged);
+    }, []);
 
     // AI state
     const [suggestions, setSuggestions] = useState({});
@@ -338,12 +348,38 @@ export default function AITagsPanel({ canEdit = true }) {
 
     const stopBatch = () => { batchAbort.current = true; };
 
+    const syncKeysToSheet = useCallback(async (nextKeys) => {
+        if (!canEdit) return;
+        setKeySyncBusy(true);
+        try {
+            await saveGeminiKeysToSheet(nextKeys);
+            setKeySyncMsg(`✅ Đã lưu ${nextKeys.length} Gemini keys lên Sheet`);
+        } catch (e) {
+            setKeySyncMsg(`⚠ Chưa lưu key lên Sheet: ${e?.message || "lỗi không xác định"}`);
+        } finally {
+            setKeySyncBusy(false);
+        }
+    }, [canEdit]);
+
     // Key management functions
     const addKey = () => {
-        const k = newKey.trim();
-        if (k && !keys.includes(k)) { setKeys([...keys, k]); setNewKey(""); }
+        if (!canEdit) return;
+        const incoming = String(newKey || "")
+            .split(/[\r\n,;|]+/)
+            .map((x) => x.trim())
+            .filter(Boolean);
+        if (!incoming.length) return;
+        const normalized = setGeminiKeys([...keys, ...incoming]);
+        setKeys(normalized);
+        setNewKey("");
+        void syncKeysToSheet(normalized);
     };
-    const removeKey = (i) => setKeys(keys.filter((_, idx) => idx !== i));
+    const removeKey = (i) => {
+        if (!canEdit) return;
+        const normalized = setGeminiKeys(keys.filter((_, idx) => idx !== i));
+        setKeys(normalized);
+        void syncKeysToSheet(normalized);
+    };
 
     // Model order management — drag & drop
     const [dragId, setDragId] = useState(null);
@@ -382,8 +418,9 @@ export default function AITagsPanel({ canEdit = true }) {
                 <div className="flex gap-2 mt-4">
                     <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full max-w-xs sm:w-80 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                         value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="AIzaSy..." onKeyDown={e => e.key === "Enter" && addKey()} />
-                    <button onClick={addKey} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition">Thêm</button>
+                    <button disabled={!canEdit || keySyncBusy} onClick={addKey} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition disabled:opacity-50">Thêm</button>
                 </div>
+                {keySyncMsg && <p className={`mt-2 text-xs ${keySyncMsg.startsWith("⚠") ? "text-amber-600" : "text-emerald-600"}`}>{keySyncMsg}</p>}
             </div>
         );
     }
@@ -426,8 +463,9 @@ export default function AITagsPanel({ canEdit = true }) {
                             <div className="flex gap-1 items-center">
                                 <input className="flex-1 border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
                                     value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="Dán API key mới..." onKeyDown={e => e.key === "Enter" && addKey()} />
-                                <button onClick={addKey} className="px-2.5 py-1 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition shrink-0">+ Thêm</button>
+                                <button disabled={!canEdit || keySyncBusy} onClick={addKey} className="px-2.5 py-1 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition shrink-0 disabled:opacity-50">+ Thêm</button>
                             </div>
+                            {keySyncMsg && <p className={`mt-1 text-[10px] ${keySyncMsg.startsWith("⚠") ? "text-amber-600" : "text-emerald-600"}`}>{keySyncMsg}</p>}
                         </div>
                         {/* Models */}
                         <div>

@@ -1,7 +1,8 @@
 // src/components/Admin/panels/UsersPanel.jsx
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { LS, readLS, writeLS, audit } from "../../../utils.js";
 import { SUPER_ADMIN_NAME, SUPER_ADMIN_USERNAME } from "../shared/superAdmin.js";
+import { deleteAdminUserFromSheet, listUsersFromSheet, upsertAdminUserToSheet } from "../shared/sheets.js";
 
 /* ===== DANH SÁCH QUYỀN ===== */
 const PERMISSIONS = [
@@ -56,13 +57,33 @@ export default function UsersPanel() {
     const canManageUsers = currentUser.isSuper === true || currentUser.role === "owner" || permsSet.has("users.manage");
 
     const [users, setUsers] = useState(() => readLS(LS.USERS, []));
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
     const [showForm, setShowForm] = useState(false);
     const [editId, setEditId] = useState(null);
     const [form, setForm] = useState({ username: "", password: "", name: "", role: "staff", permissions: [] });
     const [msg, setMsg] = useState("");
     const currentUsername = String(currentUser.username || "").trim().toLowerCase();
 
-    const save = (list) => { setUsers(list); writeLS(LS.USERS, list); };
+    const applyLocal = (list) => { setUsers(list); writeLS(LS.USERS, list); };
+    const loadUsers = async () => {
+        setLoading(true);
+        try {
+            const rows = await listUsersFromSheet({ includeInactive: true });
+            applyLocal(rows);
+            setMsg("");
+        } catch (e) {
+            setMsg(e?.message || "Khong tai duoc danh sach user tu Sheet");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadUsers();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const countActiveManagers = (list) => list.filter(u => u.active !== false && hasManageUsersPermission(u)).length;
 
     const openAdd = () => {
@@ -109,8 +130,9 @@ export default function UsersPanel() {
         }));
     };
 
-    const submitForm = (e) => {
+    const submitForm = async (e) => {
         e.preventDefault();
+        if (saving) return;
         setMsg("");
         const username = form.username.trim();
         const usernameLower = username.toLowerCase();
@@ -118,53 +140,66 @@ export default function UsersPanel() {
         if (!username) { setMsg("Ten dang nhap khong duoc trong"); return; }
         if (HAS_SUPER_ADMIN && usernameLower === SUPER_ADMIN_USERNAME.toLowerCase()) { setMsg("Khong the dung ten nay"); return; }
 
-        if (editId) {
-            const next = users.map(u => {
-                if (u.id !== editId) return u;
-                const updated = {
-                    ...u,
+        try {
+            setSaving(true);
+            if (editId) {
+                const next = users.map(u => {
+                    if (u.id !== editId) return u;
+                    const updated = {
+                        ...u,
+                        username,
+                        email: username,
+                        name: form.name.trim(),
+                        role: form.role || "staff",
+                        permissions: form.permissions,
+                    };
+                    if (form.password) updated.password = form.password;
+                    return updated;
+                });
+                if (next.filter(u => String(u.username || "").trim().toLowerCase() === usernameLower).length > 1) {
+                    setMsg("Ten dang nhap da ton tai");
+                    return;
+                }
+                if (!HAS_SUPER_ADMIN && countActiveManagers(next) === 0) {
+                    setMsg("Phai con it nhat 1 tai khoan owner/users.manage dang hoat dong");
+                    return;
+                }
+                const updatedUser = next.find((u) => u.id === editId);
+                await upsertAdminUserToSheet({ ...updatedUser, updatedBy: currentUser.username });
+                audit("user.update", { targetUser: username, user: currentUser.username });
+            } else {
+                if (!form.password) { setMsg("Mat khau khong duoc trong"); return; }
+                if (users.some(u => String(u.username || "").trim().toLowerCase() === usernameLower)) {
+                    setMsg("Ten dang nhap da ton tai");
+                    return;
+                }
+                const newUser = {
+                    id: genId(),
                     username,
-                    name: form.name.trim(),
+                    email: username,
+                    password: form.password,
+                    name: form.name.trim() || username,
                     role: form.role || "staff",
                     permissions: form.permissions,
+                    active: true,
+                    isSuper: false,
+                    createdAt: Date.now(),
+                    createdBy: currentUser.username,
                 };
-                if (form.password) updated.password = form.password;
-                return updated;
-            });
-            if (next.filter(u => String(u.username || "").trim().toLowerCase() === usernameLower).length > 1) {
-                setMsg("Ten dang nhap da ton tai");
-                return;
+                await upsertAdminUserToSheet(newUser);
+                audit("user.create", { targetUser: newUser.username, user: currentUser.username });
             }
-            if (!HAS_SUPER_ADMIN && countActiveManagers(next) === 0) {
-                setMsg("Phai con it nhat 1 tai khoan owner/users.manage dang hoat dong");
-                return;
-            }
-            save(next);
-            audit("user.update", { targetUser: username, user: currentUser.username });
-        } else {
-            if (!form.password) { setMsg("Mat khau khong duoc trong"); return; }
-            if (users.some(u => String(u.username || "").trim().toLowerCase() === usernameLower)) {
-                setMsg("Ten dang nhap da ton tai");
-                return;
-            }
-            const newUser = {
-                id: genId(),
-                username,
-                password: form.password,
-                name: form.name.trim() || username,
-                role: form.role || "staff",
-                permissions: form.permissions,
-                active: true,
-                createdAt: Date.now(),
-                createdBy: currentUser.username,
-            };
-            save([...users, newUser]);
-            audit("user.create", { targetUser: newUser.username, user: currentUser.username });
+            await loadUsers();
+            setShowForm(false);
+            setEditId(null);
+        } catch (e2) {
+            setMsg(e2?.message || "Khong dong bo duoc user len Sheet");
+        } finally {
+            setSaving(false);
         }
-        setShowForm(false);
-        setEditId(null);
     };
-    const toggleActive = (u) => {
+    const toggleActive = async (u) => {
+        if (saving) return;
         const isSelf = String(u.username || "").trim().toLowerCase() === currentUsername;
         const deactivating = u.active !== false;
         if (isSelf && deactivating) {
@@ -175,10 +210,23 @@ export default function UsersPanel() {
             setMsg("Phai con it nhat 1 tai khoan owner/users.manage dang hoat dong");
             return;
         }
-        save(users.map(x => x.id === u.id ? { ...x, active: x.active === false ? true : false } : x));
-        audit(deactivating ? "user.deactivate" : "user.activate", { targetUser: u.username, user: currentUser.username });
+        try {
+            setSaving(true);
+            await upsertAdminUserToSheet({
+                ...u,
+                active: u.active === false ? true : false,
+                updatedBy: currentUser.username,
+            });
+            await loadUsers();
+            audit(deactivating ? "user.deactivate" : "user.activate", { targetUser: u.username, user: currentUser.username });
+        } catch (e2) {
+            setMsg(e2?.message || "Khong cap nhat duoc trang thai user");
+        } finally {
+            setSaving(false);
+        }
     };
-    const deleteUser = (u) => {
+    const deleteUser = async (u) => {
+        if (saving) return;
         const isSelf = String(u.username || "").trim().toLowerCase() === currentUsername;
         if (isSelf) {
             setMsg("Khong the xoa tai khoan dang dang nhap");
@@ -192,8 +240,16 @@ export default function UsersPanel() {
             }
         }
         if (!confirm(`Xoa tai khoan "${u.username}"?`)) return;
-        save(users.filter(x => x.id !== u.id));
-        audit("user.delete", { targetUser: u.username, user: currentUser.username });
+        try {
+            setSaving(true);
+            await deleteAdminUserFromSheet(u);
+            await loadUsers();
+            audit("user.delete", { targetUser: u.username, user: currentUser.username });
+        } catch (e2) {
+            setMsg(e2?.message || "Khong xoa duoc user tren Sheet");
+        } finally {
+            setSaving(false);
+        }
     };
     if (!canManageUsers) {
         return (
@@ -213,12 +269,17 @@ export default function UsersPanel() {
                         <h2 className="text-lg font-semibold text-gray-800">Quản lý người dùng</h2>
                         <p className="text-xs text-gray-400 mt-0.5">Tạo tài khoản và cấp quyền tuỳ chỉnh</p>
                     </div>
-                    <button onClick={openAdd}
-                        className="h-9 px-4 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-all shadow-sm hover:shadow active:scale-[0.98] flex items-center gap-1.5">
+                    <button onClick={openAdd} disabled={loading || saving}
+                        className="h-9 px-4 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-all shadow-sm hover:shadow active:scale-[0.98] flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
                         Thêm tài khoản
                     </button>
                 </div>
+                {(loading || saving) && (
+                    <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-600">
+                        {loading ? "Dang tai user tu Sheet..." : "Dang dong bo user len Sheet..."}
+                    </div>
+                )}
             </div>
 
             {/* ===== Permission Form Modal ===== */}
@@ -240,14 +301,14 @@ export default function UsersPanel() {
                                 <div>
                                   <label className="text-xs font-medium text-gray-600 mb-1 block">Tên đăng nhập</label>
                                   <input className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition"
-                                    value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="vd: editor01" autoFocus />
+                                    value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="vd: editor01" autoFocus disabled={saving} />
                                 </div>
                                 <div>
                                   <label className="text-xs font-medium text-gray-600 mb-1 block">
                                     {editId ? "Mật khẩu mới" : "Mật khẩu"}
                                   </label>
                                   <input type="password" className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition"
-                                    value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="••••••" />
+                                    value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="••••••" disabled={saving} />
                                 </div>
                               </div>
                               {/* Row 2: display name + role */}
@@ -255,12 +316,12 @@ export default function UsersPanel() {
                                 <div>
                                   <label className="text-xs font-medium text-gray-600 mb-1 block">Tên hiển thị</label>
                                   <input className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition"
-                                    value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Nguyễn Văn A" />
+                                    value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Nguyễn Văn A" disabled={saving} />
                                 </div>
                                 <div>
                                   <label className="text-xs font-medium text-gray-600 mb-1 block">Vai trò</label>
                                   <select className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition bg-white"
-                                    value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}>
+                                    value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} disabled={saving}>
                                     {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                                   </select>
                                 </div>
@@ -323,11 +384,11 @@ export default function UsersPanel() {
                         {/* Footer */}
                         <div className="px-6 py-4 border-t border-gray-100 shrink-0 flex items-center gap-2 bg-gray-50/50">
                             <span className="text-xs text-gray-400 mr-auto">{form.permissions.length}/{PERMISSIONS.length} quyền được chọn</span>
-                            <button type="button" onClick={() => setShowForm(false)}
-                                className="px-5 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Huỷ</button>
-                            <button type="submit"
-                                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition shadow-sm">
-                                {editId ? "Cập nhật" : "Tạo tài khoản"}
+                            <button type="button" onClick={() => setShowForm(false)} disabled={saving}
+                                className="px-5 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition disabled:opacity-50 disabled:cursor-not-allowed">Huỷ</button>
+                            <button type="submit" disabled={saving}
+                                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                                {saving ? "Dang luu..." : (editId ? "Cập nhật" : "Tạo tài khoản")}
                             </button>
                         </div>
                     </form>
@@ -357,8 +418,8 @@ export default function UsersPanel() {
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="font-mono text-xs font-semibold text-gray-800">{u.username}</span>
                                     <span className="px-1.5 py-px text-[9px] rounded bg-slate-100 text-slate-600 border border-slate-200">{u.role || "staff"}</span>
-                                    <button onClick={() => toggleActive(u)}
-                                        className={`text-[9px] font-medium px-1.5 py-px rounded-full border transition ${
+                                    <button onClick={() => toggleActive(u)} disabled={saving}
+                                        className={`text-[9px] font-medium px-1.5 py-px rounded-full border transition disabled:opacity-50 disabled:cursor-not-allowed ${
                                             u.active !== false ? "bg-emerald-50 text-emerald-600 border-emerald-200" : "bg-red-50 text-red-500 border-red-200"
                                         }`}>
                                         {u.active !== false ? "Active" : "Khoá"}
@@ -367,10 +428,10 @@ export default function UsersPanel() {
                                 <div className="text-[10px] text-gray-400 mt-0.5">{u.name || "—"}</div>
                             </div>
                             <div className="flex gap-0.5 shrink-0">
-                                <button onClick={() => openEdit(u)} className="p-1.5 text-gray-300 hover:text-blue-500 rounded-lg transition">
+                                <button onClick={() => openEdit(u)} disabled={saving} className="p-1.5 text-gray-300 hover:text-blue-500 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
                                 </button>
-                                <button onClick={() => deleteUser(u)} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg transition">
+                                <button onClick={() => deleteUser(u)} disabled={saving} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
                                 </button>
                             </div>
@@ -464,8 +525,8 @@ export default function UsersPanel() {
                                         </div>
                                     </td>
                                     <td className="py-3 px-3">
-                                        <button onClick={() => toggleActive(u)}
-                                            className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full cursor-pointer transition ${u.active !== false
+                                        <button onClick={() => toggleActive(u)} disabled={saving}
+                                            className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full cursor-pointer transition disabled:opacity-50 disabled:cursor-not-allowed ${u.active !== false
                                                     ? "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
                                                     : "bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
                                                 }`}>
@@ -478,10 +539,10 @@ export default function UsersPanel() {
                                     </td>
                                     <td className="py-3 px-3">
                                         <div className="flex justify-end gap-1 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onClick={() => openEdit(u)} className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Sửa">
+                                            <button onClick={() => openEdit(u)} disabled={saving} className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition disabled:opacity-50 disabled:cursor-not-allowed" title="Sửa">
                                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
                                             </button>
-                                            <button onClick={() => deleteUser(u)} className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition" title="Xoá">
+                                            <button onClick={() => deleteUser(u)} disabled={saving} className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition disabled:opacity-50 disabled:cursor-not-allowed" title="Xoá">
                                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
                                             </button>
                                         </div>

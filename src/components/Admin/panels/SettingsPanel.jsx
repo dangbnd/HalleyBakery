@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
-import { getAllConfig, setAllConfig, setConfig, resetAllConfig, KEYS } from "../../../utils/config.js";
+import { getAllConfig, setAllConfig, setConfig, resetAllConfig, getGeminiKeys, KEYS } from "../../../utils/config.js";
 import { LS, audit, readLS } from "../../../utils.js";
 import { buildUnifiedApiUrl } from "../../../services/sheets.multi.js";
 import { DEFAULT_SUPER_ADMIN_EMAIL } from "../shared/superAdmin.js";
+import { saveRuntimeConfigToSheet } from "../shared/sheets.js";
 
 const MANUAL_FIELDS = [
   {
@@ -112,7 +113,7 @@ const AUTO_FIELDS = [
 ];
 
 const AUTO_VISIBLE_KEYS = AUTO_FIELDS.map((f) => f.key);
-const AUTO_KEYS = [...AUTO_VISIBLE_KEYS, KEYS.PRODUCT_TABS];
+const AUTO_KEYS = [...AUTO_VISIBLE_KEYS, KEYS.PRODUCT_TABS, KEYS.SHEET_GID_CONFIG];
 
 const SYSTEM_TAB_MATCHERS = {
   menu: [/^menu$/i, /^navigation$/i, /^nav$/i],
@@ -287,6 +288,7 @@ async function inferConfigFromSheet(sheetId = "") {
   inferred[KEYS.PRODUCT_TABS] = primaryProduct?.gid ? `${primaryProduct.gid}:product` : "";
 
   const configGid = pickGidByMatcher(tabs, SYSTEM_TAB_MATCHERS.config);
+  inferred[KEYS.SHEET_GID_CONFIG] = configGid || "";
   if (configGid) {
     try {
       const cfg = await fetchConfigFromTab(id, configGid);
@@ -345,6 +347,11 @@ function formatSyncTime(ts = "") {
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return v;
   return d.toLocaleString("vi-VN");
+}
+
+function geminiStatusLabel() {
+  const count = getGeminiKeys().length;
+  return count > 0 ? `Đã đồng bộ ${count} keys từ AI Tags` : "Chưa cấu hình";
 }
 
 function unifiedParamsFromValues(values = {}) {
@@ -440,14 +447,7 @@ export default function SettingsPanel({ canEdit = true }) {
     if (!String(vals[KEYS.SUPER_ADMIN_EMAIL] || "").trim()) {
       vals[KEYS.SUPER_ADMIN_EMAIL] = DEFAULT_SUPER_ADMIN_EMAIL;
     }
-    try {
-      const aiKeys = JSON.parse(localStorage.getItem("ai_gemini_keys") || "[]");
-      if (Array.isArray(aiKeys) && aiKeys.length > 0) {
-        vals[KEYS.GEMINI_API_KEY] = `Đã đồng bộ ${aiKeys.length} keys từ AI Tags`;
-      } else {
-        vals[KEYS.GEMINI_API_KEY] = "";
-      }
-    } catch {}
+    vals[KEYS.GEMINI_API_KEY] = geminiStatusLabel();
     setValues(vals);
   }, []);
 
@@ -570,11 +570,25 @@ export default function SettingsPanel({ canEdit = true }) {
     const host = String(window.location?.hostname || "").toLowerCase();
     const isLocal = host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0";
     if (!isLocal && !String(finalValues[KEYS.API_ALL_URL] || "").trim()) finalValues[KEYS.API_ALL_URL] = "/api/all";
+    const geminiKeys = getGeminiKeys();
+    finalValues[KEYS.GEMINI_API_KEYS] = geminiKeys.join("\n");
+    finalValues[KEYS.GEMINI_API_KEY] = geminiKeys[0] || "";
+
+    let remoteSyncNote = "";
+    try {
+      const pushed = await saveRuntimeConfigToSheet(finalValues);
+      remoteSyncNote = `✅ Đã đồng bộ ${pushed.updated + pushed.inserted} mục lên tab ${pushed.sheetName}.`;
+    } catch (e) {
+      remoteSyncNote = `⚠ Lưu local thành công nhưng chưa đồng bộ toàn máy: ${e?.message || "lỗi không xác định"}`;
+    }
+
     setAllConfig(finalValues);
     clearDataCache();
     window.dispatchEvent(new Event("hb:config-changed"));
+    if (remoteSyncNote) setSyncMsg(remoteSyncNote);
     setSaved(true); setHasChanges(false);
     setTimeout(() => setSaved(false), 3000);
+    if (remoteSyncNote) setTimeout(() => setSyncMsg(""), 6000);
     audit("settings.save", { user: (readLS(LS.AUTH, {}) || {}).username || "?" });
   };
 
@@ -585,11 +599,7 @@ export default function SettingsPanel({ canEdit = true }) {
     window.dispatchEvent(new Event("hb:config-changed"));
     const vals = getAllConfig();
     vals[KEYS.SUPER_ADMIN_EMAIL] = DEFAULT_SUPER_ADMIN_EMAIL;
-    try {
-      const aiKeys = JSON.parse(localStorage.getItem("ai_gemini_keys") || "[]");
-      if (Array.isArray(aiKeys) && aiKeys.length > 0) vals[KEYS.GEMINI_API_KEY] = `Đã đồng bộ ${aiKeys.length} keys từ AI Tags`;
-      else vals[KEYS.GEMINI_API_KEY] = "";
-    } catch {}
+    vals[KEYS.GEMINI_API_KEY] = geminiStatusLabel();
     setValues(vals);
     setHasChanges(false); setSaved(false); setAutoMsg("");
     autoFilledRef.current = {}; autoLastSignatureRef.current = "";
@@ -654,7 +664,7 @@ export default function SettingsPanel({ canEdit = true }) {
           }
         >
           {(autoMsg || syncMsg) && (
-            <div className={`text-[10px] rounded-lg px-3 py-1.5 ${syncMsg ? "bg-emerald-50 text-emerald-600" : "bg-blue-50 text-blue-600"}`}>
+            <div className={`text-[10px] rounded-lg px-3 py-1.5 ${syncMsg ? (String(syncMsg).startsWith("⚠") ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-600") : "bg-blue-50 text-blue-600"}`}>
               {syncMsg || autoMsg}
             </div>
           )}

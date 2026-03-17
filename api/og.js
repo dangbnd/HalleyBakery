@@ -8,6 +8,7 @@ import { join } from "path";
 /* ===== CONFIG (Ã„â€˜Ã¡Â»Âc tÃ¡Â»Â« env) ===== */
 const SHEET_ID = process.env.OG_SHEET_ID || process.env.VITE_SHEET_ID || "";
 const PRODUCT_TABS = process.env.OG_PRODUCT_TABS || process.env.VITE_PRODUCT_TABS || "";
+const PRODUCTS_GID_FALLBACK = process.env.OG_PRODUCTS_GID || process.env.OG_PRODUCT_GID || process.env.VITE_SHEET_GID_PRODUCTS || "";
 const MENU_GID = process.env.OG_MENU_GID || process.env.VITE_SHEET_GID_MENU || "";
 
 const CRAWLERS = /facebookexternalhit|Facebot|Twitterbot|TelegramBot|Zalobot|LinkedInBot|Slackbot|WhatsApp|Discordbot|Pinterest|vkShare|W3C_Validator|baiduspider/i;
@@ -46,10 +47,49 @@ async function fetchGViz(gid) {
     } catch { return []; }
 }
 
+function parseProductTabs(raw = "", gidFallback = "") {
+    const toks = String(raw || "")
+        .replace(/\r\n?/g, "\n")
+        .split(/[;\n,]+/)
+        .map(t => t.trim())
+        .filter(Boolean);
+
+    const normalizeGid = (v = "") => String(v || "").trim().replace(/[^\d]/g, "");
+    const out = [];
+
+    for (const tok of toks) {
+        const gidFirst = tok.match(/^(\d+)\s*:\s*(.+)$/);
+        if (gidFirst) {
+            out.push({ gid: normalizeGid(gidFirst[1]), key: String(gidFirst[2] || "product").trim() || "product" });
+            continue;
+        }
+        const keyFirst = tok.match(/^(.+?)\s*:\s*(\d+)$/);
+        if (keyFirst) {
+            out.push({ gid: normalizeGid(keyFirst[2]), key: String(keyFirst[1] || "product").trim() || "product" });
+            continue;
+        }
+        if (/^\d+$/.test(tok)) {
+            out.push({ gid: normalizeGid(tok), key: "product" });
+        }
+    }
+
+    const dedup = [];
+    const seen = new Set();
+    for (const tab of out) {
+        if (!tab.gid || seen.has(tab.gid)) continue;
+        seen.add(tab.gid);
+        dedup.push(tab);
+    }
+
+    const fallback = normalizeGid(gidFallback);
+    if (!dedup.length && fallback) dedup.push({ gid: fallback, key: "product" });
+    return dedup;
+}
+
 async function loadData() {
     const now = Date.now();
     if (cachedProducts && now - cacheTime < CACHE_TTL) return;
-    if (!SHEET_ID || !PRODUCT_TABS) {
+    if (!SHEET_ID) {
         cachedProducts = [];
         cachedMenu = [];
         cacheTime = now;
@@ -57,20 +97,7 @@ async function loadData() {
     }
 
     // Fetch sÃ¡ÂºÂ£n phÃ¡ÂºÂ©m tÃ¡Â»Â« tÃ¡ÂºÂ¥t cÃ¡ÂºÂ£ tab
-    const normalizeGid = (v = "") => String(v || "").trim().replace(/[^\d]/g, "");
-    const tabs = PRODUCT_TABS
-        .split(/[\n,;]+/)
-        .map(t => t.trim())
-        .filter(Boolean)
-        .map(t => {
-            const gidFirst = t.match(/^(\d+)\s*:\s*(.+)$/);
-            if (gidFirst) return { gid: normalizeGid(gidFirst[1]), key: String(gidFirst[2] || "product").trim() || "product" };
-            const keyFirst = t.match(/^(.+?)\s*:\s*(\d+)$/);
-            if (keyFirst) return { gid: normalizeGid(keyFirst[2]), key: String(keyFirst[1] || "product").trim() || "product" };
-            return null;
-        })
-        .filter(Boolean)
-        .filter((tab, index, arr) => tab.gid && tab.key && arr.findIndex((x) => x.gid === tab.gid) === index);
+    const tabs = parseProductTabs(PRODUCT_TABS, PRODUCTS_GID_FALLBACK);
 
     const results = await Promise.allSettled(
         tabs.map(async t => {

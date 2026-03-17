@@ -140,6 +140,324 @@ export const insertToSheet = (sheet, row) => call("insert", { sheet, row }, { re
 export const updateToSheet = (sheet, row) => call("update", { sheet, row }, { requireAuth: true });
 export const deleteFromSheet = (sheet, id) => call("delete", { sheet, id }, { requireAuth: true });
 
+const RUNTIME_CONFIG_KEYS = [
+  KEYS.SHEET_ID,
+  KEYS.DRIVE_FOLDER_ID,
+  KEYS.SHEET_GID_CONFIG,
+  KEYS.PRODUCT_TABS,
+  KEYS.SHEET_GID_PRODUCTS,
+  KEYS.SHEET_GID_MENU,
+  KEYS.SHEET_GID_PAGES,
+  KEYS.SHEET_GID_ANNOUNCEMENTS,
+  KEYS.SHEET_GID_CATEGORIES,
+  KEYS.SHEET_GID_TAGS,
+  KEYS.SHEET_GID_TYPES,
+  KEYS.SHEET_GID_LEVELS,
+  KEYS.SHEET_GID_SIZES,
+  KEYS.SHEET_GID_FB,
+  KEYS.MESSENGER_LINK,
+  KEYS.ZALO_LINK,
+  KEYS.API_ALL_URL,
+  KEYS.GS_WEBAPP_URL,
+  KEYS.GS_WEBAPP_TOKEN,
+  KEYS.GOOGLE_OAUTH_CLIENT_ID,
+  KEYS.SUPER_ADMIN_EMAIL,
+  KEYS.ADMIN_ALLOWED_EMAILS,
+  KEYS.GEMINI_API_KEYS,
+  KEYS.GEMINI_API_KEY,
+  KEYS.ENABLE_VISITOR_TRACKING,
+];
+
+const CONFIG_SHEET_CANDIDATES = ["URL", "Config", "Settings", "Cấu hình", "Cau hinh"];
+const USER_SHEET_CANDIDATES = ["Users", "User", "Nguoi dung", "Người dùng"];
+
+function normalizeCfgKey(value = "") {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function normalizeGeminiKeyList(list = []) {
+  const out = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    const value =
+      typeof item === "object"
+        ? s(item?.key || item?.value || "")
+        : s(item);
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+function detectKeyField(row = {}) {
+  if (Object.prototype.hasOwnProperty.call(row, "key")) return "key";
+  if (Object.prototype.hasOwnProperty.call(row, "name")) return "name";
+  if (Object.prototype.hasOwnProperty.call(row, "config_key")) return "config_key";
+  return "key";
+}
+
+function detectValueField(row = {}) {
+  if (Object.prototype.hasOwnProperty.call(row, "value")) return "value";
+  if (Object.prototype.hasOwnProperty.call(row, "url")) return "url";
+  if (Object.prototype.hasOwnProperty.call(row, "link")) return "link";
+  if (Object.prototype.hasOwnProperty.call(row, "config_value")) return "config_value";
+  return "value";
+}
+
+function extractRowConfigKey(row = {}) {
+  const keyField = detectKeyField(row);
+  return normalizeCfgKey(row?.[keyField] ?? "");
+}
+
+async function resolveConfigSheet() {
+  let lastError = null;
+  for (const sheetName of CONFIG_SHEET_CANDIDATES) {
+    try {
+      const data = await listSheet(sheetName);
+      if (data?.ok) return { sheetName, rows: pickArray(data, ["rows", "data", "items"]) };
+      lastError = new Error(responseMessage(data) || `Không đọc được tab ${sheetName}`);
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError || new Error("Không tìm thấy tab URL/Config để đồng bộ cấu hình");
+}
+
+async function upsertConfigEntries(entries = []) {
+  const auth = getAdminAuth();
+  if (!auth?.token) throw new Error("Thiếu GS WebApp Admin Token để đồng bộ cấu hình");
+
+  const { sheetName, rows } = await resolveConfigSheet();
+  const byKey = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const cfgKey = extractRowConfigKey(row);
+    if (cfgKey) byKey.set(cfgKey, row);
+  }
+
+  let inserted = 0;
+  let updated = 0;
+
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const cfgKey = normalizeCfgKey(entry?.key || "");
+    if (!cfgKey) continue;
+    const value = s(entry?.value ?? "");
+    const existing = byKey.get(cfgKey);
+
+    if (existing) {
+      const keyField = detectKeyField(existing);
+      const valueField = detectValueField(existing);
+      const oldValue = s(existing?.[valueField] ?? "");
+      if (oldValue === value) continue;
+      const payload = { ...existing, [keyField]: cfgKey, [valueField]: value };
+      try {
+        await updateToSheet(sheetName, payload);
+        updated += 1;
+        byKey.set(cfgKey, payload);
+      } catch {
+        await insertToSheet(sheetName, { key: cfgKey, value });
+        inserted += 1;
+        byKey.set(cfgKey, { key: cfgKey, value });
+      }
+      continue;
+    }
+
+    await insertToSheet(sheetName, { key: cfgKey, value });
+    inserted += 1;
+    byKey.set(cfgKey, { key: cfgKey, value });
+  }
+
+  return { ok: true, sheetName, inserted, updated };
+}
+
+export async function saveRuntimeConfigToSheet(config = {}) {
+  const entries = RUNTIME_CONFIG_KEYS.map((key) => ({
+    key,
+    value: s(config?.[key] ?? ""),
+  }));
+  return upsertConfigEntries(entries);
+}
+
+export async function saveGeminiKeysToSheet(keys = []) {
+  const normalized = normalizeGeminiKeyList(keys);
+  const entries = [
+    { key: KEYS.GEMINI_API_KEYS, value: normalized.join("\n") },
+    { key: KEYS.GEMINI_API_KEY, value: normalized[0] || "" },
+  ];
+  const result = await upsertConfigEntries(entries);
+  return { ...result, keyCount: normalized.length };
+}
+
+function parseBooleanLike(value, fallback = true) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  const raw = String(value ?? "").trim();
+  if (!raw) return fallback;
+  if (/^(1|true|yes|on|active)$/i.test(raw)) return true;
+  if (/^(0|false|no|off|inactive|disabled|locked)$/i.test(raw)) return false;
+  return fallback;
+}
+
+function parsePermissions(raw = []) {
+  if (Array.isArray(raw)) return raw.map((x) => s(x)).filter(Boolean);
+  const text = s(raw);
+  if (!text) return [];
+  const trimmed = text.trim();
+  if ((trimmed.startsWith("[") && trimmed.endsWith("]")) || (trimmed.startsWith("{") && trimmed.endsWith("}"))) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed.map((x) => s(x)).filter(Boolean);
+    } catch {}
+  }
+  return text.split(/[\n,;|]+/).map((x) => s(x)).filter(Boolean);
+}
+
+function normalizeUserRow(row = {}) {
+  const username = s(row.username || row.user || row.account || row.email).toLowerCase();
+  const email = s(row.email || row.username).toLowerCase();
+  return {
+    ...row,
+    id: s(row.id || row.userId || row.uid || username),
+    username,
+    email,
+    password: s(row.password || row.pass || row.matkhau),
+    role: s(row.role || "staff") || "staff",
+    permissions: parsePermissions(row.permissions || row.perms),
+    active: parseBooleanLike(row.active, true),
+    isSuper: parseBooleanLike(row.isSuper || row.super, false),
+    name: s(row.name || row.displayName || row.fullname || username),
+  };
+}
+
+export async function listAdminUsersFromSheet() {
+  const users = await listUsersFromSheet({ includeInactive: false });
+  return users.filter((u) => u.username && u.active !== false);
+}
+
+async function resolveUserSheet() {
+  let lastError = null;
+  for (const sheetName of USER_SHEET_CANDIDATES) {
+    try {
+      const data = await listSheet(sheetName);
+      if (!data?.ok) {
+        lastError = new Error(responseMessage(data) || `Không đọc được tab ${sheetName}`);
+        continue;
+      }
+      const rows = pickArray(data, ["rows", "data", "items"]);
+      return { sheetName, rows: Array.isArray(rows) ? rows : [] };
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError || new Error("Không tìm thấy tab Users");
+}
+
+function findExistingUserRow(rows = [], user = {}) {
+  const id = s(user?.id).toLowerCase();
+  const username = s(user?.username).toLowerCase();
+  const email = s(user?.email || user?.username).toLowerCase();
+  const normalizedRows = rows.map((r) => normalizeUserRow(r));
+
+  if (id) {
+    const hitById = normalizedRows.find((r) => s(r.id).toLowerCase() === id);
+    if (hitById) return hitById;
+  }
+  if (username) {
+    const hitByUsername = normalizedRows.find((r) => s(r.username).toLowerCase() === username);
+    if (hitByUsername) return hitByUsername;
+  }
+  if (email) {
+    const hitByEmail = normalizedRows.find((r) => s(r.email).toLowerCase() === email);
+    if (hitByEmail) return hitByEmail;
+  }
+  return null;
+}
+
+function serializePermissions(perms = []) {
+  const arr = Array.isArray(perms) ? perms.map((x) => s(x)).filter(Boolean) : [];
+  return JSON.stringify(arr);
+}
+
+function buildUserRowPayload(input = {}, existing = null) {
+  const base = existing && typeof existing === "object" ? { ...existing } : {};
+  const nowIso = new Date().toISOString();
+  const createdAt = s(input.createdAt || base.createdAt || nowIso);
+  const id = s(input.id || base.id || input.username || input.email).toLowerCase();
+  const username = s(input.username || base.username || input.email).toLowerCase();
+  const email = s(input.email || base.email || username).toLowerCase();
+  return {
+    ...base,
+    id,
+    username,
+    email,
+    password: s(input.password !== undefined ? input.password : base.password),
+    name: s(input.name || base.name || username),
+    role: s(input.role || base.role || "staff"),
+    permissions: serializePermissions(input.permissions !== undefined ? input.permissions : base.permissions),
+    active: input.active === false ? "0" : "1",
+    isSuper: input.isSuper === true ? "1" : "0",
+    createdAt,
+    createdBy: s(input.createdBy || base.createdBy),
+    updatedAt: nowIso,
+    updatedBy: s(input.updatedBy || base.updatedBy),
+  };
+}
+
+export async function listUsersFromSheet({ includeInactive = true } = {}) {
+  const { rows } = await resolveUserSheet();
+  const mapped = rows.map(normalizeUserRow).filter((u) => u.username);
+  if (includeInactive) return mapped;
+  return mapped.filter((u) => u.active !== false);
+}
+
+export async function upsertAdminUserToSheet(user = {}) {
+  const auth = getAdminAuth();
+  if (!auth?.token) throw new Error("Chưa cấu hình GS WebApp Admin Token");
+  const { sheetName, rows } = await resolveUserSheet();
+  const existing = findExistingUserRow(rows, user);
+  const payload = buildUserRowPayload(user, existing);
+
+  if (existing) {
+    try {
+      await updateToSheet(sheetName, payload);
+    } catch {
+      await insertToSheet(sheetName, payload);
+    }
+  } else {
+    await insertToSheet(sheetName, payload);
+  }
+  return { ok: true, sheetName, id: payload.id, username: payload.username };
+}
+
+export async function deleteAdminUserFromSheet(user = {}) {
+  const auth = getAdminAuth();
+  if (!auth?.token) throw new Error("Chưa cấu hình GS WebApp Admin Token");
+  const { sheetName, rows } = await resolveUserSheet();
+  const existing = findExistingUserRow(rows, user);
+  if (!existing) return { ok: true, sheetName, skipped: true };
+
+  const targetId = s(existing.id || user.id).toLowerCase();
+  if (!targetId) {
+    const softPayload = buildUserRowPayload({ ...existing, active: false }, existing);
+    await updateToSheet(sheetName, softPayload);
+    return { ok: true, sheetName, softDeleted: true };
+  }
+
+  try {
+    await deleteFromSheet(sheetName, targetId);
+    return { ok: true, sheetName, deleted: true };
+  } catch {
+    const softPayload = buildUserRowPayload({ ...existing, active: false }, existing);
+    await updateToSheet(sheetName, softPayload);
+    return { ok: true, sheetName, softDeleted: true };
+  }
+}
+
 const SHEET_TITLE_CACHE = new Map();
 
 function decodeEscapedText(raw = "") {

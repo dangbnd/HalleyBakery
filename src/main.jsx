@@ -1,15 +1,57 @@
 import { createRoot } from "react-dom/client";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import App from "./App.jsx";
 import "./index.css";
 import ErrorBoundary from "./components/system/ErrorBoundary.jsx";
 import { LS, readLS } from "./utils.js";
+import { syncConfigFromRemote } from "./utils/config.js";
 
 // Lazy load Admin modules — chỉ tải khi cần
 const Login = lazy(() => import("./components/Admin/Login.jsx"));
 const AdminIndex = lazy(() => import("./components/Admin/index.jsx"));
 
 function Root() {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        await Promise.race([
+          syncConfigFromRemote({ force: true }),
+          new Promise((resolve) => setTimeout(resolve, 1500)),
+        ]);
+      } catch {}
+      if (!cancelled) setReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    const run = (force = false) => {
+      syncConfigFromRemote({ force }).catch(() => {});
+    };
+    const timer = setInterval(() => run(true), 60 * 1000);
+    const onFocus = () => run(true);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") run(true);
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [ready]);
+
+  if (!ready) {
+    return <div className="min-h-[40vh] flex items-center justify-center text-sm text-gray-500">Đang tải cấu hình...</div>;
+  }
+
   const path = window.location.pathname || "/";
   const hostname = window.location.hostname;
   

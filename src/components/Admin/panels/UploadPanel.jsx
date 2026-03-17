@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LS, audit, readLS } from "../../../utils.js";
-import { KEYS, getConfig } from "../../../utils/config.js";
+import { KEYS, getConfig, getGeminiKeys } from "../../../utils/config.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
 import { listDriveFileHashes, listDriveLeafFolders, uploadDriveFile } from "../shared/sheets.js";
 import { isTokenExpired, requestGoogleDriveToken, uploadFileDirectToDrive } from "../shared/driveDirect.js";
@@ -65,13 +65,8 @@ function readConfigSnapshot() {
 
 // Đọc keys từ ai_gemini_keys localStorage (do AITagsPanel quản lý)
 function readAllGeminiKeys() {
-  try {
-    const saved = JSON.parse(localStorage.getItem("ai_gemini_keys") || "null");
-    if (Array.isArray(saved) && saved.length) {
-      const keys = saved.map(k => s(typeof k === "object" ? (k?.key || k?.value) : k)).filter(Boolean);
-      if (keys.length) return keys;
-    }
-  } catch {}
+  const multi = getGeminiKeys();
+  if (Array.isArray(multi) && multi.length) return multi;
   const single = s(getConfig(KEYS.GEMINI_API_KEY, ""));
   return single ? [single] : [];
 }
