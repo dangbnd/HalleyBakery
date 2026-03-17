@@ -45,6 +45,26 @@ function HB_normKey_(v) {
   return HB_s_(v).toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+function HB_getAdminToken_() {
+  return HB_s_(PropertiesService.getScriptProperties().getProperty("HB_ADMIN_TOKEN"));
+}
+
+function HB_extractAdminToken_(req) {
+  return HB_s_(
+    (req && req._auth && req._auth.token) ||
+    (req && req.adminToken) ||
+    (req && req.token)
+  );
+}
+
+function HB_requireAdminToken_(req) {
+  var expected = HB_getAdminToken_();
+  if (!expected) return { ok: false, msg: "Missing HB_ADMIN_TOKEN script property" };
+  var provided = HB_extractAdminToken_(req);
+  if (!provided || provided !== expected) return { ok: false, msg: "Unauthorized" };
+  return null;
+}
+
 function HB_effectiveAction_(req) {
   var action = HB_s_(req.action);
   var op = HB_s_(req.op || req.operation);
@@ -72,9 +92,11 @@ function HB_tryHandleDriveActions_(req) {
     "listLeafFolders",
     "driveListLeafFolders",
     "leaf_folders",
-    "drive.list_folders",
+    "drive.list_leaf_folders",
     "drive/list_leaf_folders"
   ])) {
+    var leafAuthErr = HB_requireAdminToken_(req);
+    if (leafAuthErr) return leafAuthErr;
     return HB_listLeafFolders_(req);
   }
 
@@ -89,6 +111,8 @@ function HB_tryHandleDriveActions_(req) {
     "folders.list",
     "drive/list_folders"
   ])) {
+    var folderAuthErr = HB_requireAdminToken_(req);
+    if (folderAuthErr) return folderAuthErr;
     return HB_listAllFolders_(req);
   }
 
@@ -105,6 +129,8 @@ function HB_tryHandleDriveActions_(req) {
     "drive.listFilesWithHash",
     "drive/list_files"
   ])) {
+    var hashAuthErr = HB_requireAdminToken_(req);
+    if (hashAuthErr) return hashAuthErr;
     return HB_listFileHashes_(req);
   }
 

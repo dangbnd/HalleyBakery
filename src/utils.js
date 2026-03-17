@@ -74,15 +74,127 @@ export const authApi = {
   logout() { removeLS(LS.AUTH); },
 };
 
-const roleOrder = { owner: 5, manager: 4, editor: 3, staff: 2, viewer: 1 };
+export const roleOrder = { owner: 5, manager: 4, editor: 3, staff: 2, viewer: 1 };
+
+const ROLE_DEFAULT_PERMISSIONS = {
+  viewer: ["products.view"],
+  staff: ["products.view", "upload.view", "aitags.view", "audit.view"],
+  editor: [
+    "products.view", "products.edit",
+    "upload.view", "upload.edit",
+    "aitags.view", "aitags.edit",
+    "categories.view", "categories.edit",
+    "typesize.view", "typesize.edit",
+    "pages.view", "pages.edit",
+    "audit.view",
+    "settings.view",
+  ],
+  manager: [
+    "products.view", "products.edit", "products.delete",
+    "upload.view", "upload.edit",
+    "aitags.view", "aitags.edit",
+    "categories.view", "categories.edit",
+    "typesize.view", "typesize.edit",
+    "pages.view", "pages.edit",
+    "audit.view",
+    "settings.view", "settings.edit",
+  ],
+  owner: [
+    "products.view", "products.edit", "products.delete",
+    "upload.view", "upload.edit",
+    "aitags.view", "aitags.edit",
+    "categories.view", "categories.edit",
+    "typesize.view", "typesize.edit",
+    "pages.view", "pages.edit",
+    "audit.view",
+    "settings.view", "settings.edit",
+    "users.manage",
+  ],
+};
+
+const ADMIN_TAB_PERMISSIONS = {
+  products: ["products.view", "products.edit", "products.delete"],
+  upload: ["upload.view", "upload.edit"],
+  users: ["users.manage"],
+  aitags: ["aitags.view", "aitags.edit"],
+  audit: ["audit.view"],
+  settings: ["settings.view", "settings.edit"],
+  typesize: ["typesize.view", "typesize.edit"],
+  categories: ["categories.view", "categories.edit"],
+  pages: ["pages.view", "pages.edit"],
+};
+
+export function parseBooleanLike(value, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (value == null) return fallback;
+  const raw = String(value).trim();
+  if (!raw) return fallback;
+  if (/^(1|true|yes|y|on|x)$/i.test(raw)) return true;
+  if (/^(0|false|no|n|off)$/i.test(raw)) return false;
+  return fallback;
+}
+
+export function getAuthUser() {
+  return readLS(LS.AUTH, null);
+}
+
+export function getEffectivePermissions(user) {
+  if (!user || typeof user !== "object") return new Set();
+  const perms = new Set(ROLE_DEFAULT_PERMISSIONS[user.role] || []);
+  if (Array.isArray(user.permissions)) {
+    user.permissions
+      .map((p) => String(p || "").trim())
+      .filter(Boolean)
+      .forEach((p) => perms.add(p));
+  }
+  if (user.isSuper === true || user.role === "owner") {
+    Object.values(ADMIN_TAB_PERMISSIONS).flat().forEach((p) => perms.add(p));
+    perms.add("users.manage");
+  }
+  return perms;
+}
+
+export function hasPermission(user, permission) {
+  if (!permission) return false;
+  if (user?.isSuper === true) return true;
+  return getEffectivePermissions(user).has(String(permission).trim());
+}
+
+export function hasAnyPermission(user, permissions = []) {
+  return permissions.some((permission) => hasPermission(user, permission));
+}
+
+export function canAccessAdminTab(user, tabKey) {
+  return hasAnyPermission(user, ADMIN_TAB_PERMISSIONS[tabKey] || []);
+}
+
+export function getUserLevel(user) {
+  if (user?.isSuper === true) return 99;
+  let level = roleOrder[user?.role || "viewer"] || 0;
+  const perms = getEffectivePermissions(user);
+  if (perms.has("users.manage")) level = Math.max(level, roleOrder.owner);
+  else if (perms.has("settings.edit")) level = Math.max(level, roleOrder.manager);
+  else if ([...perms].some((p) => p.endsWith(".edit") || p.endsWith(".delete"))) level = Math.max(level, roleOrder.editor);
+  else if ([...perms].some((p) => p.endsWith(".view"))) level = Math.max(level, roleOrder.staff);
+  return level;
+}
 
 export function can(user, action, resource) {
-  const lvl = roleOrder[user?.role || 'viewer'] || 0;
-  if (action === 'read') return true;
-  if (['create', 'update'].includes(action)) return lvl >= 3;
-  if (action === 'delete') return lvl >= 4;
-  if (action === 'manage' && resource === 'users') return lvl >= 5;
-  if (action === 'update' && resource === 'settings') return lvl >= 3;
+  if (!resource) return false;
+  if (action === "read") {
+    const keys = resource === "users"
+      ? ["users.manage"]
+      : [`${resource}.view`, `${resource}.edit`, `${resource}.delete`, `${resource}.manage`];
+    return hasAnyPermission(user, keys);
+  }
+  if (action === "create" || action === "update") {
+    if (resource === "users") return hasPermission(user, "users.manage");
+    if (resource === "settings") return hasPermission(user, "settings.edit");
+    return hasPermission(user, `${resource}.edit`);
+  }
+  if (action === "delete") return hasPermission(user, `${resource}.delete`);
+  if (action === "manage" && resource === "users") return hasPermission(user, "users.manage");
   return false;
 }
 

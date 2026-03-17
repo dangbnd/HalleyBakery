@@ -550,6 +550,11 @@ export default function App() {
       try {
         let prodRows;
         let unifiedOk = false;
+        const unifiedLoaded = {
+          menu: false,
+          pages: false,
+          announcements: false,
+        };
 
         // 1. Ưu tiên fetch từ API gộp (nhanh, 1 request) - chỉ khi user cấu hình
         const allUrl = buildUnifiedApiUrl({
@@ -576,14 +581,17 @@ export default function App() {
             if (unified.menu?.length) {
               const mapped = mapMenu(unified.menu);
               setMenu(mapped); writeLS(LS.MENU, mapped);
+              unifiedLoaded.menu = true;
             }
             if (unified.pages?.length) {
               const mapped = mapPages(unified.pages);
               setPages(mapped); writeLS(LS.PAGES, mapped);
+              unifiedLoaded.pages = true;
             }
             if (unified.announcements?.length) {
               const mapped = mapAnnouncements(unified.announcements);
               setAnnouncements(mapped); writeLS(LS.ANNOUNCEMENTS, mapped);
+              unifiedLoaded.announcements = true;
             }
             if (unified.types?.length) { writeLS(LS.TYPES, mapTypes(unified.types)); }
             if (unified.levels?.length) { writeLS(LS.LEVELS, mapLevels(unified.levels)); }
@@ -726,7 +734,7 @@ export default function App() {
 
           // Load Menu trước để lấy label cho categories
           let menuMap = {};
-          if (SHEET.id && SHEET.gids.menu && !unifiedOk) {
+          if (SHEET.id && SHEET.gids.menu && !unifiedLoaded.menu) {
             try {
               const menuRows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.menu });
               const mapped = mapMenu(menuRows);
@@ -763,9 +771,9 @@ export default function App() {
           }
         }
 
-        const loadOpt = async (gid, mapper, setter, lsKey) => {
+        const loadOpt = async (gid, mapper, setter, lsKey, alreadyLoaded = false) => {
           if (!SHEET.id || !gid) return;
-          if (unifiedOk) return;
+          if (alreadyLoaded) return;
           try {
             const rows = await fetchTabAsObjects({ sheetId: SHEET.id, gid });
             const mapped = mapper(rows);
@@ -780,9 +788,9 @@ export default function App() {
           SHEET.gids.tags ? Promise.resolve() : null,
           // Menu đã load ở trên, skip nếu đã load
           SHEET.gids.menu ? Promise.resolve() : null,
-          loadOpt(SHEET.gids.pages, mapPages, setPages, LS.PAGES),
+          loadOpt(SHEET.gids.pages, mapPages, setPages, LS.PAGES, unifiedLoaded.pages),
           loadOpt(SHEET.gids.sizes, mapSizes, () => { }, LS.SIZES),
-          loadOpt(SHEET.gids.announcements, mapAnnouncements, setAnnouncements, LS.ANNOUNCEMENTS),
+          loadOpt(SHEET.gids.announcements, mapAnnouncements, setAnnouncements, LS.ANNOUNCEMENTS, unifiedLoaded.announcements),
         ].filter(Boolean)).catch(e => console.error("loadOpt fail:", e));
       } finally {
         setDataLoading(false);

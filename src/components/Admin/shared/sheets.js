@@ -1,5 +1,6 @@
 ﻿// src/components/Admin/shared/sheets.js
-import { getConfig, setConfig } from "../../../utils/config.js";
+import { LS, readLS } from "../../../utils.js";
+import { KEYS, getConfig, setConfig } from "../../../utils/config.js";
 
 export function getWebappUrl() {
   return getConfig("gs_webapp_url", "");
@@ -25,6 +26,23 @@ function responseMessage(data = {}) {
   return s(data?.msg || data?.message || data?.error || data?.reason || "");
 }
 
+function getAdminAuth() {
+  const token = s(getConfig(KEYS.GS_WEBAPP_TOKEN, ""));
+  const user = readLS(LS.AUTH, null);
+  if (!token) return null;
+  return {
+    token,
+    ts: Date.now(),
+    user: user
+      ? {
+          username: s(user.username),
+          role: s(user.role || "staff"),
+          isSuper: !!user.isSuper,
+        }
+      : null,
+  };
+}
+
 const UNKNOWN_ACTION_RE =
   /no action|unknown action|unknown op|invalid action|unsupported action|action not supported|unknown action\/op/i;
 
@@ -33,15 +51,19 @@ function isUnknownAction(data) {
   return UNKNOWN_ACTION_RE.test(msg);
 }
 
-async function postBody(body = {}) {
+async function postBody(body = {}, { requireAuth = false } = {}) {
   const webApp = getWebappUrl();
   if (!webApp) throw new Error("Chưa cấu hình GS WebApp URL");
+  const adminAuth = getAdminAuth();
+  if (requireAuth && !adminAuth?.token) {
+    throw new Error("Chưa cấu hình GS WebApp Admin Token");
+  }
 
   const res = await fetch(webApp, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     redirect: "follow",
-    body: JSON.stringify(body),
+    body: JSON.stringify(adminAuth ? { ...body, _auth: adminAuth } : body),
   });
 
   let data = {};
@@ -58,30 +80,30 @@ async function postBody(body = {}) {
   return data;
 }
 
-async function call(action, payload = {}) {
-  return postBody({ action, ...payload });
+async function call(action, payload = {}, options = {}) {
+  return postBody({ action, ...payload }, options);
 }
 
-async function callOp(op, payload = {}) {
-  return postBody({ op, ...payload });
+async function callOp(op, payload = {}, options = {}) {
+  return postBody({ op, ...payload }, options);
 }
 
-async function callDriveOp(op, payload = {}) {
-  return postBody({ action: "drive", op, ...payload });
+async function callDriveOp(op, payload = {}, options = {}) {
+  return postBody({ action: "drive", op, ...payload }, options);
 }
 
-async function callDriveOperation(op, payload = {}) {
-  return postBody({ action: "drive", operation: op, ...payload });
+async function callDriveOperation(op, payload = {}, options = {}) {
+  return postBody({ action: "drive", operation: op, ...payload }, options);
 }
 
-async function callWithAliases(actions = [], payload = {}) {
+async function callWithAliases(actions = [], payload = {}, options = {}) {
   let lastErr = null;
   for (const action of actions) {
     const runners = [
-      () => call(action, payload),
-      () => callOp(action, payload),
-      () => callDriveOp(action, payload),
-      () => callDriveOperation(action, payload),
+      () => call(action, payload, options),
+      () => callOp(action, payload, options),
+      () => callDriveOp(action, payload, options),
+      () => callDriveOperation(action, payload, options),
     ];
 
     for (const run of runners) {
@@ -110,9 +132,9 @@ async function callWithAliases(actions = [], payload = {}) {
 
 // Basic sheet APIs
 export const listSheet = (sheet) => call("list", { sheet });
-export const insertToSheet = (sheet, row) => call("insert", { sheet, row });
-export const updateToSheet = (sheet, row) => call("update", { sheet, row });
-export const deleteFromSheet = (sheet, id) => call("delete", { sheet, id });
+export const insertToSheet = (sheet, row) => call("insert", { sheet, row }, { requireAuth: true });
+export const updateToSheet = (sheet, row) => call("update", { sheet, row }, { requireAuth: true });
+export const deleteFromSheet = (sheet, id) => call("delete", { sheet, id }, { requireAuth: true });
 
 function normalizeFolderRow(row = {}) {
   const id = s(row.id || row.folderId || row.driveId || row.fileId);
@@ -163,7 +185,8 @@ export async function listDriveFolders({ rootFolderId = "" } = {}) {
       recursive: true,
       includeRoot: true,
       includeLeafOnly: false,
-    }
+    },
+    { requireAuth: true }
   );
 
   const rowsRaw = pickArray(data, ["folders", "rows", "data", "items", "result"]);
@@ -191,7 +214,8 @@ export async function listDriveLeafFolders({ rootFolderId = "" } = {}) {
         recursive: true,
         includeRoot: false,
         includeLeafOnly: true,
-      }
+      },
+      { requireAuth: true }
     );
 
     const rowsRaw = pickArray(data, ["folders", "rows", "data", "items", "result"]);
@@ -208,12 +232,22 @@ function normalizeHashRow(row = {}) {
   const folderId = s(row.folderId || row.parentId || row.parentFolderId);
   const path = s(row.path || row.fullPath || row.folderPath);
 
-  let hash = s(row.hash || row.sha256 || row.sha_256 || row.md5 || row.md5Checksum || row.checksum).toLowerCase();
+  let hash = s(
+    row.hash ||
+    row.sha256 ||
+    row.sha_256 ||
+    row.sha1 ||
+    row.sha1Checksum ||
+    row.md5 ||
+    row.md5Checksum ||
+    row.checksum
+  ).toLowerCase();
   hash = hash.replace(/[^a-f0-9]/g, "");
 
   let algo = s(row.hashAlgo || row.algo || row.algorithm).toLowerCase();
   if (!algo) {
     if (hash.length === 64) algo = "sha256";
+    else if (hash.length === 40) algo = "sha1";
     else if (hash.length === 32) algo = "md5";
   }
 
@@ -254,13 +288,14 @@ export async function listDriveFileHashes({ rootFolderId = "" } = {}) {
       includeHash: true,
       includeMd5: true,
       includeSha256: true,
-    }
+    },
+    { requireAuth: true }
   );
 
   const rowsRaw = pickArray(data, ["files", "rows", "data", "items", "result"]);
   return rowsRaw
     .map(normalizeHashRow)
-    .filter((x) => x.id && x.hash && (x.hash.length === 64 || x.hash.length === 32));
+    .filter((x) => x.id && x.hash && x.algo && (x.hash.length === 64 || x.hash.length === 40 || x.hash.length === 32));
 }
 
 export async function uploadDriveFile({
@@ -297,7 +332,8 @@ export async function uploadDriveFile({
       contentBase64: base64,
       category,
       tags,
-    }
+    },
+    { requireAuth: true }
   );
 
   return {

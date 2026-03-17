@@ -8,7 +8,15 @@ import SettingsPanel from "./panels/SettingsPanel.jsx";
 import AuditPanel from "./panels/AuditPanel.jsx";
 import UsersPanel from "./panels/UsersPanel.jsx";
 import AITagsPanel from "./panels/AITagsPanel.jsx";
-import { LS, audit, readLS, removeLS } from "../../utils.js";
+import {
+  LS,
+  audit,
+  canAccessAdminTab,
+  getAuthUser,
+  hasPermission,
+  readLS,
+  removeLS,
+} from "../../utils.js";
 
 const NAVS = [
   { key: "products", label: "Sản phẩm" },
@@ -19,59 +27,57 @@ const NAVS = [
   { key: "settings", label: "Cấu hình" },
 ];
 
-/* ─── SVG Icon Set ─── */
 function NavIcon({ k, size = 20, active = false }) {
   const col = active ? "#ec4899" : "currentColor";
   const sw = 1.8;
   const base = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: col, strokeWidth: sw, strokeLinecap: "round", strokeLinejoin: "round" };
   if (k === "products") return (
     <svg {...base}>
-      <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/>
-      <line x1="3" x2="21" y1="6" y2="6"/>
-      <path d="M16 10a4 4 0 0 1-8 0"/>
+      <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z" />
+      <line x1="3" x2="21" y1="6" y2="6" />
+      <path d="M16 10a4 4 0 0 1-8 0" />
     </svg>
   );
   if (k === "upload") return (
     <svg {...base}>
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-      <polyline points="17 8 12 3 7 8"/>
-      <line x1="12" x2="12" y1="3" y2="15"/>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" x2="12" y1="3" y2="15" />
     </svg>
   );
   if (k === "users") return (
     <svg {...base}>
-      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-      <circle cx="9" cy="7" r="4"/>
-      <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-      <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
     </svg>
   );
   if (k === "aitags") return (
     <svg {...base}>
-      <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44L4.91 9.5A2.5 2.5 0 0 1 7.09 6.5H9.5V2Z" strokeWidth={sw}/>
-      <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44l2.13-10.44A2.5 2.5 0 0 0 16.91 6.5H14.5V2Z" strokeWidth={sw}/>
+      <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44L4.91 9.5A2.5 2.5 0 0 1 7.09 6.5H9.5V2Z" strokeWidth={sw} />
+      <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44l2.13-10.44A2.5 2.5 0 0 0 16.91 6.5H14.5V2Z" strokeWidth={sw} />
     </svg>
   );
   if (k === "audit") return (
     <svg {...base}>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/>
-      <polyline points="14 2 14 8 20 8"/>
-      <line x1="16" x2="8" y1="13" y2="13"/>
-      <line x1="16" x2="8" y1="17" y2="17"/>
-      <line x1="10" x2="8" y1="9" y2="9"/>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="16" x2="8" y1="13" y2="13" />
+      <line x1="16" x2="8" y1="17" y2="17" />
+      <line x1="10" x2="8" y1="9" y2="9" />
     </svg>
   );
   if (k === "settings") return (
     <svg {...base}>
-      <circle cx="12" cy="12" r="3"/>
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
     </svg>
   );
-  return <svg {...base}><circle cx="12" cy="12" r="10"/></svg>;
+  return <svg {...base}><circle cx="12" cy="12" r="10" /></svg>;
 }
 
-// Desktop sidebar
-function Sidebar({ tab, setTab, collapsed, toggle }) {
+function Sidebar({ navs, tab, setTab, collapsed, toggle }) {
   return (
     <aside
       className={`fixed top-0 left-0 z-40 h-full flex flex-col
@@ -93,7 +99,7 @@ function Sidebar({ tab, setTab, collapsed, toggle }) {
       </div>
 
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-        {NAVS.map((it) => {
+        {navs.map((it) => {
           const active = tab === it.key;
           return (
             <button
@@ -134,8 +140,7 @@ function Sidebar({ tab, setTab, collapsed, toggle }) {
   );
 }
 
-// Mobile/Tablet overlay drawer
-function MobileDrawer({ tab, setTab, open, onClose }) {
+function MobileDrawer({ navs, tab, setTab, open, onClose }) {
   return (
     <>
       {open && <div className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" onClick={onClose} />}
@@ -158,7 +163,7 @@ function MobileDrawer({ tab, setTab, open, onClose }) {
           </button>
         </div>
         <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-          {NAVS.map((it) => {
+          {navs.map((it) => {
             const active = tab === it.key;
             return (
               <button key={it.key} onClick={() => { setTab(it.key); onClose(); }}
@@ -192,9 +197,9 @@ function MobileDrawer({ tab, setTab, open, onClose }) {
   );
 }
 
-// Mobile bottom navigation bar
-function BottomNav({ tab, setTab }) {
-  const primary = NAVS.slice(0, 5);
+function BottomNav({ navs, tab, setTab }) {
+  const primary = navs.slice(0, 5);
+  if (!primary.length) return null;
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-30 lg:hidden bg-white/95 backdrop-blur-xl border-t border-gray-100 shadow-lg">
       <div className="flex items-stretch">
@@ -217,8 +222,8 @@ function BottomNav({ tab, setTab }) {
   );
 }
 
-function TopBar({ tab, onMenuClick }) {
-  const current = NAVS.find((n) => n.key === tab);
+function TopBar({ navs, tab, onMenuClick }) {
+  const current = navs.find((n) => n.key === tab);
   return (
     <header className="sticky top-0 z-30 h-14 flex items-center gap-3 px-4 sm:px-5
                        bg-white/90 backdrop-blur-xl border-b border-gray-100 shadow-sm">
@@ -267,19 +272,42 @@ function Stub({ title, icon }) {
   );
 }
 
+function PermissionStub({ title = "Không đủ quyền", description = "Tài khoản này chưa được cấp quyền cho khu vực này." }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-24 text-gray-400">
+      <span className="text-5xl mb-4 opacity-30">🔒</span>
+      <p className="text-lg font-medium text-gray-500">{title}</p>
+      <p className="text-sm mt-1">{description}</p>
+    </div>
+  );
+}
+
 export default function AdminIndex() {
+  const user = useMemo(() => getAuthUser(), []);
+  const availableNavs = useMemo(() => NAVS.filter((nav) => canAccessAdminTab(user, nav.key)), [user]);
+  const defaultTab = availableNavs[0]?.key || "";
+
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem("admin.collapsed") === "1"; } catch { return false; }
   });
   const [drawerOpen, setDrawerOpen] = useState(false);
-
-  const initialTab = useMemo(() => {
-    try { return localStorage.getItem("admin.tab"); } catch { return null; }
-  }, []);
-
-  const [tab, setTab] = useState(initialTab || "products");
+  const [tab, setTab] = useState(() => {
+    try {
+      const saved = localStorage.getItem("admin.tab");
+      if (availableNavs.some((nav) => nav.key === saved)) return saved;
+    } catch {}
+    return defaultTab;
+  });
 
   useEffect(() => {
+    if (!availableNavs.length) return;
+    if (!availableNavs.some((nav) => nav.key === tab)) {
+      setTab(defaultTab);
+    }
+  }, [availableNavs, defaultTab, tab]);
+
+  useEffect(() => {
+    if (!tab) return;
     try { localStorage.setItem("admin.tab", tab); } catch {}
   }, [tab]);
 
@@ -291,41 +319,56 @@ export default function AdminIndex() {
   };
 
   const render = () => {
+    if (!availableNavs.length) {
+      return <PermissionStub title="Chưa có tab admin khả dụng" description="Hãy cấp ít nhất một quyền .view hoặc .edit cho tài khoản này." />;
+    }
     switch (tab) {
-      case "products": return <ProductsPanel />;
-      case "upload": return <UploadPanel />;
-      case "typesize": return <TypeSizePanel />;
-      case "categories": return <Stub title="Danh mục" icon="🏷️" />;
-      case "tags": return <Stub title="Tag" icon="🔖" />;
-      case "pages": return <Stub title="Trang" icon="📄" />;
-      case "users": return <UsersPanel />;
-      case "aitags": return <AITagsPanel />;
-      case "audit": return <AuditPanel />;
-      case "settings": return <SettingsPanel />;
-      default: return <ProductsPanel />;
+      case "products":
+        return (
+          <ProductsPanel
+            canEdit={hasPermission(user, "products.edit")}
+            canDelete={hasPermission(user, "products.delete")}
+          />
+        );
+      case "upload":
+        return <UploadPanel canEdit={hasPermission(user, "upload.edit")} />;
+      case "typesize":
+        return <TypeSizePanel />;
+      case "categories":
+        return <Stub title="Danh mục" icon="🏷️" />;
+      case "tags":
+        return <Stub title="Tag" icon="🔖" />;
+      case "pages":
+        return <Stub title="Trang" icon="📄" />;
+      case "users":
+        return <UsersPanel />;
+      case "aitags":
+        return <AITagsPanel canEdit={hasPermission(user, "aitags.edit")} />;
+      case "audit":
+        return <AuditPanel />;
+      case "settings":
+        return <SettingsPanel canEdit={hasPermission(user, "settings.edit")} />;
+      default:
+        return <ProductsPanel canEdit={hasPermission(user, "products.edit")} canDelete={hasPermission(user, "products.delete")} />;
     }
   };
 
   return (
     <AuthGuard minRole="staff">
-      {/* Desktop sidebar */}
       <div className="hidden lg:block">
-        <Sidebar tab={tab} setTab={setTab} collapsed={collapsed} toggle={toggleCollapse} />
+        <Sidebar navs={availableNavs} tab={tab} setTab={setTab} collapsed={collapsed} toggle={toggleCollapse} />
       </div>
 
-      {/* Mobile/Tablet overlay drawer */}
-      <MobileDrawer tab={tab} setTab={setTab} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <MobileDrawer navs={availableNavs} tab={tab} setTab={setTab} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
-      {/* Main content area */}
       <div className={`min-h-screen bg-gray-50/80 transition-all duration-300
                        ${collapsed ? "lg:ml-[68px]" : "lg:ml-56"}
                        pb-16 lg:pb-0`}>
-        <TopBar tab={tab} onMenuClick={() => setDrawerOpen(true)} />
+        <TopBar navs={availableNavs} tab={tab} onMenuClick={() => setDrawerOpen(true)} />
         <main className="p-3 sm:p-4 lg:p-6">{render()}</main>
       </div>
 
-      {/* Mobile bottom navigation */}
-      <BottomNav tab={tab} setTab={setTab} />
+      <BottomNav navs={availableNavs} tab={tab} setTab={setTab} />
     </AuthGuard>
   );
 }

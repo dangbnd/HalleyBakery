@@ -7,6 +7,7 @@ const n = (v) => {
 export function sizeOptions(p = {}) {
   const table = Array.isArray(p?.pricing?.table) ? p.pricing.table : [];
   const bySize = p?.priceBySize && typeof p.priceBySize === "object" ? p.priceBySize : {};
+  const availableSizes = Array.isArray(p?.availableSizes) ? p.availableSizes : [];
 
   // ưu tiên thứ tự theo table
   const seen = new Set();
@@ -29,6 +30,19 @@ export function sizeOptions(p = {}) {
     out.push({ id: k, label: k, price: n(v) });
   }
 
+  if (!out.length) {
+    for (const size of availableSizes) {
+      const key = String(size?.key || size?.id || "").trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        id: key,
+        label: size?.label || key,
+        price: NaN,
+      });
+    }
+  }
+
   return out;
 }
 
@@ -36,9 +50,6 @@ export function priceFor(p = {}, sizeId) {
   if (!p) return null;
   const bySize = p?.priceBySize || {};
   if (sizeId && n(bySize[sizeId]) > 0) return n(bySize[sizeId]);
-
-  const row = (p?.pricing?.table || []).find((r) => r.key === sizeId);
-  if (row && n(row.price) > 0) return n(row.price);
 
   const base = n(p?.price);
   return base > 0 ? base : null;

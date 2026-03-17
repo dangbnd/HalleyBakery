@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { audit, readLS } from "../../../utils.js";
+import { LS, audit, readLS } from "../../../utils.js";
 import { KEYS, getConfig } from "../../../utils/config.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
 import { listDriveFileHashes, listDriveLeafFolders, uploadDriveFile } from "../shared/sheets.js";
@@ -34,7 +34,21 @@ const fmtBytes = (bytes = 0) => {
 };
 
 const META_CACHE_KEY = "admin.upload.meta.v1";
-const META_CACHE_VER = 3; // tăng số này khi cần xóa cache cũ
+const HASH_ALGO_BY_LENGTH = { 64: "sha256", 40: "sha1", 32: "md5" };
+
+function normalizeHashAlgo(hash = "", algo = "") {
+  const normalized = s(algo).toLowerCase();
+  if (normalized) return normalized;
+  return HASH_ALGO_BY_LENGTH[String(hash || "").length] || "";
+}
+
+function hashKey(hash = "", algo = "") {
+  const normalizedHash = s(hash).toLowerCase().replace(/[^a-f0-9]/g, "");
+  const normalizedAlgo = normalizeHashAlgo(normalizedHash, algo);
+  if (!normalizedHash || !normalizedAlgo) return "";
+  return `${normalizedAlgo}:${normalizedHash}`;
+}
+const META_CACHE_VER = 4; // tăng số này khi cần xóa cache cũ
 
 function readConfigSnapshot() {
   return {
@@ -351,7 +365,7 @@ function applyCategoryAutoFolder(item, categoryKey, categories, folders) {
   };
 }
 
-export default function UploadPanel() {
+export default function UploadPanel({ canEdit = true }) {
   const [bootMeta] = useState(() => readMetaCache());
   const [cfg, setCfg] = useState(() => readConfigSnapshot());
   const [categories, setCategories] = useState(() => bootMeta?.categories || []);
@@ -360,8 +374,8 @@ export default function UploadPanel() {
   const [driveHashIndex, setDriveHashIndex] = useState(() => {
     const map = new Map();
     (bootMeta?.driveHashes || []).forEach(row => {
-      const hash = s(row.hash).toLowerCase();
-      if (hash.length === 64 || hash.length === 40) (map.get(hash) || map.set(hash, []).get(hash)).push(row);
+      const key = hashKey(row.hash, row.algo);
+      if (key) (map.get(key) || map.set(key, []).get(key)).push(row);
     });
     return map;
   });
@@ -397,25 +411,26 @@ export default function UploadPanel() {
     const foldersSet = new Set(folders.map((f) => f.id));
     const byHash = new Map();
     items.forEach(it => {
-      const key = s(it.hash).toLowerCase();
+      const key = hashKey(it.hash, it.hashAlgo);
       if (key) (byHash.get(key) || byHash.set(key, []).get(key)).push(it);
     });
     const out = {};
     items.forEach(item => {
       const issues = [];
       let localDup = [], driveDup = [];
-      if (item.hash) {
-        localDup = (byHash.get(item.hash.toLowerCase()) || []).filter(x => x.id !== item.id);
+      const itemKey = hashKey(item.hash, item.hashAlgo);
+      if (itemKey) {
+        localDup = (byHash.get(itemKey) || []).filter(x => x.id !== item.id);
         if (localDup.length) issues.push(`Trùng ảnh đang chọn (${localDup[0].name}).`);
-        driveDup = driveHashIndex.get(item.hash.toLowerCase()) || [];
+        driveDup = driveHashIndex.get(itemKey) || [];
         if (driveDup.length) issues.push(`Trùng ảnh trên Drive (${driveDup[0].name}).`);
       }
       if (!item.categoryKey) issues.push("Chưa chọn danh mục.");
       if (!item.folderId || !foldersSet.has(item.folderId)) issues.push("Chưa có thư mục.");
-      out[item.id] = { canUpload: !item.done && !item.uploading && !issues.length, issues, isDuplicate: localDup.length > 0 || driveDup.length > 0 };
+      out[item.id] = { canUpload: canEdit && !item.done && !item.uploading && !issues.length, issues, isDuplicate: localDup.length > 0 || driveDup.length > 0 };
     });
     return out;
-  }, [items, folders, driveHashIndex]);
+  }, [canEdit, items, folders, driveHashIndex]);
 
   const updateItem = useCallback((id, patch) => setItems(prev => prev.map(it => it.id === id ? { ...it, ...patch } : it)), []);
 
@@ -434,6 +449,7 @@ export default function UploadPanel() {
   }, [cfg.googleOAuthClientId, oauthToken, oauthExpiresAt]);
 
   const connectDriveAuth = async () => {
+    if (!canEdit) return;
     setOauthBusy(true);
     try {
       await ensureDirectAccessToken({ interactive: true });
@@ -442,6 +458,7 @@ export default function UploadPanel() {
   };
 
   const clearDriveAuth = () => {
+    if (!canEdit) return;
     setOauthToken("");
     setOauthExpiresAt(0);
     oauthTaskRef.current = null;
@@ -449,20 +466,26 @@ export default function UploadPanel() {
   };
 
   const refreshDriveHashes = async () => {
+    if (!canEdit) return;
     if (!directReady) return alert("Cần kết nối Google Drive Direct trước!");
     setHashStatus({ status: "loading", message: "Đang tải...", total: 0 });
     try {
-      const token = await ensureDirectAccessToken();
-      const hashes = await listDriveFileHashes({ accessToken: token, rootFolderId: cfg.driveRootId });
+      await ensureDirectAccessToken();
+      const hashes = await listDriveFileHashes({ rootFolderId: cfg.driveRootId });
       
       const map = new Map();
       hashes.forEach(row => {
-        const h = s(row.hash).toLowerCase();
-        if (h.length === 64 || h.length === 40) (map.get(h) || map.set(h, []).get(h)).push(row);
+        const key = hashKey(row.hash, row.algo);
+        if (key) (map.get(key) || map.set(key, []).get(key)).push(row);
       });
       setDriveHashIndex(map);
       
-      const newStat = { status: "success", message: "Tải thành công", total: hashes.length, sha256Count: map.size };
+      const newStat = {
+        status: "success",
+        message: "Tải thành công",
+        total: hashes.length,
+        sha256Count: hashes.filter((row) => normalizeHashAlgo(row.hash, row.algo) === "sha256").length,
+      };
       setHashStatus(newStat);
       writeMetaCache({ categories, folders, tagOptions, hashStatus: newStat, driveHashes: hashes });
     } catch (e) {
@@ -474,34 +497,42 @@ export default function UploadPanel() {
     updateItem(id, { hashLoading: true });
     const buffer = await file.arrayBuffer();
     const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", buffer))).map(b => b.toString(16).padStart(2, "0")).join("");
-    updateItem(id, { hash, hashLoading: false });
+    updateItem(id, { hash, hashAlgo: "sha256", hashLoading: false });
   }, [updateItem]);
 
   const refreshMeta = useCallback(async () => {
+    if (!canEdit) return;
     setMetaLoading(true);
     try {
       const nextCfg = readConfigSnapshot(); setCfg(nextCfg);
       const rows = await fetchTabAsObjects({ sheetId: nextCfg.sheetId, gid: nextCfg.categoryGid || nextCfg.menuGid });
       const nCats = parseCategoryRows(rows);
       const mapped = parseCategoryFolderMapRows(rows);
-      let nFol = mapped.length ? mapped : await listDriveLeafFolders({ rootFolderId: nextCfg.driveRootId });
+      let nFol = mapped;
+      if (!nFol.length && nextCfg.driveRootId) {
+        nFol = await listDriveLeafFolders({ rootFolderId: nextCfg.driveRootId });
+      }
       setCategories(nCats); setFolders(nFol);
       setItems(prev => prev.map(it => it.categoryKey && !it.folderManual ? applyCategoryAutoFolder(it, it.categoryKey, nCats, nFol) : it));
       writeMetaCache({ categories: nCats, folders: nFol, tagOptions, hashStatus });
+    } catch (e) {
+      alert(e?.message || "Khong tai duoc du lieu bo tro upload.");
     } finally { setMetaLoading(false); }
-  }, [tagOptions, hashStatus]);
+  }, [canEdit, tagOptions, hashStatus]);
 
   const addFiles = useCallback((fileList) => {
+    if (!canEdit) return;
     const nextItems = Array.from(fileList || []).filter(f => /^image\//i.test(f.type)).map(file => ({
       id: makeUid(), file, name: file.name, size: file.size, type: file.type, previewUrl: URL.createObjectURL(file),
-      selected: true, categoryKey: "", folderId: "", tagsText: "", aiLoading: false, hash: "", hashLoading: true, done: false
+      selected: true, categoryKey: "", folderId: "", tagsText: "", aiLoading: false, hash: "", hashAlgo: "", hashLoading: true, done: false
     }));
     setItems(prev => [...prev, ...nextItems]);
     nextItems.forEach(it => computeHash(it.id, it.file));
-  }, [computeHash]);
+  }, [canEdit, computeHash]);
 
   const runAiOne = async (id) => {
-    const item = items.find(x => x.id === id);
+    if (!canEdit) return;
+    const item = itemsRef.current.find(x => x.id === id);
     const keys = readAllGeminiKeys();
     const modelIds = readActiveModels();
     if (!item) return;
@@ -565,6 +596,7 @@ export default function UploadPanel() {
   };
 
   const uploadOne = async (id) => {
+    if (!canEdit) return;
     const item = itemsRef.current.find(x => x.id === id);
     if (!item || !validationMap[id]?.canUpload) return;
     updateItem(id, { uploading: true, error: "" });
@@ -583,16 +615,32 @@ export default function UploadPanel() {
         name: item.name,
         category: item.categoryKey,
         folderId: item.folderId,
-        user: (readLS("auth", {}) || {}).username || "?",
+        user: (readLS(LS.AUTH, {}) || {}).username || "?",
       });
     } catch (e) { updateItem(id, { uploading: false, error: e.message }); }
   };
 
   const uploadSelected = async () => {
+    if (!canEdit) return;
     setBulkUploading(true);
-    const targets = items.filter(x => x.selected && validationMap[x.id]?.canUpload);
-    for (const item of targets) await uploadOne(item.id);
-    setBulkUploading(false);
+    try {
+      const targets = itemsRef.current.filter(x => x.selected && validationMap[x.id]?.canUpload);
+      for (const item of targets) await uploadOne(item.id);
+    } finally {
+      setBulkUploading(false);
+    }
+  };
+  
+  const runAiSelected = async () => {
+    if (!canEdit || bulkAiRunning) return;
+    const targets = itemsRef.current.filter(x => x.selected && !x.done);
+    if (!targets.length) return;
+    setBulkAiRunning(true);
+    try {
+      for (const item of targets) await runAiOne(item.id);
+    } finally {
+      setBulkAiRunning(false);
+    }
   };
   
   const totalSelected = items.filter(x => x.selected).length;
@@ -602,7 +650,7 @@ export default function UploadPanel() {
     <div className="space-y-4">
       {/* Header Area */}
       <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between">
           <div>
             <h2 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">Upload Ảnh</h2>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 font-medium">
@@ -622,13 +670,13 @@ export default function UploadPanel() {
           {/* Right-side primary actions */}
           <div className="flex items-center gap-1.5 sm:gap-2">
             {hasDirectConfig && !directReady && (
-              <button onClick={connectDriveAuth} disabled={oauthBusy}
+              <button onClick={connectDriveAuth} disabled={oauthBusy || !canEdit}
                 className="h-9 px-2.5 sm:px-3.5 rounded-xl border border-sky-200 text-sky-700 bg-sky-50 hover:bg-sky-100 font-semibold transition shadow-sm text-xs sm:text-sm flex items-center gap-1.5">
                 {oauthBusy ? "Đang kết nối..." : <><span>🔌</span><span className="hidden sm:inline">Kết nối Drive</span></>}
               </button>
             )}
             {hasDirectConfig && directReady && (
-              <button onClick={clearDriveAuth}
+              <button onClick={clearDriveAuth} disabled={!canEdit}
                 className="h-9 px-2.5 sm:px-3.5 rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-red-500 transition shadow-sm text-xs sm:text-sm flex items-center gap-1.5">
                 <span className="hidden sm:inline">Ngắt kết nối</span><span className="sm:hidden">⏻</span>
               </button>
@@ -637,31 +685,32 @@ export default function UploadPanel() {
               className="h-9 px-2.5 sm:px-3.5 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition shadow-sm text-xs sm:text-sm flex items-center gap-1.5" title="Cài đặt hệ thống">
               ⚙️<span className="hidden lg:inline"> Cấu hình / Thông số</span>
             </button>
-            <button onClick={refreshMeta} disabled={metaLoading}
+            <button onClick={refreshMeta} disabled={!canEdit || metaLoading}
               className="h-9 px-2.5 sm:px-3.5 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition shadow-sm text-xs sm:text-sm flex items-center gap-1.5 disabled:opacity-50" title="Tải lại danh mục">
               <span className={metaLoading ? "animate-spin" : ""}>&#8635;</span><span className="hidden lg:inline"> Tải Sheet</span>
             </button>
           </div>
         </div>
+        {!canEdit && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Tài khoản này chỉ có quyền xem. Mọi thao tác thêm ảnh, AI, upload và cập nhật cấu hình đã bị khóa.
+          </div>
+        )}
         {/* Secondary action row: Chọn ảnh + AI + Upload */}
         <div className="flex gap-2">
           {/* File input (hidden) - reused by both button and dropzone */}
           <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
           {/* Chọn ảnh button - chỉ hiện trên mobile */}
-          <button onClick={() => fileInputRef.current?.click()}
+          <button onClick={() => canEdit && fileInputRef.current?.click()} disabled={!canEdit}
             className="sm:hidden flex-1 h-9 px-3 rounded-xl border-2 border-dashed border-indigo-300 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 font-semibold transition text-xs flex items-center justify-center gap-1.5">
             📷 Chọn ảnh
           </button>
-          <button onClick={() => {
-            setBulkAiRunning(true);
-            items.filter(x => x.selected && !x.done).forEach(it => runAiOne(it.id));
-            setTimeout(() => setBulkAiRunning(false), 2000);
-          }}
-            disabled={bulkAiRunning || items.length === 0}
+          <button onClick={runAiSelected}
+            disabled={!canEdit || bulkAiRunning || items.length === 0}
             className="flex-1 sm:flex-none h-9 sm:h-10 px-3 sm:px-5 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 font-semibold transition text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-40">
             ✨ <span className="hidden sm:inline">AI Gợi ý Tất cả</span><span className="sm:hidden">AI full</span>
           </button>
-          <button onClick={uploadSelected} disabled={bulkUploading || items.length === 0}
+          <button onClick={uploadSelected} disabled={!canEdit || bulkUploading || items.length === 0}
             className="flex-1 sm:flex-none h-9 sm:h-10 px-3 sm:px-5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-semibold shadow-md shadow-emerald-500/20 text-xs sm:text-sm transition disabled:opacity-40">
             {bulkUploading ? "Đang đẩy..." : <><span className="hidden sm:inline">Upload Hợp Lệ</span><span className="sm:hidden">Upload</span></>}
           </button>
@@ -673,11 +722,11 @@ export default function UploadPanel() {
           <div className="flex flex-wrap items-center gap-2">
             {hasDirectConfig ? (
               <>
-                <button onClick={connectDriveAuth} disabled={oauthBusy} className={`h-9 px-4 text-xs font-semibold rounded-xl border disabled:opacity-60 transition shadow-sm ${directReady ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"}`}>
+                <button onClick={connectDriveAuth} disabled={oauthBusy || !canEdit} className={`h-9 px-4 text-xs font-semibold rounded-xl border disabled:opacity-60 transition shadow-sm ${directReady ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"}`}>
                   {oauthBusy ? "Đang kết nối..." : directReady ? "✔️ Đã kết nối Google Drive" : "Kết nối Google Drive"}
                 </button>
                 {directReady && (
-                  <button onClick={clearDriveAuth} className="h-9 px-4 text-xs font-semibold rounded-xl border border-gray-200 hover:bg-gray-50 shadow-sm transition">Xóa kết nối</button>
+                  <button onClick={clearDriveAuth} disabled={!canEdit} className="h-9 px-4 text-xs font-semibold rounded-xl border border-gray-200 hover:bg-gray-50 shadow-sm transition disabled:opacity-50">Xóa kết nối</button>
                 )}
               </>
             ) : (
@@ -685,7 +734,7 @@ export default function UploadPanel() {
                 Thiếu Google OAuth Client ID
               </div>
             )}
-            <button onClick={() => refreshDriveHashes()} disabled={hashStatus.status === "loading" || !directReady} className="h-9 px-4 text-xs font-semibold rounded-xl border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 shadow-sm transition">
+            <button onClick={() => refreshDriveHashes()} disabled={!canEdit || hashStatus.status === "loading" || !directReady} className="h-9 px-4 text-xs font-semibold rounded-xl border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 shadow-sm transition">
               {hashStatus.status === "loading" ? "Đang nạp hash..." : "Nạp hash Drive"}
             </button>
           </div>
@@ -713,10 +762,11 @@ export default function UploadPanel() {
                 <textarea
                   value={aiCategoryPrompt}
                   onChange={e => { setAiCategoryPrompt(e.target.value); localStorage.setItem("upload_ai_cat_prompt", e.target.value); }}
+                  disabled={!canEdit}
                   placeholder="VD: Chú ý các hình vẽ nhân vật hoạt hình phải chọn danh mục ve-nhan-vat..."
                   rows={Math.max(2, (aiCategoryPrompt || '').split('\n').length)}
                   style={{overflow:'hidden'}}
-                  className="w-full text-[11px] px-2.5 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:border-indigo-400 outline-none resize-none text-gray-700 placeholder-gray-300"
+                  className="w-full text-[11px] px-2.5 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:border-indigo-400 outline-none resize-none text-gray-700 placeholder-gray-300 disabled:opacity-60"
                 />
               </div>
               <div>
@@ -724,10 +774,11 @@ export default function UploadPanel() {
                 <textarea
                   value={aiTagsPrompt}
                   onChange={e => { setAiTagsPrompt(e.target.value); localStorage.setItem("upload_ai_tags_prompt", e.target.value); }}
+                  disabled={!canEdit}
                   placeholder="VD: Tập trung vào màu sắc và nhân vật chính. Tags nên ngắn gọn 1-3 từ..."
                   rows={Math.max(2, (aiTagsPrompt || '').split('\n').length)}
                   style={{overflow:'hidden'}}
-                  className="w-full text-[11px] px-2.5 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:border-indigo-400 outline-none resize-none text-gray-700 placeholder-gray-300"
+                  className="w-full text-[11px] px-2.5 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:border-indigo-400 outline-none resize-none text-gray-700 placeholder-gray-300 disabled:opacity-60"
                 />
               </div>
             </div>
@@ -740,11 +791,11 @@ export default function UploadPanel() {
       )}
 
       {/* Dropzone - ẩn trên mobile (sm), hiện trên desktop */}
-      <div className="hidden sm:block relative group rounded-3xl border-2 border-dashed border-indigo-200 bg-indigo-50/30 hover:bg-indigo-50 hover:border-indigo-400 transition-all duration-300 p-8 text-center cursor-pointer shadow-sm"
-           onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('bg-indigo-100', 'border-indigo-500'); }}
-           onDragLeave={(e) => { e.currentTarget.classList.remove('bg-indigo-100', 'border-indigo-500'); }}
-           onDrop={(e) => { e.preventDefault(); e.currentTarget.classList.remove('bg-indigo-100', 'border-indigo-500'); addFiles(e.dataTransfer.files); }}
-           onClick={() => fileInputRef.current?.click()}>
+      <div className={`hidden sm:block relative group rounded-3xl border-2 border-dashed border-indigo-200 bg-indigo-50/30 transition-all duration-300 p-8 text-center shadow-sm ${canEdit ? "cursor-pointer hover:bg-indigo-50 hover:border-indigo-400" : "cursor-not-allowed opacity-70"}`}
+           onDragOver={(e) => { if (!canEdit) return; e.preventDefault(); e.currentTarget.classList.add('bg-indigo-100', 'border-indigo-500'); }}
+           onDragLeave={(e) => { if (!canEdit) return; e.currentTarget.classList.remove('bg-indigo-100', 'border-indigo-500'); }}
+           onDrop={(e) => { if (!canEdit) return; e.preventDefault(); e.currentTarget.classList.remove('bg-indigo-100', 'border-indigo-500'); addFiles(e.dataTransfer.files); }}
+           onClick={() => { if (!canEdit) return; fileInputRef.current?.click(); }}>
         <div className="w-16 h-16 mx-auto bg-white rounded-full shadow-sm flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
           <svg className="w-8 h-8 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
         </div>
@@ -758,13 +809,13 @@ export default function UploadPanel() {
           <div className="flex items-center gap-1 flex-wrap">
             <span className="text-sm font-semibold text-gray-700 shrink-0">{items.length} ảnh</span>
             <div className="flex items-center gap-0.5 ml-auto">
-              <button onClick={() => setItems(items.map(x => ({ ...x, selected: true })))} className="text-xs text-gray-500 px-1.5 py-1 rounded hover:bg-gray-100 transition whitespace-nowrap">Chọn tất</button>
+              <button onClick={() => setItems(items.map(x => ({ ...x, selected: true })))} disabled={!canEdit} className="text-xs text-gray-500 px-1.5 py-1 rounded hover:bg-gray-100 transition whitespace-nowrap disabled:opacity-40">Chọn tất</button>
               <span className="text-gray-200">|</span>
-              <button onClick={() => setItems(items.map(x => ({ ...x, selected: false })))} className="text-xs text-gray-500 px-1.5 py-1 rounded hover:bg-gray-100 transition whitespace-nowrap">Bỏ chọn</button>
+              <button onClick={() => setItems(items.map(x => ({ ...x, selected: false })))} disabled={!canEdit} className="text-xs text-gray-500 px-1.5 py-1 rounded hover:bg-gray-100 transition whitespace-nowrap disabled:opacity-40">Bỏ chọn</button>
               <span className="text-gray-200">|</span>
-              <button onClick={() => setItems(items.filter(x => !x.done))} className="text-xs text-gray-500 px-1.5 py-1 rounded hover:bg-gray-100 transition whitespace-nowrap">Dọn</button>
+              <button onClick={() => setItems(items.filter(x => !x.done))} disabled={!canEdit} className="text-xs text-gray-500 px-1.5 py-1 rounded hover:bg-gray-100 transition whitespace-nowrap disabled:opacity-40">Dọn</button>
               <span className="text-gray-200">|</span>
-              <button onClick={() => setItems([])} className="text-xs text-red-400 px-1.5 py-1 rounded hover:bg-red-50 transition whitespace-nowrap">Xóa hết</button>
+              <button onClick={() => setItems([])} disabled={!canEdit} className="text-xs text-red-400 px-1.5 py-1 rounded hover:bg-red-50 transition whitespace-nowrap disabled:opacity-40">Xóa hết</button>
             </div>
           </div>
 
@@ -783,11 +834,11 @@ export default function UploadPanel() {
                     <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                     
                     {/* Checkbox top-left */}
-                    <input type="checkbox" checked={item.selected} onChange={() => updateItem(item.id, { selected: !item.selected })}
+                    <input type="checkbox" checked={item.selected} onChange={() => updateItem(item.id, { selected: !item.selected })} disabled={!canEdit}
                       className="absolute top-2 left-2 w-4 h-4 cursor-pointer accent-indigo-500 z-10" />
                     
                     {/* Delete btn top-right */}
-                    <button onClick={() => setItems(prev => prev.filter(x => x.id !== item.id))}
+                    <button onClick={() => canEdit && setItems(prev => prev.filter(x => x.id !== item.id))} disabled={!canEdit}
                       className="absolute top-2 right-2 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-black/30 hover:bg-red-500 text-white transition opacity-0 group-hover:opacity-100">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
                         <path d="M5.28 4.22a.75.75 0 0 0-1.06 1.06L6.94 8l-2.72 2.72a.75.75 0 1 0 1.06 1.06L8 9.06l2.72 2.72a.75.75 0 1 0 1.06-1.06L9.06 8l2.72-2.72a.75.75 0 0 0-1.06-1.06L8 6.94 5.28 4.22Z"/>
@@ -822,7 +873,7 @@ export default function UploadPanel() {
                       </div>
                       <div className="flex gap-1 shrink-0">
                         {/* AI button */}
-                        <button onClick={() => runAiOne(item.id)} disabled={item.aiLoading}
+                        <button onClick={() => runAiOne(item.id)} disabled={!canEdit || item.aiLoading}
                           className="w-6 h-6 flex items-center justify-center rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-500 disabled:opacity-40 transition"
                           title="AI gợi ý category + tag">
                           {item.aiLoading
@@ -843,20 +894,20 @@ export default function UploadPanel() {
                     <select value={item.categoryKey} onChange={e => {
                       const it = applyCategoryAutoFolder(item, e.target.value, categories, folders);
                       updateItem(item.id, { categoryKey: it.categoryKey, folderId: it.folderId, folderHint: it.folderHint });
-                    }} className="w-full h-7 px-2 text-[11px] bg-gray-50 border border-gray-200 rounded-lg focus:border-indigo-400 outline-none cursor-pointer text-gray-700">
+                    }} disabled={!canEdit} className="w-full h-7 px-2 text-[11px] bg-gray-50 border border-gray-200 rounded-lg focus:border-indigo-400 outline-none cursor-pointer text-gray-700 disabled:opacity-60">
                       <option value="">📁 Chọn danh mục...</option>
                       {categories.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
                     </select>
 
-                    <select value={item.folderId} onChange={e => updateItem(item.id, { folderId: e.target.value, folderManual: true })}
-                      className="w-full h-7 px-2 text-[11px] bg-gray-50 border border-gray-200 rounded-lg focus:border-indigo-400 outline-none cursor-pointer text-gray-700">
+                    <select value={item.folderId} onChange={e => updateItem(item.id, { folderId: e.target.value, folderManual: true })} disabled={!canEdit}
+                      className="w-full h-7 px-2 text-[11px] bg-gray-50 border border-gray-200 rounded-lg focus:border-indigo-400 outline-none cursor-pointer text-gray-700 disabled:opacity-60">
                       <option value="">📂 Thư mục...</option>
                       {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                     </select>
 
-                    <input value={item.tagsText} onChange={e => updateItem(item.id, { tagsText: e.target.value })}
+                    <input value={item.tagsText} onChange={e => updateItem(item.id, { tagsText: e.target.value })} disabled={!canEdit}
                       placeholder="🏷 Tags..."
-                      className="w-full h-7 px-2 text-[11px] bg-gray-50 border border-gray-200 rounded-lg focus:border-indigo-400 outline-none text-gray-700" />
+                      className="w-full h-7 px-2 text-[11px] bg-gray-50 border border-gray-200 rounded-lg focus:border-indigo-400 outline-none text-gray-700 disabled:opacity-60" />
 
                     {/* Errors */}
                     {(check.issues[0] || item.error) && (

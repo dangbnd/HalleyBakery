@@ -57,15 +57,20 @@ async function loadData() {
     }
 
     // Fetch sÃ¡ÂºÂ£n phÃ¡ÂºÂ©m tÃ¡Â»Â« tÃ¡ÂºÂ¥t cÃ¡ÂºÂ£ tab
+    const normalizeGid = (v = "") => String(v || "").trim().replace(/[^\d]/g, "");
     const tabs = PRODUCT_TABS
         .split(/[\n,;]+/)
         .map(t => t.trim())
         .filter(Boolean)
         .map(t => {
-            const [gid, key] = t.split(":");
-            return { gid: (gid || "").trim(), key: (key || "").trim() };
+            const gidFirst = t.match(/^(\d+)\s*:\s*(.+)$/);
+            if (gidFirst) return { gid: normalizeGid(gidFirst[1]), key: String(gidFirst[2] || "product").trim() || "product" };
+            const keyFirst = t.match(/^(.+?)\s*:\s*(\d+)$/);
+            if (keyFirst) return { gid: normalizeGid(keyFirst[2]), key: String(keyFirst[1] || "product").trim() || "product" };
+            return null;
         })
-        .filter(t => t.gid && t.key);
+        .filter(Boolean)
+        .filter((tab, index, arr) => tab.gid && tab.key && arr.findIndex((x) => x.gid === tab.gid) === index);
 
     const results = await Promise.allSettled(
         tabs.map(async t => {

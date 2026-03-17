@@ -1,5 +1,6 @@
 import { tagKey, toTagArray } from "../utils/tagKey.js";
 import { normalizeImageUrl } from "../utils/img.js";
+import { parseBooleanLike } from "../utils.js";
 import { cachedText } from "./cache.js";
 
 /* ===================== Fetch helpers ===================== */
@@ -230,7 +231,7 @@ export function mapProducts(rows = [], imageIndex) {
           String(r.category || r.danh_muc || r["danh mục"] || r.loai || r.type || "").trim(),
         typeId: r.typeid || r.type || "",
         images,
-        banner: !!(r.active || r.banner || "").toString().trim(),
+        banner: parseBooleanLike(r.banner ?? r.active, false),
         tags: toTagArray(r.tags ?? r.tag ?? r["nhãn"]),
         price,
         sizes: parseSizesCell(r.sizes ?? r.size ?? r.Sizes ?? r.Size),
@@ -435,9 +436,10 @@ export function sizesForProduct(product, types = []) {
 export function enrichProductPricing(p, types = [], levels = []) {
   const type = types.find(t => t.id === (p.typeId || p.type) || t.code === (p.typeId || p.type)) || null;
   const schemeId = type?.schemeId || null;
-  const level = schemeId ? levels.find(l => l.schemeId === schemeId) : null;
+  const availableSizes = sizesForProduct(p, types);
 
-  // chuẩn hoá priceBySize: "10" -> "10-0", loại giá <= 0
+  // Chi lay gia duoc khai bao tren chinh dong san pham.
+  // Khong fallback sang bang gia scheme/level khi product de trong gia.
   const pbRaw = p.priceBySize || {};
   const pb = {};
   for (const [k, v] of Object.entries(pbRaw)) {
@@ -447,30 +449,18 @@ export function enrichProductPricing(p, types = [], levels = []) {
   }
 
   const keysFromPB = Object.keys(pb);
-  const keysFromProduct = Array.isArray(p.sizes) && p.sizes.length
-    ? p.sizes.map(s => {
-      const [c, h] = String(s).split("@");
-      const n = Number(h);
-      return Number.isFinite(n) ? `${c}-${n}` : `${s}-0`;
-    })
-    : [];
-  const keysFromLevel = Object.keys(level?.prices || {});
-  const keys = (keysFromPB.length ? keysFromPB :
-    (keysFromProduct.length ? keysFromProduct : keysFromLevel));
+  const sizeDict = new Map((availableSizes || []).map((s) => [s.key, s]));
 
-  const typeSizes = (type ? type.sizes : []).map(s => (s && typeof s === "object") ? s : labelFromKey(s));
-  const sizeDict = new Map(typeSizes.map(s => [s.key, s]));
-
-  const table = [...new Set(keys)]
+  const table = [...new Set(keysFromPB)]
     .map(k => {
       const meta = sizeDict.get(k) || labelFromKey(k);
-      const val = pb[k] ?? level?.prices?.[k] ?? null;
+      const val = pb[k] ?? null;
       const num = Number(val);
       return { key: k, label: meta.label, price: Number.isFinite(num) && num > 0 ? num : null };
     })
     .filter(r => r.price != null);
 
-  return { ...p, pricing: { schemeId, table } };
+  return { ...p, availableSizes, pricing: { schemeId, table } };
 }
 
 export function mapSchemes(rows = []) {

@@ -1,6 +1,6 @@
 // src/components/Admin/panels/ProductsPanel.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { readLS, writeLS, audit } from "../../../utils.js";
+import { LS, audit, parseBooleanLike, readLS, writeLS } from "../../../utils.js";
 import { listSheet, updateToSheet, deleteFromSheet } from "../shared/sheets.js";
 import { getConfig } from "../../../utils/config.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
@@ -45,7 +45,7 @@ const normProduct = (row) => ({
   id: stableRowId(row),
   name: s(row.name).trim(),
   category: s(row.category).trim(),
-  active: !!(row.active ?? true),
+  active: parseBooleanLike(row.active, true),
   images: Array.isArray(row.images) ? row.images : normImages(parseMaybeJSON(row.images ?? row.image)),
   description: s(row.description || row.desc || ""),
   tags: s(row.tags || ""),
@@ -53,7 +53,7 @@ const normProduct = (row) => ({
 });
 
 /* ====================== MAIN ====================== */
-export default function ProductsPanel() {
+export default function ProductsPanel({ canEdit = true, canDelete = true }) {
   const [products, setProducts] = useState(() => safe(readLS("products") || []));
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
@@ -154,16 +154,21 @@ export default function ProductsPanel() {
   const safePage = Math.min(page, totalPages);
   const paged = view.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  function startEdit(row) { setEditId(row.id); setDraft({ ...row, images: [...(row.images || [])] }); }
+  function startEdit(row) {
+    if (!canEdit) return;
+    setEditId(row.id);
+    setDraft({ ...row, images: [...(row.images || [])] });
+  }
   function cancelEdit() { setEditId(null); setDraft(null); }
   async function saveEdit() {
+    if (!canEdit) return;
     const clean = normProduct({ ...draft, images: normImages(draft.image || draft.images) });
     try {
       await updateToSheet("Products", clean);
       const next = products.map((p) => (p.id === editId ? clean : p));
       setProducts(next);
       writeLS("products", next);
-      audit("product.update", { id: clean.id, name: clean.name, user: (readLS("auth") || {}).username || "?" });
+      audit("product.update", { id: clean.id, name: clean.name, user: (readLS(LS.AUTH) || {}).username || "?" });
       cancelEdit();
     } catch (e) {
       console.error("update Products failed:", e);
@@ -171,12 +176,13 @@ export default function ProductsPanel() {
     }
   }
   async function removeRow(row) {
+    if (!canDelete) return;
     try {
       await deleteFromSheet("Products", row.id);
       const next = products.filter((p) => p.id !== row.id);
       setProducts(next);
       writeLS("products", next);
-      audit("product.delete", { id: row.id, name: row.name, user: (readLS("auth") || {}).username || "?" });
+      audit("product.delete", { id: row.id, name: row.name, user: (readLS(LS.AUTH) || {}).username || "?" });
     } catch (e) {
       console.error("delete Products failed:", e);
       alert("Không xoá được sản phẩm.");
@@ -242,6 +248,13 @@ export default function ProductsPanel() {
     <div className="flex flex-col" style={{ height: 'calc(100vh - 7rem)' }}>
       {/* Header */}
       <div className="shrink-0 space-y-2 mb-2">
+        {(!canEdit || !canDelete) && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            {canEdit
+              ? "Tài khoản này chỉ được sửa sản phẩm, không được xoá."
+              : "Tài khoản này chỉ có quyền xem sản phẩm."}
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <select className={`h-8 px-2 pr-6 text-[11px] font-medium rounded-full border appearance-none bg-no-repeat transition cursor-pointer focus:outline-none flex-1 min-w-0 sm:flex-none ${catFilter ? "bg-purple-50 text-purple-700 border-purple-200" : "border-gray-200 text-gray-500 hover:bg-gray-50 bg-white"}`}
             style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")", backgroundPosition: "right 6px center" }}
@@ -300,14 +313,20 @@ export default function ProductsPanel() {
                     )}
                   </div>
                 </div>
-                <div className="flex gap-0.5 shrink-0">
-                  <button onClick={() => startEdit(row)} className="p-1.5 text-gray-300 hover:text-blue-500 rounded-lg transition">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
-                  </button>
-                  <button onClick={() => removeRow(row)} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg transition">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
-                  </button>
-                </div>
+                 {(canEdit || canDelete) && (
+                   <div className="flex gap-0.5 shrink-0">
+                     {canEdit && (
+                       <button onClick={() => startEdit(row)} className="p-1.5 text-gray-300 hover:text-blue-500 rounded-lg transition">
+                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
+                       </button>
+                     )}
+                     {canDelete && (
+                       <button onClick={() => removeRow(row)} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg transition">
+                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+                       </button>
+                     )}
+                   </div>
+                 )}
               </div>
             )}
           </div>
@@ -379,15 +398,21 @@ export default function ProductsPanel() {
                       <button onClick={cancelEdit} className="px-2 py-1 text-[10px] text-gray-500 hover:bg-gray-100 rounded transition">✕</button>
                     </div>
                   ) : (
-                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => startEdit(row)} className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Sửa">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
-                      </button>
-                      <button onClick={() => removeRow(row)} className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition" title="Xoá">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
-                      </button>
-                    </div>
-                  )}
+                     (canEdit || canDelete) && (
+                       <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                         {canEdit && (
+                           <button onClick={() => startEdit(row)} className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Sửa">
+                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
+                           </button>
+                         )}
+                         {canDelete && (
+                           <button onClick={() => removeRow(row)} className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition" title="Xoá">
+                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+                           </button>
+                         )}
+                       </div>
+                     )
+                   )}
                 </td>
               </tr>
             ))}

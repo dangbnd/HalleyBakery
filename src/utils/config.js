@@ -21,6 +21,7 @@ const KEYS = {
     ZALO_LINK: "zalo_link",
     API_ALL_URL: "api_all_url",
     GS_WEBAPP_URL: "gs_webapp_url",
+    GS_WEBAPP_TOKEN: "gs_webapp_token",
     GOOGLE_OAUTH_CLIENT_ID: "google_oauth_client_id",
     GEMINI_API_KEY: "gemini_api_key",
     ENABLE_VISITOR_TRACKING: "enable_visitor_tracking",

@@ -7,6 +7,10 @@ const PERMISSIONS = [
     { key: "products.view", label: "Xem sản phẩm", group: "Sản phẩm", icon: "🛍️" },
     { key: "products.edit", label: "Thêm / sửa sản phẩm", group: "Sản phẩm", icon: "🛍️" },
     { key: "products.delete", label: "Xoá sản phẩm", group: "Sản phẩm", icon: "🛍️" },
+    { key: "upload.view", label: "Xem tab upload", group: "Upload", icon: "📤" },
+    { key: "upload.edit", label: "Upload ảnh lên Drive", group: "Upload", icon: "📤" },
+    { key: "aitags.view", label: "Xem AI Tags", group: "AI Tags", icon: "✨" },
+    { key: "aitags.edit", label: "Chạy / áp dụng AI Tags", group: "AI Tags", icon: "✨" },
     { key: "categories.view", label: "Xem danh mục", group: "Danh mục", icon: "🏷️" },
     { key: "categories.edit", label: "Sửa danh mục", group: "Danh mục", icon: "🏷️" },
     { key: "typesize.view", label: "Xem loại & size", group: "Loại & Size", icon: "📐" },
@@ -500,6 +504,5 @@ export default function UsersPanel() {
         </div>
     );
 }
-
 
 

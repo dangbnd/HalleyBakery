@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { getAllConfig, setAllConfig, setConfig, resetAllConfig, KEYS } from "../../../utils/config.js";
-import { audit, readLS } from "../../../utils.js";
+import { LS, audit, readLS } from "../../../utils.js";
 import { buildUnifiedApiUrl } from "../../../services/sheets.multi.js";
 
 const MANUAL_FIELDS = [
@@ -40,6 +40,15 @@ const MANUAL_FIELDS = [
     placeholder: "1234567890-xxxx.apps.googleusercontent.com",
     desc: "Dung cho direct upload Drive (giu chat luong 100%).",
     icon: "🔐",
+  },
+  {
+    key: KEYS.GS_WEBAPP_TOKEN,
+    label: "GS WebApp Admin Token",
+    placeholder: "HB_ADMIN_TOKEN",
+    desc: "Can trung voi Script Property HB_ADMIN_TOKEN tren Apps Script.",
+    icon: "ðŸ”—",
+    type: "password",
+    span: "sm:col-span-2",
   },
   {
     key: KEYS.GEMINI_API_KEY,
@@ -352,7 +361,7 @@ function ConfigSection({ icon, title, badge, children }) {
   );
 }
 
-function Field({ field, value, onChange }) {
+function Field({ field, value, onChange, disabled = false }) {
   const id = `cfg-${field.key}`;
   return (
     <div className={field.span || ""}>
@@ -363,24 +372,24 @@ function Field({ field, value, onChange }) {
       {field.desc && <p className="text-[10px] text-gray-400 mb-1 leading-4">{field.desc}</p>}
       <input
         id={id}
-        type="text"
+        type={field.type || "text"}
         className={`w-full border rounded-xl px-3 py-2 text-xs font-mono
                    focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400
                    outline-none transition-all duration-200
-                   ${field.readOnly
+                    ${field.readOnly || disabled
             ? "bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed"
             : "bg-white border-gray-200 hover:border-gray-300 text-gray-800"
           }`}
         value={value}
-        onChange={(e) => { if (!field.readOnly) onChange(field.key, e.target.value); }}
+        onChange={(e) => { if (!field.readOnly && !disabled) onChange(field.key, e.target.value); }}
         placeholder={field.placeholder}
-        disabled={field.readOnly}
+        disabled={field.readOnly || disabled}
       />
     </div>
   );
 }
 
-export default function SettingsPanel() {
+export default function SettingsPanel({ canEdit = true }) {
   const [values, setValues] = useState({});
   const [saved, setSaved] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
@@ -407,6 +416,7 @@ export default function SettingsPanel() {
   }, []);
 
   const update = (key, val) => {
+    if (!canEdit) return;
     if (key === KEYS.SHEET_ID || key === KEYS.DRIVE_FOLDER_ID) {
       autoLastSignatureRef.current = "";
       if (key === KEYS.SHEET_ID && !String(val || "").trim()) {
@@ -441,6 +451,7 @@ export default function SettingsPanel() {
   const canSyncNow = !!unifiedApiUrl;
 
   useEffect(() => {
+    if (!canEdit) { setAutoBusy(false); setAutoMsg(""); return; }
     if (!sheetValue) { setAutoBusy(false); setAutoMsg(""); return; }
     const signature = `${sheetValue}::${driveValue}`;
     if (signature === autoLastSignatureRef.current) return;
@@ -465,7 +476,7 @@ export default function SettingsPanel() {
       }
     }, 500);
     return () => clearTimeout(timer);
-  }, [sheetValue, driveValue]);
+  }, [canEdit, sheetValue, driveValue]);
 
   const clearDataCache = () => {
     ["products","categories","menu","pages","tags","schemes","types","levels","sizes","fb_urls","halley_announcements"].forEach(k => {
@@ -494,6 +505,7 @@ export default function SettingsPanel() {
   };
 
   const syncNow = async () => {
+    if (!canEdit) return;
     if (!canSyncNow) { setSyncMsg("Thiếu API URL hoặc Sheet ID."); return; }
     setSyncBusy(true); setSyncMsg("");
     try {
@@ -514,6 +526,7 @@ export default function SettingsPanel() {
   };
 
   const save = async () => {
+    if (!canEdit) return;
     const finalValues = await withAutoInferredMissing(values);
     const host = String(window.location?.hostname || "").toLowerCase();
     const isLocal = host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0";
@@ -523,10 +536,11 @@ export default function SettingsPanel() {
     window.dispatchEvent(new Event("hb:config-changed"));
     setSaved(true); setHasChanges(false);
     setTimeout(() => setSaved(false), 3000);
-    audit("settings.save", { user: (readLS("auth") || {}).username || "?" });
+    audit("settings.save", { user: (readLS(LS.AUTH, {}) || {}).username || "?" });
   };
 
   const reset = () => {
+    if (!canEdit) return;
     if (!confirm("Xoá toàn bộ config đã lưu local?\nGiá trị sẽ fallback về .env (nếu có).")) return;
     resetAllConfig(); clearDataCache();
     window.dispatchEvent(new Event("hb:config-changed"));
@@ -541,18 +555,27 @@ export default function SettingsPanel() {
     autoFilledRef.current = {}; autoLastSignatureRef.current = "";
   };
 
-  const reload = async () => { await save(); window.location.reload(); };
+  const reload = async () => {
+    if (!canEdit) return;
+    await save();
+    window.location.reload();
+  };
 
   return (
     <div className="flex flex-col" style={{ height: "calc(100vh - 7rem)" }}>
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto space-y-3 pb-4">
+        {!canEdit && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Tài khoản này chỉ có quyền xem cấu hình. Các thao tác lưu, reset và sync đã bị khóa.
+          </div>
+        )}
 
         {/* ── Section 1: Manual ── */}
         <ConfigSection icon="📝" title="Thông tin nhập tay">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {MANUAL_FIELDS.map(f => (
-              <Field key={f.key} field={f} value={values[f.key] || ""} onChange={update} />
+              <Field key={f.key} field={f} value={values[f.key] || ""} onChange={update} disabled={!canEdit} />
             ))}
           </div>
         </ConfigSection>
@@ -567,7 +590,7 @@ export default function SettingsPanel() {
                 ? <span className="flex items-center gap-1 text-[10px] text-indigo-500 font-medium"><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Đang nhận...</span>
                 : lastSyncAt ? <span className="text-[9px] text-gray-400">sync: {formatSyncTime(lastSyncAt).slice(0,10)}</span> : null
               }
-              <button onClick={syncNow} disabled={!canSyncNow || syncBusy}
+              <button onClick={syncNow} disabled={!canEdit || !canSyncNow || syncBusy}
                 className="h-6 px-2 text-[10px] font-medium rounded-lg border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-40 transition">
                 {syncBusy ? "Syncing..." : "⚡ Sync"}
               </button>
@@ -581,7 +604,7 @@ export default function SettingsPanel() {
           )}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {AUTO_FIELDS.map(f => (
-              <Field key={f.key} field={f} value={values[f.key] || ""} onChange={update} />
+              <Field key={f.key} field={f} value={values[f.key] || ""} onChange={update} disabled={!canEdit} />
             ))}
           </div>
         </ConfigSection>
@@ -590,20 +613,20 @@ export default function SettingsPanel() {
       {/* ── Sticky action bar ── */}
       <div className="shrink-0 pt-2">
         <div className="bg-white/90 backdrop-blur-md border border-gray-200 rounded-2xl px-3 py-2.5 flex items-center gap-2 shadow-sm">
-          <button onClick={reload} disabled={!hasChanges}
+          <button onClick={reload} disabled={!canEdit || !hasChanges}
             className="flex-1 h-9 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl text-xs font-semibold
                        hover:from-indigo-700 hover:to-purple-700 disabled:opacity-40 disabled:cursor-not-allowed
                        shadow-sm transition-all duration-200">
             💾 Lưu & Tải lại
           </button>
-          <button onClick={save} disabled={!hasChanges}
+          <button onClick={save} disabled={!canEdit || !hasChanges}
             className="flex-1 h-9 border border-gray-200 rounded-xl text-xs font-medium text-gray-600
                        hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200">
             Lưu (không tải lại)
           </button>
-          <button onClick={reset}
+          <button onClick={reset} disabled={!canEdit}
             className="h-9 px-3 text-red-500 border border-red-100 rounded-xl text-xs font-medium
-                       hover:bg-red-50 transition-all duration-200 shrink-0">
+                       hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shrink-0">
             🗑️
           </button>
           {saved && (
