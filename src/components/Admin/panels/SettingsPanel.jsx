@@ -490,6 +490,13 @@ export default function SettingsPanel({ canEdit = true }) {
     if (!canEdit) { setAutoBusy(false); setAutoMsg(""); return; }
     if (!sheetValue) { setAutoBusy(false); setAutoMsg(""); return; }
     const signature = `${sheetValue}::${driveValue}`;
+    const hasMissingAuto = AUTO_KEYS.some((k) => !String(values[k] || "").trim());
+    if (!hasMissingAuto) {
+      autoLastSignatureRef.current = signature;
+      setAutoBusy(false);
+      setAutoMsg("");
+      return;
+    }
     if (signature === autoLastSignatureRef.current) return;
     const timer = setTimeout(async () => {
       const reqId = ++autoReqRef.current;
@@ -512,7 +519,7 @@ export default function SettingsPanel({ canEdit = true }) {
       }
     }, 500);
     return () => clearTimeout(timer);
-  }, [canEdit, sheetValue, driveValue]);
+  }, [canEdit, sheetValue, driveValue, values]);
 
   const clearDataCache = () => {
     ["products","categories","menu","pages","tags","schemes","types","levels","sizes","fb_urls","halley_announcements"].forEach(k => {
@@ -573,10 +580,11 @@ export default function SettingsPanel({ canEdit = true }) {
     const geminiKeys = getGeminiKeys();
     finalValues[KEYS.GEMINI_API_KEYS] = geminiKeys.join("\n");
     finalValues[KEYS.GEMINI_API_KEY] = geminiKeys[0] || "";
+    const authToken = String(finalValues[KEYS.GS_WEBAPP_TOKEN] || "").trim();
 
     let remoteSyncNote = "";
     try {
-      const pushed = await saveRuntimeConfigToSheet(finalValues);
+      const pushed = await saveRuntimeConfigToSheet(finalValues, { authToken });
       remoteSyncNote = `✅ Đã đồng bộ ${pushed.updated + pushed.inserted} mục lên tab ${pushed.sheetName}.`;
     } catch (e) {
       remoteSyncNote = `⚠ Lưu local thành công nhưng chưa đồng bộ toàn máy: ${e?.message || "lỗi không xác định"}`;

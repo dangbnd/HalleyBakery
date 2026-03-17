@@ -30,8 +30,8 @@ function responseMessage(data = {}) {
   return s(data?.msg || data?.message || data?.error || data?.reason || "");
 }
 
-function getAdminAuth() {
-  const token = s(getConfig(KEYS.GS_WEBAPP_TOKEN, ""));
+function getAdminAuth({ tokenOverride = "" } = {}) {
+  const token = s(tokenOverride || getConfig(KEYS.GS_WEBAPP_TOKEN, ""));
   const user = readLS(LS.AUTH, null);
   if (!token) return null;
   return {
@@ -55,10 +55,10 @@ function isUnknownAction(data) {
   return UNKNOWN_ACTION_RE.test(msg);
 }
 
-async function postBody(body = {}, { requireAuth = false } = {}) {
+async function postBody(body = {}, { requireAuth = false, authToken = "" } = {}) {
   const webApp = getWebappUrl();
   if (!webApp) throw new Error("Chưa cấu hình GS WebApp URL");
-  const adminAuth = getAdminAuth();
+  const adminAuth = getAdminAuth({ tokenOverride: authToken });
   if (requireAuth && !adminAuth?.token) {
     throw new Error("Chưa cấu hình GS WebApp Admin Token");
   }
@@ -135,10 +135,10 @@ async function callWithAliases(actions = [], payload = {}, options = {}) {
 }
 
 // Basic sheet APIs
-export const listSheet = (sheet) => call("list", { sheet });
-export const insertToSheet = (sheet, row) => call("insert", { sheet, row }, { requireAuth: true });
-export const updateToSheet = (sheet, row) => call("update", { sheet, row }, { requireAuth: true });
-export const deleteFromSheet = (sheet, id) => call("delete", { sheet, id }, { requireAuth: true });
+export const listSheet = (sheet, options = {}) => call("list", { sheet }, options);
+export const insertToSheet = (sheet, row, options = {}) => call("insert", { sheet, row }, { requireAuth: true, ...options });
+export const updateToSheet = (sheet, row, options = {}) => call("update", { sheet, row }, { requireAuth: true, ...options });
+export const deleteFromSheet = (sheet, id, options = {}) => call("delete", { sheet, id }, { requireAuth: true, ...options });
 
 const RUNTIME_CONFIG_KEYS = [
   KEYS.SHEET_ID,
@@ -165,6 +165,8 @@ const RUNTIME_CONFIG_KEYS = [
   KEYS.ADMIN_ALLOWED_EMAILS,
   KEYS.GEMINI_API_KEYS,
   KEYS.GEMINI_API_KEY,
+  KEYS.GEMINI_MODELS_ORDER,
+  KEYS.AI_PROMPT_TEMPLATE,
   KEYS.ENABLE_VISITOR_TRACKING,
 ];
 
@@ -229,8 +231,8 @@ async function resolveConfigSheet() {
   throw lastError || new Error("Không tìm thấy tab URL/Config để đồng bộ cấu hình");
 }
 
-async function upsertConfigEntries(entries = []) {
-  const auth = getAdminAuth();
+async function upsertConfigEntries(entries = [], { authToken = "" } = {}) {
+  const auth = getAdminAuth({ tokenOverride: authToken });
   if (!auth?.token) throw new Error("Thiếu GS WebApp Admin Token để đồng bộ cấu hình");
 
   const { sheetName, rows } = await resolveConfigSheet();
@@ -256,18 +258,18 @@ async function upsertConfigEntries(entries = []) {
       if (oldValue === value) continue;
       const payload = { ...existing, [keyField]: cfgKey, [valueField]: value };
       try {
-        await updateToSheet(sheetName, payload);
+        await updateToSheet(sheetName, payload, { authToken: auth.token });
         updated += 1;
         byKey.set(cfgKey, payload);
       } catch {
-        await insertToSheet(sheetName, { key: cfgKey, value });
+        await insertToSheet(sheetName, { key: cfgKey, value }, { authToken: auth.token });
         inserted += 1;
         byKey.set(cfgKey, { key: cfgKey, value });
       }
       continue;
     }
 
-    await insertToSheet(sheetName, { key: cfgKey, value });
+    await insertToSheet(sheetName, { key: cfgKey, value }, { authToken: auth.token });
     inserted += 1;
     byKey.set(cfgKey, { key: cfgKey, value });
   }
@@ -275,22 +277,35 @@ async function upsertConfigEntries(entries = []) {
   return { ok: true, sheetName, inserted, updated };
 }
 
-export async function saveRuntimeConfigToSheet(config = {}) {
+export async function saveRuntimeConfigToSheet(config = {}, options = {}) {
   const entries = RUNTIME_CONFIG_KEYS.map((key) => ({
     key,
     value: s(config?.[key] ?? ""),
   }));
-  return upsertConfigEntries(entries);
+  return upsertConfigEntries(entries, options);
 }
 
-export async function saveGeminiKeysToSheet(keys = []) {
+export async function saveGeminiKeysToSheet(keys = [], options = {}) {
   const normalized = normalizeGeminiKeyList(keys);
   const entries = [
     { key: KEYS.GEMINI_API_KEYS, value: normalized.join("\n") },
     { key: KEYS.GEMINI_API_KEY, value: normalized[0] || "" },
   ];
-  const result = await upsertConfigEntries(entries);
+  const result = await upsertConfigEntries(entries, options);
   return { ...result, keyCount: normalized.length };
+}
+
+export async function saveAITagsConfigToSheet({ keys = [], models = [], prompt = "" } = {}, options = {}) {
+  const normalizedKeys = normalizeGeminiKeyList(keys);
+  const normalizedModels = uniq((Array.isArray(models) ? models : []).map((x) => s(x)));
+  const entries = [
+    { key: KEYS.GEMINI_API_KEYS, value: normalizedKeys.join("\n") },
+    { key: KEYS.GEMINI_API_KEY, value: normalizedKeys[0] || "" },
+    { key: KEYS.GEMINI_MODELS_ORDER, value: JSON.stringify(normalizedModels) },
+    { key: KEYS.AI_PROMPT_TEMPLATE, value: s(prompt) },
+  ];
+  const result = await upsertConfigEntries(entries, options);
+  return { ...result, keyCount: normalizedKeys.length, modelCount: normalizedModels.length };
 }
 
 function parseBooleanLike(value, fallback = true) {

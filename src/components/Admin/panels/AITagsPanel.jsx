@@ -1,8 +1,8 @@
 // src/components/Admin/panels/AITagsPanel.jsx
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { LS, audit, parseBooleanLike, readLS, writeLS } from "../../../utils.js";
-import { getConfig, getGeminiKeys, setGeminiKeys } from "../../../utils/config.js";
-import { listConfiguredProductSheet, updateConfiguredProductRow, saveGeminiKeysToSheet } from "../shared/sheets.js";
+import { KEYS, getConfig, getGeminiKeys, setGeminiKeys, setConfig } from "../../../utils/config.js";
+import { listConfiguredProductSheet, updateConfiguredProductRow, saveAITagsConfigToSheet } from "../shared/sheets.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
 
 /* ===== Helpers ===== */
@@ -49,6 +49,29 @@ const sameStringList = (a = [], b = []) =>
     Array.isArray(b) &&
     a.length === b.length &&
     a.every((v, idx) => String(v || "") === String(b[idx] || ""));
+const parseModelOrderRaw = (raw, allowSet) => {
+    const text = String(raw || "").trim();
+    if (!text) return [];
+    let items = [];
+    if ((text.startsWith("[") && text.endsWith("]")) || (text.startsWith("{") && text.endsWith("}"))) {
+        try {
+            const parsed = JSON.parse(text);
+            if (Array.isArray(parsed)) items = parsed;
+        } catch { }
+    }
+    if (!items.length) {
+        items = text.split(/[\r\n,;|]+/).map((x) => x.trim()).filter(Boolean);
+    }
+    const out = [];
+    const seen = new Set();
+    for (const id of items) {
+        const clean = String(id || "").trim();
+        if (!clean || seen.has(clean) || !allowSet.has(clean)) continue;
+        seen.add(clean);
+        out.push(clean);
+    }
+    return out;
+};
 
 /* ===== MODELS AVAILABLE (free tier) ===== */
 const ALL_MODELS = [
@@ -81,6 +104,8 @@ const ALL_MODELS = [
     { id: "gemini-1.5-flash", name: "1.5 Flash", desc: "Gen 1.5, ổn định", tier: "1.5" },
     { id: "gemini-1.5-flash-8b", name: "1.5 Flash 8B", desc: "Nhỏ nhất, nhanh nhất", tier: "1.5" },
 ];
+const ALL_MODEL_IDS = ALL_MODELS.map((m) => m.id);
+const ALL_MODEL_SET = new Set(ALL_MODEL_IDS);
 
 const DEFAULT_PROMPT = `Phân tích hình ảnh chiếc BÁNH này. CHỈ mô tả chiếc bánh, BỎ QUA hoàn toàn background, bàn, phụ kiện, đồ trang trí xung quanh, nến, hộp.
 
@@ -182,20 +207,32 @@ export default function AITagsPanel({ canEdit = true }) {
     const [filter, setFilter] = useState("missing");
     const [catFilter, setCatFilter] = useState("");
     const [page, setPage] = useState(1);
-    const [prompt, setPrompt] = useState(() => readLS("ai_prompt_template", DEFAULT_PROMPT));
+    const [prompt, setPrompt] = useState(() => {
+        const remotePrompt = s(getConfig(KEYS.AI_PROMPT_TEMPLATE, ""));
+        if (remotePrompt) return remotePrompt;
+        return readLS("ai_prompt_template", DEFAULT_PROMPT);
+    });
     const [showPrompt, setShowPrompt] = useState(false);
     const [showConfig, setShowConfig] = useState(false);
 
     // Multi-key management
     const [keys, setKeys] = useState(() => getGeminiKeys());
     const [newKey, setNewKey] = useState("");
-    const [keySyncBusy, setKeySyncBusy] = useState(false);
-    const [keySyncMsg, setKeySyncMsg] = useState("");
+    const [syncBusy, setSyncBusy] = useState(false);
+    const [syncMsg, setSyncMsg] = useState("");
 
     // Multi-model management (ordered)
-    const [enabledModels, setEnabledModels] = useState(() =>
-        readLS("ai_models_order", ALL_MODELS.map(m => m.id))
-    );
+    const [enabledModels, setEnabledModels] = useState(() => {
+        const fromConfig = parseModelOrderRaw(getConfig(KEYS.GEMINI_MODELS_ORDER, ""), ALL_MODEL_SET);
+        if (fromConfig.length) return fromConfig;
+        const rawLocal = readLS("ai_models_order", []);
+        const fromLocal = parseModelOrderRaw(
+            Array.isArray(rawLocal) ? JSON.stringify(rawLocal) : String(rawLocal || ""),
+            ALL_MODEL_SET
+        );
+        if (fromLocal.length) return fromLocal;
+        return ALL_MODEL_IDS;
+    });
 
     // Fetch products
     const verP = useRef("");
@@ -247,15 +284,31 @@ export default function AITagsPanel({ canEdit = true }) {
     }, []);
     const catLabel = (slug) => catMap.get(slug) || slug;
 
-    // Persist keys & models
-    useEffect(() => { writeLS("ai_gemini_keys", keys); }, [keys]);
-    useEffect(() => { writeLS("ai_models_order", enabledModels); }, [enabledModels]);
-    useEffect(() => { writeLS("ai_prompt_template", prompt); }, [prompt]);
+    // Persist local cache + runtime config cache
+    useEffect(() => {
+        writeLS("ai_gemini_keys", keys);
+        setConfig(KEYS.GEMINI_API_KEYS, keys.join("\n"));
+        setConfig(KEYS.GEMINI_API_KEY, keys[0] || "");
+    }, [keys]);
+    useEffect(() => {
+        writeLS("ai_models_order", enabledModels);
+        setConfig(KEYS.GEMINI_MODELS_ORDER, JSON.stringify(enabledModels));
+    }, [enabledModels]);
+    useEffect(() => {
+        writeLS("ai_prompt_template", prompt);
+        setConfig(KEYS.AI_PROMPT_TEMPLATE, prompt);
+    }, [prompt]);
 
     useEffect(() => {
         const onConfigChanged = () => {
             const latest = getGeminiKeys();
             setKeys((prev) => (sameStringList(prev, latest) ? prev : latest));
+            const latestPrompt = s(getConfig(KEYS.AI_PROMPT_TEMPLATE, ""));
+            if (latestPrompt) setPrompt((prev) => (prev === latestPrompt ? prev : latestPrompt));
+            const latestModels = parseModelOrderRaw(getConfig(KEYS.GEMINI_MODELS_ORDER, ""), ALL_MODEL_SET);
+            if (latestModels.length) {
+                setEnabledModels((prev) => (sameStringList(prev, latestModels) ? prev : latestModels));
+            }
         };
         window.addEventListener("hb:config-changed", onConfigChanged);
         return () => window.removeEventListener("hb:config-changed", onConfigChanged);
@@ -270,6 +323,41 @@ export default function AITagsPanel({ canEdit = true }) {
     const batchAbort = useRef(false);
     const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 });
     const [imgModal, setImgModal] = useState(null);
+    const syncTimerRef = useRef(null);
+    const lastSyncFingerprintRef = useRef("");
+    const hasAdminToken = !!s(getConfig(KEYS.GS_WEBAPP_TOKEN, ""));
+
+    useEffect(() => {
+        if (!canEdit) return;
+        const fingerprint = JSON.stringify({ keys, models: enabledModels, prompt });
+        if (fingerprint === lastSyncFingerprintRef.current) return;
+
+        if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = setTimeout(async () => {
+            if (!s(getConfig(KEYS.GS_WEBAPP_TOKEN, ""))) {
+                setSyncMsg("⚠ Chưa cấu hình GS WebApp Admin Token nên chưa lưu đồng bộ.");
+                return;
+            }
+            setSyncBusy(true);
+            try {
+                const authToken = s(getConfig(KEYS.GS_WEBAPP_TOKEN, ""));
+                const result = await saveAITagsConfigToSheet(
+                    { keys, models: enabledModels, prompt },
+                    { authToken }
+                );
+                lastSyncFingerprintRef.current = fingerprint;
+                setSyncMsg(`✅ Đã lưu AI config lên tab ${result.sheetName}`);
+            } catch (e) {
+                setSyncMsg(`⚠ Chưa lưu AI config lên Sheet: ${e?.message || "lỗi không xác định"}`);
+            } finally {
+                setSyncBusy(false);
+            }
+        }, 900);
+
+        return () => {
+            if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+        };
+    }, [canEdit, keys, enabledModels, prompt]);
 
     const activeModels = useMemo(() =>
         enabledModels.map(id => ALL_MODELS.find(m => m.id === id)).filter(Boolean),
@@ -315,7 +403,7 @@ export default function AITagsPanel({ canEdit = true }) {
     }, [activeModels, canEdit, keys, prompt]);
 
     const applyTags = useCallback(async (product, tags) => {
-        if (!canEdit) return;
+        if (!canEdit || !hasAdminToken) return;
         const clean = { ...product, tags };
         try {
             await updateConfiguredProductRow(clean);
@@ -328,7 +416,7 @@ export default function AITagsPanel({ canEdit = true }) {
             console.error("AI apply tags failed:", e);
             setErrors(err => ({ ...err, [product.id]: e?.message || "Không lưu được tag vào Sheet" }));
         }
-    }, [canEdit, products]);
+    }, [canEdit, hasAdminToken, products]);
 
     const runBatch = useCallback(async () => {
         if (!canEdit || !keys.length || !activeModels.length) return;
@@ -348,19 +436,6 @@ export default function AITagsPanel({ canEdit = true }) {
 
     const stopBatch = () => { batchAbort.current = true; };
 
-    const syncKeysToSheet = useCallback(async (nextKeys) => {
-        if (!canEdit) return;
-        setKeySyncBusy(true);
-        try {
-            await saveGeminiKeysToSheet(nextKeys);
-            setKeySyncMsg(`✅ Đã lưu ${nextKeys.length} Gemini keys lên Sheet`);
-        } catch (e) {
-            setKeySyncMsg(`⚠ Chưa lưu key lên Sheet: ${e?.message || "lỗi không xác định"}`);
-        } finally {
-            setKeySyncBusy(false);
-        }
-    }, [canEdit]);
-
     // Key management functions
     const addKey = () => {
         if (!canEdit) return;
@@ -372,13 +447,11 @@ export default function AITagsPanel({ canEdit = true }) {
         const normalized = setGeminiKeys([...keys, ...incoming]);
         setKeys(normalized);
         setNewKey("");
-        void syncKeysToSheet(normalized);
     };
     const removeKey = (i) => {
         if (!canEdit) return;
         const normalized = setGeminiKeys(keys.filter((_, idx) => idx !== i));
         setKeys(normalized);
-        void syncKeysToSheet(normalized);
     };
 
     // Model order management — drag & drop
@@ -418,9 +491,9 @@ export default function AITagsPanel({ canEdit = true }) {
                 <div className="flex gap-2 mt-4">
                     <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full max-w-xs sm:w-80 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                         value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="AIzaSy..." onKeyDown={e => e.key === "Enter" && addKey()} />
-                    <button disabled={!canEdit || keySyncBusy} onClick={addKey} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition disabled:opacity-50">Thêm</button>
+                    <button disabled={!canEdit || syncBusy} onClick={addKey} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition disabled:opacity-50">Thêm</button>
                 </div>
-                {keySyncMsg && <p className={`mt-2 text-xs ${keySyncMsg.startsWith("⚠") ? "text-amber-600" : "text-emerald-600"}`}>{keySyncMsg}</p>}
+                {syncMsg && <p className={`mt-2 text-xs ${syncMsg.startsWith("⚠") ? "text-amber-600" : "text-emerald-600"}`}>{syncMsg}</p>}
             </div>
         );
     }
@@ -463,9 +536,9 @@ export default function AITagsPanel({ canEdit = true }) {
                             <div className="flex gap-1 items-center">
                                 <input className="flex-1 border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
                                     value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="Dán API key mới..." onKeyDown={e => e.key === "Enter" && addKey()} />
-                                <button disabled={!canEdit || keySyncBusy} onClick={addKey} className="px-2.5 py-1 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition shrink-0 disabled:opacity-50">+ Thêm</button>
+                                <button disabled={!canEdit || syncBusy} onClick={addKey} className="px-2.5 py-1 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition shrink-0 disabled:opacity-50">+ Thêm</button>
                             </div>
-                            {keySyncMsg && <p className={`mt-1 text-[10px] ${keySyncMsg.startsWith("⚠") ? "text-amber-600" : "text-emerald-600"}`}>{keySyncMsg}</p>}
+                            {syncMsg && <p className={`mt-1 text-[10px] ${syncMsg.startsWith("⚠") ? "text-amber-600" : "text-emerald-600"}`}>{syncMsg}</p>}
                         </div>
                         {/* Models */}
                         <div>
@@ -497,6 +570,11 @@ export default function AITagsPanel({ canEdit = true }) {
                 {!canEdit && (
                     <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
                         Tài khoản này chỉ có quyền xem tag hiện tại. Chạy AI và áp dụng tag đã bị khoá.
+                    </div>
+                )}
+                {canEdit && !hasAdminToken && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                        Chưa có GS WebApp Admin Token: có thể chạy AI gợi ý nhưng chưa lưu được lên Sheet.
                     </div>
                 )}
 
@@ -622,7 +700,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                 ) : aiTags ? (
                                     <div className="space-y-1.5">
                                         <div className="text-[9px] text-purple-600 font-semibold uppercase tracking-wider">✨ AI gợi ý:</div>
-                                        <AITagEditor tags={aiTags} canEdit={canEdit}
+                                        <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken}
                                             onApply={(tags) => applyTags(p, tags)}
                                             onDismiss={() => setSuggestions(s => { const n = { ...s }; delete n[p.id]; return n; })} />
                                     </div>
@@ -703,7 +781,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                         ) : error ? (
                                             <span className="text-[10px] text-red-500 font-medium">{error}</span>
                                         ) : aiTags ? (
-                                            <AITagEditor tags={aiTags} canEdit={canEdit} onApply={(tags) => applyTags(p, tags)}
+                                            <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken} onApply={(tags) => applyTags(p, tags)}
                                                 onDismiss={() => setSuggestions(s => { const n = { ...s }; delete n[p.id]; return n; })} />
                                         ) : (
                                             <span className="text-[10px] text-gray-300">—</span>
@@ -767,7 +845,7 @@ function AITagEditor({ tags, canEdit = true, onApply, onDismiss }) {
             <input className="w-full border border-purple-200 rounded px-2 py-1 text-[10px] bg-purple-50/30 focus:outline-none focus:ring-1 focus:ring-purple-300 disabled:opacity-60"
                 value={editing} onChange={e => setEditing(e.target.value)} disabled={!canEdit} />
             <div className="flex gap-1">
-                <button onClick={() => onApply(editing)} className="px-2 py-0.5 text-[10px] font-medium bg-emerald-500 text-white rounded hover:bg-emerald-600 transition">✅ Áp dụng</button>
+                <button disabled={!canEdit} onClick={() => onApply(editing)} className="px-2 py-0.5 text-[10px] font-medium bg-emerald-500 text-white rounded hover:bg-emerald-600 transition disabled:opacity-40">✅ Áp dụng</button>
                 <button onClick={onDismiss} className="px-2 py-0.5 text-[10px] font-medium text-gray-500 hover:bg-gray-100 rounded transition">❌ Bỏ</button>
             </div>
         </div>

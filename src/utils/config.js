@@ -31,6 +31,8 @@ const KEYS = {
   ADMIN_ALLOWED_EMAILS: "admin_allowed_emails",
   GEMINI_API_KEY: "gemini_api_key",
   GEMINI_API_KEYS: "gemini_api_keys",
+  GEMINI_MODELS_ORDER: "gemini_models_order",
+  AI_PROMPT_TEMPLATE: "ai_prompt_template",
   ENABLE_VISITOR_TRACKING: "enable_visitor_tracking",
   LAST_SYNC_AT: "last_sync_at",
 };
@@ -83,6 +85,8 @@ const ENV_MAP = {
   [KEYS.ADMIN_ALLOWED_EMAILS]: "VITE_ADMIN_ALLOWED_EMAILS",
   [KEYS.GEMINI_API_KEY]: "VITE_GEMINI_API_KEY",
   [KEYS.GEMINI_API_KEYS]: "VITE_GEMINI_API_KEYS",
+  [KEYS.GEMINI_MODELS_ORDER]: "VITE_GEMINI_MODELS_ORDER",
+  [KEYS.AI_PROMPT_TEMPLATE]: "VITE_AI_PROMPT_TEMPLATE",
   [KEYS.ENABLE_VISITOR_TRACKING]: "VITE_ENABLE_VISITOR_TRACKING",
 };
 
@@ -124,6 +128,8 @@ const REMOTE_ALIAS_MAP = {
   [KEYS.ADMIN_ALLOWED_EMAILS]: ["admin_allowed_emails", "allowed_admin_emails", "oauth_allowlist"],
   [KEYS.GEMINI_API_KEYS]: ["gemini_api_keys", "gemini_keys", "ai_gemini_keys", "ai_keys"],
   [KEYS.GEMINI_API_KEY]: ["gemini_api_key", "gemini_key", "google_gemini_api_key"],
+  [KEYS.GEMINI_MODELS_ORDER]: ["gemini_models_order", "ai_models_order", "models_order", "gemini_models"],
+  [KEYS.AI_PROMPT_TEMPLATE]: ["ai_prompt_template", "gemini_prompt_template", "prompt_template", "ai_prompt"],
   [KEYS.ENABLE_VISITOR_TRACKING]: ["enable_visitor_tracking", "visitor_tracking", "track_visitors"],
 };
 
