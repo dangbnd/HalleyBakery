@@ -11,9 +11,35 @@ const AdminIndex = lazy(() => import("./components/Admin/index.jsx"));
 
 function Root() {
   const path = window.location.pathname || "/";
-  const inAdmin = path === "/admin" || path.startsWith("/admin/");
+  const hostname = window.location.hostname;
+  
+  const isLocal = hostname === "localhost" || hostname === "127.0.0.1";
+  const isAdminDomain = hostname.startsWith("admin.") || hostname.includes("-admin");
+  const isAdminPath = path === "/admin" || path.startsWith("/admin/");
+
+  const isSystemAdminMode = isAdminDomain || isAdminPath;
   const user = readLS(LS.AUTH, null);
-  if (inAdmin) {
+
+  // 1. Chặn xem admin trên web chính (chỉ áp dụng trên mạng, bỏ qua local dev)
+  if (!isLocal && !isAdminDomain && isAdminPath) {
+    window.location.replace("https://admin.halleybakery.io.vn");
+    return null;
+  }
+
+  // 2. Tự dọn dẹp URL trên admin (giấu đoạn /admin cho sạch)
+  if (!isLocal && isAdminDomain && isAdminPath) {
+    window.location.replace("/");
+    return null;
+  }
+
+  // 3. PWA tự động vào admin cho localhost/dev (tránh load lại trang web chính)
+  if (!isSystemAdminMode && path === "/" && user && window.matchMedia("(display-mode: standalone)").matches && !sessionStorage.getItem("visited_home")) {
+    sessionStorage.setItem("visited_home", "1");
+    window.location.replace(isLocal ? "/admin" : "https://admin.halleybakery.io.vn");
+    return null;
+  }
+
+  if (isSystemAdminMode) {
     return (
       <Suspense fallback={<div className="min-h-[60vh] flex items-center justify-center"><p>Đang tải...</p></div>}>
         {user ? <AdminIndex /> : <Login />}

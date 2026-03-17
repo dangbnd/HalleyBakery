@@ -134,7 +134,7 @@ export function Footer({ data = {}, pages = [] }) {
           <div className="grow flex items-center gap-2">
             <span>© {new Date().getFullYear()} {brandName}. All rights reserved.</span>
             <span className="text-gray-300 hidden sm:inline">•</span>
-            <a href="/admin" className="text-gray-400 hover:text-rose-500 transition-colors uppercase text-[10px] font-bold tracking-wider opacity-50 hover:opacity-100">
+            <a href="https://admin.halleybakery.io.vn" className="text-gray-400 hover:text-rose-500 transition-colors uppercase text-[10px] font-bold tracking-wider opacity-50 hover:opacity-100">
               Admin Login
             </a>
           </div>
