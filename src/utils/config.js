@@ -228,11 +228,101 @@ export function setGeminiKeys(nextKeys = []) {
   setConfig(KEYS.GEMINI_API_KEYS, joined);
   setConfig(KEYS.GEMINI_API_KEY, keys[0] || "");
 
+  // Tự động lưu lên Sheet để đồng bộ thiết bị khác (chạy nền, không block)
+  pushConfigKeyToSheet("gemini_api_keys", keys.join(",")).catch(() => {});
+
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event("hb:config-changed"));
   }
 
   return keys;
+}
+
+/**
+ * Ghi một cặp key=value lên Config tab trong Google Sheet.
+ * Dùng Sheets API + OAuth token đã cache trong localStorage.
+ * Tìm dòng có key trùng → update giá trị. Nếu chưa có → append.
+ */
+async function pushConfigKeyToSheet(configKey, configValue) {
+  if (typeof window === "undefined") return;
+  
+  const sheetId = extractSheetId(getConfig(KEYS.SHEET_ID, ""));
+  if (!sheetId) return;
+  
+  // Lấy OAuth token từ cache upload panel
+  let token = "";
+  try {
+    const oauthCache = JSON.parse(localStorage.getItem("admin.upload.oauth.v1") || "{}");
+    if (oauthCache.accessToken && oauthCache.expiresAt > Date.now()) {
+      token = oauthCache.accessToken;
+    }
+  } catch {}
+  if (!token) return; // Không có token → bỏ qua, không block UX
+
+  const gidConfig = getConfig(KEYS.SHEET_GID_CONFIG, "");
+  
+  // Tìm tên tab config
+  let tabTitle = "Config";
+  try {
+    const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (metaRes.ok) {
+      const meta = await metaRes.json();
+      const tabs = meta?.sheets || [];
+      if (gidConfig) {
+        const match = tabs.find(t => String(t?.properties?.sheetId) === gidConfig);
+        if (match) tabTitle = match.properties.title;
+      }
+    }
+  } catch {}
+
+  // Đọc cột A để tìm dòng chứa key
+  const rangeA = `${tabTitle}!A:A`;
+  try {
+    const readRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(rangeA)}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!readRes.ok) return;
+    const readData = await readRes.json();
+    const rows = readData?.values || [];
+    
+    let rowIndex = -1;
+    for (let i = 0; i < rows.length; i++) {
+      const cellKey = String(rows[i]?.[0] || "").trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");
+      if (cellKey === configKey.toLowerCase().replace(/[^a-z0-9_]/g, "_")) {
+        rowIndex = i + 1; // 1-indexed
+        break;
+      }
+    }
+
+    if (rowIndex > 0) {
+      // Update existing row
+      const updateRange = `${tabTitle}!B${rowIndex}`;
+      await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(updateRange)}?valueInputOption=RAW`,
+        {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ values: [[configValue]] }),
+        }
+      );
+    } else {
+      // Append new row
+      const appendRange = `${tabTitle}!A:B`;
+      await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(appendRange)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ values: [[configKey, configValue]] }),
+        }
+      );
+    }
+  } catch (e) {
+    console.warn("[pushConfigKeyToSheet] Lỗi:", e?.message);
+  }
 }
 
 function extractSheetId(input = "") {
