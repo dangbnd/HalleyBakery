@@ -86,7 +86,7 @@ export default function UsersPanel() {
     };
 
     useEffect(() => {
-        loadUsers();
+        // Không tự động tải user — chỉ tải khi bấm nút "Đồng bộ"
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 

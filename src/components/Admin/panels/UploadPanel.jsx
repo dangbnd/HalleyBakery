@@ -516,7 +516,17 @@ export default function UploadPanel({ canEdit = true }) {
     setMetaLoading(true);
     try {
       const nextCfg = readConfigSnapshot(); setCfg(nextCfg);
-      const rows = await fetchTabAsObjects({ sheetId: nextCfg.sheetId, gid: nextCfg.categoryGid || nextCfg.menuGid });
+      // Thử categoryGid trước, fallback menuGid nếu tab categories không tồn tại
+      const gidsToTry = [nextCfg.categoryGid, nextCfg.menuGid, "0"].filter(Boolean);
+      let rows = [];
+      for (const gid of gidsToTry) {
+        try {
+          rows = await fetchTabAsObjects({ sheetId: nextCfg.sheetId, gid });
+          if (rows.length > 0) break;
+        } catch (err) {
+          console.warn(`Tab gid=${gid} lỗi:`, err?.message);
+        }
+      }
       const nCats = parseCategoryRows(rows);
       const mapped = parseCategoryFolderMapRows(rows);
       let nFol = mapped;
@@ -528,8 +538,7 @@ export default function UploadPanel({ canEdit = true }) {
       writeMetaCache({ categories: nCats, folders: nFol, tagOptions, hashStatus });
     } catch (e) {
       console.warn("Lỗi tải Danh mục/Folder:", e);
-      // Ném lỗi ra để refreshDriveHashes nhận biết, không dùng alert gây block UX
-      throw new Error("Lỗi tải thông tin Danh mục/Folder từ Sheet. Vui lòng kiểm tra quyền truy cập công khai của Sheet: " + (e?.message || ""));
+      throw e;
     } finally { setMetaLoading(false); }
   }, [canEdit, tagOptions, hashStatus]);
 
