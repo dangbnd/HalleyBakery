@@ -282,28 +282,42 @@ export default function AITagsPanel({ canEdit = true }) {
     }, []);
     const catLabel = (slug) => catMap.get(slug) || slug;
 
+    // ── Chặn ghi đè Sheet khi mount lần đầu (giá trị có thể stale/default) ──
+    const mountedKeys = useRef(false);
+    const mountedModels = useRef(false);
+    const mountedPrompt = useRef(false);
+
     // Persist local cache + runtime config cache
     useEffect(() => {
         writeLS("ai_gemini_keys", keys);
         setConfig(KEYS.GEMINI_API_KEYS, keys.join("\n"));
         setConfig(KEYS.GEMINI_API_KEY, keys[0] || "");
+        if (!mountedKeys.current) { mountedKeys.current = true; return; }
+        if (suppressPush.current) return;
+        pushConfigKeyToSheet("gemini_api_keys", keys.join(",")).catch(() => {});
     }, [keys]);
     useEffect(() => {
         writeLS("ai_models_order", enabledModels);
         const joinedStr = enabledModels.join(",");
         setConfig(KEYS.GEMINI_MODELS_ORDER, joinedStr);
-        // Lưu lên Sheet để đồng bộ thiết bị khác
+        if (!mountedModels.current) { mountedModels.current = true; return; }
+        if (suppressPush.current) return;
         pushConfigKeyToSheet("gemini_models_order", joinedStr).catch(() => {});
     }, [enabledModels]);
     useEffect(() => {
         writeLS("ai_prompt_template", prompt);
         setConfig(KEYS.AI_PROMPT_TEMPLATE, prompt);
-        // Lưu lên Sheet để đồng bộ thiết bị khác
+        if (!mountedPrompt.current) { mountedPrompt.current = true; return; }
+        if (suppressPush.current) return;
         pushConfigKeyToSheet("ai_prompt_template", prompt).catch(() => {});
     }, [prompt]);
 
+    // Flag để chặn push khi đang nhận sync từ remote (tránh vòng lặp ghi đè)
+    const suppressPush = useRef(false);
+
     useEffect(() => {
         const onConfigChanged = () => {
+            suppressPush.current = true;
             const latest = getGeminiKeys();
             setKeys((prev) => (sameStringList(prev, latest) ? prev : latest));
             const latestPrompt = s(getConfig(KEYS.AI_PROMPT_TEMPLATE, ""));
@@ -312,6 +326,8 @@ export default function AITagsPanel({ canEdit = true }) {
             if (latestModels.length) {
                 setEnabledModels((prev) => (sameStringList(prev, latestModels) ? prev : latestModels));
             }
+            // Cho React xử lý state update xong rồi mới tắt suppress
+            setTimeout(() => { suppressPush.current = false; }, 500);
         };
         window.addEventListener("hb:config-changed", onConfigChanged);
         return () => window.removeEventListener("hb:config-changed", onConfigChanged);

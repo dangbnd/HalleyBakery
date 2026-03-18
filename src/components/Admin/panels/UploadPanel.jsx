@@ -393,9 +393,12 @@ export default function UploadPanel({ canEdit = true }) {
     return getConfig(KEYS.AI_PROMPT_TEMPLATE, localStorage.getItem("upload_ai_tags_prompt") || "");
   });
 
+  const uploadPromptMounted = useRef(false);
   useEffect(() => {
     localStorage.setItem("upload_ai_tags_prompt", aiTagsPrompt);
     setConfig(KEYS.AI_PROMPT_TEMPLATE, aiTagsPrompt);
+    if (!uploadPromptMounted.current) { uploadPromptMounted.current = true; return; }
+    // Chỉ push lên Sheet khi user thực sự thay đổi (không phải lần mount đầu)
     pushConfigKeyToSheet("ai_prompt_template", aiTagsPrompt).catch(() => {});
   }, [aiTagsPrompt]);
   const [oauthBusy, setOauthBusy] = useState(false);
