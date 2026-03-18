@@ -57,7 +57,7 @@ export default function UsersPanel() {
     const canManageUsers = currentUser.isSuper === true || currentUser.role === "owner" || permsSet.has("users.manage");
 
     const [users, setUsers] = useState(() => readLS(LS.USERS, []));
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [showForm, setShowForm] = useState(false);
     const [editId, setEditId] = useState(null);
