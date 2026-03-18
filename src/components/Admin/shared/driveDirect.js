@@ -1,5 +1,5 @@
 const GIS_SRC = "https://accounts.google.com/gsi/client";
-const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets";
 
 let gisLoadPromise = null;
 
