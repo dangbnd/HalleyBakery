@@ -55,6 +55,39 @@ function isUnknownAction(data) {
   return UNKNOWN_ACTION_RE.test(msg);
 }
 
+function isGoogleAppsScriptUrl(url = "") {
+  try {
+    const u = new URL(String(url || ""));
+    const host = String(u.hostname || "").toLowerCase();
+    return host.endsWith("script.google.com") || host.endsWith("script.googleusercontent.com");
+  } catch {
+    return false;
+  }
+}
+
+function shouldUseGsProxy(webApp = "") {
+  if (typeof window === "undefined") return false;
+  return isGoogleAppsScriptUrl(webApp);
+}
+
+async function postViaProxy(webApp = "", payload = {}) {
+  const res = await fetch("/api/gs-proxy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json;charset=utf-8" },
+    body: JSON.stringify({ webApp, payload }),
+  });
+  let data = {};
+  try {
+    data = await res.json();
+  } catch {
+    data = {};
+  }
+  if (!res.ok) {
+    throw new Error(responseMessage(data) || `GS proxy lỗi HTTP ${res.status}`);
+  }
+  return data;
+}
+
 function toFormEncoded(obj = {}) {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(obj || {})) {
@@ -87,6 +120,10 @@ async function postBody(body = {}, { requireAuth = false, authToken = "", webapp
   }
 
   const payload = adminAuth ? { ...body, _auth: adminAuth } : body;
+  if (shouldUseGsProxy(webApp)) {
+    return postViaProxy(webApp, payload);
+  }
+
   const attempts = [
     {
       method: "POST",
