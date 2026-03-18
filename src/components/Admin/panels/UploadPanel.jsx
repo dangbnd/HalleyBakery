@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LS, audit, readLS } from "../../../utils.js";
-import { KEYS, getConfig, getGeminiKeys } from "../../../utils/config.js";
+import { KEYS, getConfig, getGeminiKeys, setConfig, pushConfigKeyToSheet } from "../../../utils/config.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
 import { listDriveFileHashes, listDriveLeafFolders, uploadDriveFile } from "../shared/sheets.js";
 import { isTokenExpired, requestGoogleDriveToken, uploadFileDirectToDrive, saveHashesToSheet, loadHashesFromSheet } from "../shared/driveDirect.js";
@@ -385,7 +385,15 @@ export default function UploadPanel({ canEdit = true }) {
   // Settings & OAuth state
   const [showSettings, setShowSettings] = useState(false);
   const [aiCategoryPrompt, setAiCategoryPrompt] = useState(() => localStorage.getItem("upload_ai_cat_prompt") || "");
-  const [aiTagsPrompt, setAiTagsPrompt] = useState(() => localStorage.getItem("upload_ai_tags_prompt") || "");
+  const [aiTagsPrompt, setAiTagsPrompt] = useState(() => {
+    return getConfig(KEYS.AI_PROMPT_TEMPLATE, localStorage.getItem("upload_ai_tags_prompt") || "");
+  });
+
+  useEffect(() => {
+    localStorage.setItem("upload_ai_tags_prompt", aiTagsPrompt);
+    setConfig(KEYS.AI_PROMPT_TEMPLATE, aiTagsPrompt);
+    pushConfigKeyToSheet("ai_prompt_template", aiTagsPrompt).catch(() => {});
+  }, [aiTagsPrompt]);
   const [oauthBusy, setOauthBusy] = useState(false);
   const [oauthToken, setOauthToken] = useState(() => {
     try { const c = JSON.parse(localStorage.getItem(OAUTH_CACHE_KEY) || '{}'); return isTokenExpired(c.expiresAt) ? '' : (c.accessToken || ''); } catch { return ''; }
@@ -826,7 +834,7 @@ export default function UploadPanel({ canEdit = true }) {
                 <label className="block text-[11px] font-medium text-gray-500 mb-1">Prompt gán Tags <span className="text-gray-400">(để trống = dùng mặc định)</span></label>
                 <textarea
                   value={aiTagsPrompt}
-                  onChange={e => { setAiTagsPrompt(e.target.value); localStorage.setItem("upload_ai_tags_prompt", e.target.value); }}
+                  onChange={e => setAiTagsPrompt(e.target.value)}
                   disabled={!canEdit}
                   placeholder="VD: Tập trung vào màu sắc và nhân vật chính. Tags nên ngắn gọn 1-3 từ..."
                   rows={Math.max(2, (aiTagsPrompt || '').split('\n').length)}
