@@ -170,7 +170,7 @@ const RUNTIME_CONFIG_KEYS = [
   KEYS.ENABLE_VISITOR_TRACKING,
 ];
 
-const CONFIG_SHEET_CANDIDATES = ["URL", "Config", "Settings", "Cấu hình", "Cau hinh"];
+const CONFIG_SHEET_CANDIDATES = ["Config", "config", "Cấu hình", "Cau hinh", "Settings", "URL"];
 const USER_SHEET_CANDIDATES = ["Users", "User", "Nguoi dung", "Người dùng"];
 
 function normalizeCfgKey(value = "") {
