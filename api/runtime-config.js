@@ -1,7 +1,7 @@
 // api/runtime-config.js
 // Central runtime config reader (sheet URL/config tab) with short in-memory cache.
 
-const CACHE_TTL_MS = 30 * 1000;
+const CACHE_TTL_MS = 2 * 1000; // 2 seconds to prevent stale config F5 loops
 const FETCH_TIMEOUT_MS = 7000;
 const CACHE = new Map(); // key => { at, data }
 
@@ -79,7 +79,9 @@ function parseKeyValueTable(text = "") {
   for (const row of dataRows) {
     const key = normalizeCfgKey(row[0] || "");
     if (!key) continue;
-    out[key] = String(row[1] || "").trim();
+    // Cắt bỏ key ở cột 0, nối lại tất cả các cột còn lại để không bị đứt đoạn bởi dấu phẩy CSV
+    const valueParts = row.slice(1);
+    out[key] = valueParts.join(",").trim();
   }
   return out;
 }

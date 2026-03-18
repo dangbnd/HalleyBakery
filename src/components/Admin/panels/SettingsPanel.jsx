@@ -219,8 +219,10 @@ function parseKeyValueTable(text = "") {
   const out = {};
   for (const r of dataRows) {
     const key = normalizeCfgKey(r[0] || "");
-    const value = String(r[1] || "").trim();
-    if (!key || !value) continue;
+    if (!key) continue;
+    const valueParts = r.slice(1);
+    const value = valueParts.join(",").trim();
+    if (!value) continue;
     out[key] = value;
   }
   return out;
