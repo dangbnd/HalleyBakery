@@ -180,7 +180,17 @@ export async function uploadFileDirectToDrive({
 /* ===== Save/Load drive hashes to Google Sheet tab "drive_hashes" ===== */
 
 const HASH_TAB_NAME = "drive_hashes";
-const HASH_HEADERS = ["hash", "algo", "name", "fileId", "folderId", "folderName", "size", "mimeType"];
+// Field names match normalizeHashRow output: id, name, folderId, path, hash, algo, size, mimeType, url
+const HASH_COLUMNS = [
+  { header: "hash", field: "hash" },
+  { header: "algo", field: "algo" },
+  { header: "name", field: "name" },
+  { header: "id", field: "id" },
+  { header: "folderId", field: "folderId" },
+  { header: "path", field: "path" },
+  { header: "size", field: "size" },
+  { header: "mimeType", field: "mimeType" },
+];
 
 /**
  * Lưu danh sách hash lên tab "drive_hashes" trong Google Sheet.
@@ -194,7 +204,10 @@ export async function saveHashesToSheet({ accessToken, sheetId, hashes = [] }) {
   // 1. Tạo tab nếu chưa có
   const metaUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`;
   const metaRes = await fetch(metaUrl, { headers: { Authorization: `Bearer ${token}` } });
-  if (!metaRes.ok) throw new Error(`Không đọc được Sheet (HTTP ${metaRes.status})`);
+  if (!metaRes.ok) {
+    const errMsg = await readErrorMessage(metaRes);
+    throw new Error(`Không đọc được Sheet (HTTP ${metaRes.status}): ${errMsg}. Hãy bật Google Sheets API trong Google Cloud Console.`);
+  }
   const metaData = await metaRes.json();
   const tabs = (metaData?.sheets || []).map(sh => s(sh?.properties?.title));
 
@@ -215,8 +228,7 @@ export async function saveHashesToSheet({ accessToken, sheetId, hashes = [] }) {
     }
   }
 
-  // 2. Xóa dữ liệu cũ + ghi mới
-  const range = `${HASH_TAB_NAME}!A1`;
+  // 2. Xóa dữ liệu cũ
   const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(HASH_TAB_NAME)}:clear`;
   await fetch(clearUrl, {
     method: "POST",
@@ -225,10 +237,16 @@ export async function saveHashesToSheet({ accessToken, sheetId, hashes = [] }) {
   });
 
   // 3. Ghi header + data
-  const rows = [HASH_HEADERS];
+  const headerRow = HASH_COLUMNS.map(c => c.header);
+  const rows = [headerRow];
   for (const h of hashes) {
-    rows.push(HASH_HEADERS.map(col => s(h[col] ?? "")));
+    rows.push(HASH_COLUMNS.map(c => {
+      const val = h[c.field];
+      return val != null ? String(val) : "";
+    }));
   }
+  
+  const range = `${HASH_TAB_NAME}!A1`;
   const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
   const writeRes = await fetch(writeUrl, {
     method: "PUT",
