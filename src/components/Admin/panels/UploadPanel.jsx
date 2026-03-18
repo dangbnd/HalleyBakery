@@ -468,8 +468,10 @@ export default function UploadPanel({ canEdit = true }) {
       const token = await ensureDirectAccessToken();
       // Tải folder/danh mục trước (thất bại thì vẫn cho qua để tải hash)
       let metaErr = "";
+      let metaResult = { categories: categories || [], folders: folders || [] };
       try {
-        await refreshMeta();
+        const result = await refreshMeta();
+        if (result) metaResult = result;
       } catch (err) {
         metaErr = err.message;
       }
@@ -504,10 +506,10 @@ export default function UploadPanel({ canEdit = true }) {
       };
       setHashStatus(newStat);
       
-      // Lưu cache local — dùng state hiện tại (sau refreshMeta đã set)
+      // Lưu cache local — dùng giá trị TRỰC TIẾP từ refreshMeta (không dùng state vì React chưa update)
       writeMetaCache({ 
-        categories, 
-        folders, 
+        categories: metaResult.categories, 
+        folders: metaResult.folders, 
         tagOptions, 
         hashStatus: newStat, 
         driveHashes: hashes 
@@ -549,6 +551,7 @@ export default function UploadPanel({ canEdit = true }) {
       setCategories(nCats); setFolders(nFol);
       setItems(prev => prev.map(it => it.categoryKey && !it.folderManual ? applyCategoryAutoFolder(it, it.categoryKey, nCats, nFol) : it));
       writeMetaCache({ categories: nCats, folders: nFol, tagOptions, hashStatus });
+      return { categories: nCats, folders: nFol }; // return để refreshDriveHashes dùng
     } catch (e) {
       console.warn("Lỗi tải Danh mục/Folder:", e);
       throw e;
