@@ -468,7 +468,9 @@ function parseKeyValueTable(text = "") {
   for (const row of dataRows) {
     const key = normalizeCfgKey(row[0] || "");
     if (!key) continue;
-    out[key] = String(row[1] || "").trim();
+    // Nối tất cả cột từ cột B trở đi — fix lỗi value chứa dấu phẩy bị CSV tách ra nhiều cột
+    const valueParts = row.slice(1);
+    out[key] = valueParts.join(",").trim();
   }
   return out;
 }
