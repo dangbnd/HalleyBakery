@@ -391,8 +391,12 @@ export default function AITagsPanel({ canEdit = true }) {
         if (!img) { setErrors(e => ({ ...e, [product.id]: "Không có ảnh" })); return; }
         setLoading(l => ({ ...l, [product.id]: true }));
         setErrors(e => { const n = { ...e }; delete n[product.id]; return n; });
+        
+        // Cung cấp thêm context Tên và Danh mục cho AI bên dưới prompt gốc
+        const finalPrompt = `${prompt.trim()}\n\n[THÔNG TIN SẢN PHẨM HIỆN TẠI]\n- Tên sản phẩm: ${product.name}\n- Danh mục (category): ${product.category || "Không rõ"}`;
+        
         try {
-            const tags = await callWithRotation(keys, activeModels, img, prompt,
+            const tags = await callWithRotation(keys, activeModels, img, finalPrompt,
                 (label) => setStatusMsg(s => ({ ...s, [product.id]: label }))
             );
             setSuggestions(s => ({ ...s, [product.id]: tags }));
