@@ -258,10 +258,14 @@ export default function UsersPanel() {
             setSaving(false);
         }
     };
+    if (!currentUser || typeof currentUser !== "object") return null;
+
     if (!canManageUsers) {
         return (
-            <div className="flex flex-col items-center justify-center py-24 text-gray-400">
-                <span className="text-5xl mb-4 opacity-30">🔒</span>
+            <div className="flex flex-col items-center justify-center p-12 text-center h-[60vh]">
+                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 text-gray-400">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+                </div>
                 <p className="text-lg font-medium text-gray-500">Không đủ quyền</p>
                 <p className="text-sm mt-1">Cần quyền quản lý người dùng (owner/users.manage)</p>
             </div>
@@ -276,15 +280,22 @@ export default function UsersPanel() {
                         <h2 className="text-lg font-semibold text-gray-800">Quản lý người dùng</h2>
                         <p className="text-xs text-gray-400 mt-0.5">Tạo tài khoản và cấp quyền tuỳ chỉnh</p>
                     </div>
-                    <button onClick={openAdd} disabled={loading || saving}
-                        className="h-9 px-4 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-all shadow-sm hover:shadow active:scale-[0.98] flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
-                        Thêm tài khoản
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button onClick={loadUsers} disabled={loading || saving}
+                            className="h-9 px-4 text-sm font-medium text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 rounded-lg transition-all shadow-sm active:scale-[0.98] flex items-center gap-1.5 disabled:opacity-50">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 11-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /></svg>
+                            Đồng bộ
+                        </button>
+                        <button onClick={openAdd} disabled={loading || saving}
+                            className="h-9 px-4 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-all shadow-sm active:scale-[0.98] flex items-center gap-1.5 disabled:opacity-50">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
+                            Thêm tài khoản
+                        </button>
+                    </div>
                 </div>
                 {(loading || saving) && (
                     <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-600">
-                        {loading ? "Dang tai user tu Sheet..." : "Dang dong bo user len Sheet..."}
+                        {loading ? "Đang tải user từ Sheet..." : "Đang đồng bộ user lên Sheet..."}
                     </div>
                 )}
             </div>

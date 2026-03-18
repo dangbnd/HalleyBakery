@@ -38,13 +38,10 @@ function Root() {
     };
   }, []);
 
+  // Bỏ auto-sync định kỳ theo yêu cầu. Chỉ load 1 lần khi khởi động, sau đó dùng nút đồng bộ thủ công
   useEffect(() => {
     if (!ready) return;
-    // Config chỉ thay đổi khi admin bấm Lưu → không cần check liên tục
-    const timer = setInterval(() => {
-      syncConfigFromRemote({ force: true }).catch(() => {});
-    }, 10 * 60 * 1000); // 10 phút 1 lần
-    return () => clearInterval(timer);
+    // Không chạy setInterval nữa
   }, [ready]);
 
   if (!ready) {

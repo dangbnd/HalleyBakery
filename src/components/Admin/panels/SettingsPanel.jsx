@@ -747,6 +747,23 @@ export default function SettingsPanel({ canEdit = true }) {
           <span className="text-[11px] text-gray-500 mr-auto">
             {hasChanges ? "Có thay đổi chưa lưu" : "Không có thay đổi"}
           </span>
+          <button onClick={async () => {
+              if (!confirm("Tải cấu hình mới nhất từ Sheet? Mọi thay đổi chưa lưu sẽ bị ghi đè.")) return;
+              setSaveBusy(true);
+              try {
+                const { syncConfigFromRemote } = await import("../../../utils/config.js");
+                await syncConfigFromRemote({ force: true });
+                window.location.reload();
+              } catch {
+                alert("Lỗi tải cấu hình");
+              } finally {
+                setSaveBusy(false);
+              }
+            }} 
+            disabled={!canEdit || saveBusy}
+            className="h-8 px-3 border border-indigo-200 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-medium hover:bg-indigo-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shrink-0">
+            {saveBusy ? "Đang tải..." : "Tải từ Sheet"}
+          </button>
           <button onClick={save} disabled={!canEdit || !hasChanges || saveBusy}
             className="h-8 px-3 border border-gray-200 rounded-lg text-xs font-medium text-gray-600
                        hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200">

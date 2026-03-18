@@ -466,6 +466,9 @@ export default function UploadPanel({ canEdit = true }) {
     setHashStatus({ status: "loading", message: "Đang tải...", total: 0 });
     try {
       await ensureDirectAccessToken();
+      // Tải folder/danh mục trước
+      await refreshMeta();
+      // Sau đó tải hash
       const hashes = await listDriveFileHashes({ rootFolderId: cfg.driveRootId });
       
       const map = new Map();
@@ -482,7 +485,15 @@ export default function UploadPanel({ canEdit = true }) {
         sha256Count: hashes.filter((row) => normalizeHashAlgo(row.hash, row.algo) === "sha256").length,
       };
       setHashStatus(newStat);
-      writeMetaCache({ categories, folders, tagOptions, hashStatus: newStat, driveHashes: hashes });
+      
+      // Update cache
+      writeMetaCache({ 
+        categories: categories || [], 
+        folders: folders || [], 
+        tagOptions, 
+        hashStatus: newStat, 
+        driveHashes: hashes 
+      });
     } catch (e) {
       setHashStatus({ status: "error", message: e.message, total: 0 });
     }
@@ -730,7 +741,7 @@ export default function UploadPanel({ canEdit = true }) {
               </div>
             )}
             <button onClick={() => refreshDriveHashes()} disabled={!canEdit || hashStatus.status === "loading" || !directReady} className="h-9 px-4 text-xs font-semibold rounded-xl border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 shadow-sm transition">
-              {hashStatus.status === "loading" ? "Đang nạp hash..." : "Nạp hash Drive"}
+              {hashStatus.status === "loading" ? "Đang xử lý..." : "Nạp Danh mục & Hash Drive"}
             </button>
           </div>
           
