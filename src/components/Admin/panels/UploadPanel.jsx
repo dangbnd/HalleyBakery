@@ -466,8 +466,13 @@ export default function UploadPanel({ canEdit = true }) {
     setHashStatus({ status: "loading", message: "Đang tải...", total: 0 });
     try {
       await ensureDirectAccessToken();
-      // Tải folder/danh mục trước
-      await refreshMeta();
+      // Tải folder/danh mục trước (thất bại thì vẫn cho qua để tải hash)
+      let metaErr = "";
+      try {
+        await refreshMeta();
+      } catch (err) {
+        metaErr = err.message;
+      }
       // Sau đó tải hash
       const hashes = await listDriveFileHashes({ rootFolderId: cfg.driveRootId });
       
@@ -480,7 +485,7 @@ export default function UploadPanel({ canEdit = true }) {
       
       const newStat = {
         status: "success",
-        message: "Tải thành công",
+        message: metaErr ? `Lỗi danh mục: ${metaErr}` : "Tải thành công",
         total: hashes.length,
         sha256Count: hashes.filter((row) => normalizeHashAlgo(row.hash, row.algo) === "sha256").length,
       };
@@ -522,7 +527,9 @@ export default function UploadPanel({ canEdit = true }) {
       setItems(prev => prev.map(it => it.categoryKey && !it.folderManual ? applyCategoryAutoFolder(it, it.categoryKey, nCats, nFol) : it));
       writeMetaCache({ categories: nCats, folders: nFol, tagOptions, hashStatus });
     } catch (e) {
-      alert(e?.message || "Khong tai duoc du lieu bo tro upload.");
+      console.warn("Lỗi tải Danh mục/Folder:", e);
+      // Ném lỗi ra để refreshDriveHashes nhận biết, không dùng alert gây block UX
+      throw new Error("Lỗi tải thông tin Danh mục/Folder từ Sheet. Vui lòng kiểm tra quyền truy cập công khai của Sheet: " + (e?.message || ""));
     } finally { setMetaLoading(false); }
   }, [canEdit, tagOptions, hashStatus]);
 
