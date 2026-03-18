@@ -217,6 +217,12 @@ function extractRowConfigKey(row = {}) {
   return normalizeCfgKey(row?.[keyField] ?? "");
 }
 
+function isLikelyConfigHeaderIssue(error = null) {
+  const msg = s(error?.message || error);
+  if (!msg) return false;
+  return /header|column|field|key|value|range|invalid row/i.test(msg);
+}
+
 async function resolveConfigSheet(options = {}) {
   let lastError = null;
   for (const sheetName of CONFIG_SHEET_CANDIDATES) {
@@ -263,16 +269,32 @@ async function upsertConfigEntries(entries = [], { authToken = "", webappUrl = "
         updated += 1;
         byKey.set(cfgKey, payload);
       } catch {
-        await insertToSheet(sheetName, { key: cfgKey, value }, transportOptions);
-        inserted += 1;
-        byKey.set(cfgKey, { key: cfgKey, value });
+        try {
+          await insertToSheet(sheetName, { key: cfgKey, value }, transportOptions);
+          inserted += 1;
+          byKey.set(cfgKey, { key: cfgKey, value });
+        } catch (e2) {
+          const base = responseMessage(e2) || s(e2?.message) || "Không thể ghi dữ liệu cấu hình";
+          if (isLikelyConfigHeaderIssue(e2)) {
+            throw new Error(`${base}. Tab "${sheetName}" cần header: A1="key", B1="value".`);
+          }
+          throw new Error(base);
+        }
       }
       continue;
     }
 
-    await insertToSheet(sheetName, { key: cfgKey, value }, transportOptions);
-    inserted += 1;
-    byKey.set(cfgKey, { key: cfgKey, value });
+    try {
+      await insertToSheet(sheetName, { key: cfgKey, value }, transportOptions);
+      inserted += 1;
+      byKey.set(cfgKey, { key: cfgKey, value });
+    } catch (e) {
+      const base = responseMessage(e) || s(e?.message) || "Không thể ghi dữ liệu cấu hình";
+      if (isLikelyConfigHeaderIssue(e)) {
+        throw new Error(`${base}. Tab "${sheetName}" cần header: A1="key", B1="value".`);
+      }
+      throw new Error(base);
+    }
   }
 
   return { ok: true, sheetName, inserted, updated };
