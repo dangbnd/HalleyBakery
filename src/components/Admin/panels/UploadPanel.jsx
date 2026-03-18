@@ -762,13 +762,28 @@ export default function UploadPanel({ canEdit = true }) {
           </div>
           
           {/* Thống kê nhanh */}
-          <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
             <div className="rounded-xl bg-gray-50/50 hover:bg-gray-50 border border-gray-100 px-3 py-2 transition"><div className="text-gray-500 font-medium mb-0.5">Sheet ID</div><div className="font-mono text-gray-800 truncate">{cfg.sheetId || "(chưa cấu hình)"}</div></div>
             <div className="rounded-xl bg-gray-50/50 hover:bg-gray-50 border border-gray-100 px-3 py-2 transition"><div className="text-gray-500 font-medium mb-0.5">Thư mục gốc Drive</div><div className="font-mono text-gray-800 truncate">{cfg.driveRootId || "(chưa cấu hình)"}</div></div>
             <div className="rounded-xl bg-gray-50/50 hover:bg-gray-50 border border-gray-100 px-3 py-2 transition"><div className="text-gray-500 font-medium mb-0.5">Danh mục</div><div className="text-gray-800 font-semibold">{categories.length} mục</div></div>
             <div className="rounded-xl bg-gray-50/50 hover:bg-gray-50 border border-gray-100 px-3 py-2 transition"><div className="text-gray-500 font-medium mb-0.5">Thư mục cấp cuối</div><div className="text-gray-800 font-semibold">{folders.length} thư mục</div></div>
             <div className="rounded-xl bg-gray-50/50 hover:bg-gray-50 border border-gray-100 px-3 py-2 transition"><div className="text-gray-500 font-medium mb-0.5">Tag mẫu</div><div className="text-gray-800 font-semibold">{tagOptions?.length || 0} tag</div></div>
+            <div className={`rounded-xl border px-3 py-2 transition ${hashStatus.total > 0 ? "bg-emerald-50/50 border-emerald-100" : "bg-gray-50/50 border-gray-100"}`}>
+              <div className="text-gray-500 font-medium mb-0.5">Ảnh đã hash</div>
+              <div className={`font-semibold ${hashStatus.total > 0 ? "text-emerald-700" : "text-gray-800"}`}>
+                {hashStatus.status === "loading" ? "Đang tải..." : `${hashStatus.total || 0} ảnh`}
+                {hashStatus.sha256Count > 0 && <span className="text-[10px] text-gray-400 ml-1">(SHA-256)</span>}
+              </div>
+            </div>
           </div>
+
+          {/* Hash status message */}
+          {hashStatus.message && hashStatus.status === "success" && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs px-3 py-2 flex items-center gap-2">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><path d="M22 4L12 14.01l-3-3" /></svg>
+              {hashStatus.message} — {hashStatus.total} ảnh đã được hash trên Drive
+            </div>
+          )}
 
           {/* Custom AI Prompts */}
           <div className="space-y-3 border-t border-gray-100 pt-3">
