@@ -48,11 +48,34 @@ function getAdminAuth({ tokenOverride = "" } = {}) {
 }
 
 const UNKNOWN_ACTION_RE =
-  /no action|unknown action|unknown op|invalid action|unsupported action|action not supported|unknown action\/op/i;
+  /no action|unknown action|unknown op|invalid action|unsupported action|action not supported|unknown action\/op|missing action|missing op|no handler|no function/i;
 
 function isUnknownAction(data) {
   const msg = responseMessage(data).toLowerCase();
   return UNKNOWN_ACTION_RE.test(msg);
+}
+
+function toFormEncoded(obj = {}) {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (v == null) continue;
+    if (typeof v === "object") params.set(k, JSON.stringify(v));
+    else params.set(k, String(v));
+  }
+  return params.toString();
+}
+
+async function requestWithInit(webApp = "", init = {}) {
+  const res = await fetch(webApp, init);
+  let data = {};
+  let raw = "";
+  try {
+    raw = await res.text();
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    data = raw ? { message: raw, error: raw, msg: raw } : {};
+  }
+  return { res, data };
 }
 
 async function postBody(body = {}, { requireAuth = false, authToken = "", webappUrl = "" } = {}) {
@@ -63,25 +86,61 @@ async function postBody(body = {}, { requireAuth = false, authToken = "", webapp
     throw new Error("Chưa cấu hình GS WebApp Admin Token");
   }
 
-  const res = await fetch(webApp, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    redirect: "follow",
-    body: JSON.stringify(adminAuth ? { ...body, _auth: adminAuth } : body),
-  });
+  const payload = adminAuth ? { ...body, _auth: adminAuth } : body;
+  const attempts = [
+    {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      redirect: "follow",
+      body: JSON.stringify(payload),
+    },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json;charset=utf-8" },
+      redirect: "follow",
+      body: JSON.stringify(payload),
+    },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded;charset=utf-8" },
+      redirect: "follow",
+      body: toFormEncoded(payload),
+    },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded;charset=utf-8" },
+      redirect: "follow",
+      body: toFormEncoded({
+        action: payload?.action ?? "",
+        op: payload?.op ?? "",
+        payload: JSON.stringify(payload),
+      }),
+    },
+  ];
 
-  let data = {};
-  try {
-    data = await res.json();
-  } catch {
-    data = {};
+  let lastErr = null;
+  for (let i = 0; i < attempts.length; i++) {
+    try {
+      const { res, data } = await requestWithInit(webApp, attempts[i]);
+      if (!res.ok) {
+        lastErr = new Error(responseMessage(data) || `GS WebApp lỗi HTTP ${res.status}`);
+        continue;
+      }
+      const unknown = isUnknownAction(data);
+      const isEmptyObject =
+        data && typeof data === "object" && !Array.isArray(data) && Object.keys(data).length === 0;
+      const shouldRetryTransport = unknown || isEmptyObject;
+      if (shouldRetryTransport && i < attempts.length - 1) {
+        lastErr = new Error(responseMessage(data) || "Unknown action/op");
+        continue;
+      }
+      return data;
+    } catch (e) {
+      lastErr = e;
+    }
   }
 
-  if (!res.ok) {
-    throw new Error(responseMessage(data) || `GS WebApp lỗi HTTP ${res.status}`);
-  }
-
-  return data;
+  throw lastErr || new Error("Không thể gọi GS WebApp");
 }
 
 async function call(action, payload = {}, options = {}) {
@@ -106,6 +165,8 @@ async function callWithAliases(actions = [], payload = {}, options = {}) {
     const runners = [
       () => call(action, payload, options),
       () => callOp(action, payload, options),
+      () => postBody({ action: "sheet", op: action, ...payload }, options),
+      () => postBody({ action: "sheets", op: action, ...payload }, options),
       () => callDriveOp(action, payload, options),
       () => callDriveOperation(action, payload, options),
     ];
@@ -134,11 +195,129 @@ async function callWithAliases(actions = [], payload = {}, options = {}) {
   throw lastErr || new Error("GS WebApp chưa hỗ trợ action cần thiết");
 }
 
+function listPayloadVariants(sheet = "") {
+  const v = s(sheet);
+  return [{ sheet: v }, { sheetName: v }, { tab: v }, { name: v }];
+}
+
+function rowPayloadVariants(sheet = "", row = {}) {
+  const tab = s(sheet);
+  return [
+    { sheet: tab, row },
+    { sheetName: tab, row },
+    { tab, row },
+    { sheet: tab, data: row },
+    { sheetName: tab, data: row },
+    { sheet: tab, rowData: row },
+    { sheetName: tab, rowData: row },
+  ];
+}
+
+function idPayloadVariants(sheet = "", id = "") {
+  const tab = s(sheet);
+  const key = s(id);
+  return [
+    { sheet: tab, id: key },
+    { sheetName: tab, id: key },
+    { tab, id: key },
+    { sheet: tab, rowId: key },
+    { sheetName: tab, rowId: key },
+    { sheet: tab, key },
+    { sheetName: tab, key },
+    { sheet: tab, row: { id: key } },
+    { sheetName: tab, row: { id: key } },
+  ];
+}
+
+async function callSheetAction(aliases = [], payloadVariants = [], options = {}) {
+  let lastErr = null;
+  for (const payload of Array.isArray(payloadVariants) ? payloadVariants : []) {
+    try {
+      return await callWithAliases(aliases, payload, options);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("GS WebApp chưa hỗ trợ thao tác Sheet");
+}
+
 // Basic sheet APIs
-export const listSheet = (sheet, options = {}) => call("list", { sheet }, options);
-export const insertToSheet = (sheet, row, options = {}) => call("insert", { sheet, row }, { requireAuth: true, ...options });
-export const updateToSheet = (sheet, row, options = {}) => call("update", { sheet, row }, { requireAuth: true, ...options });
-export const deleteFromSheet = (sheet, id, options = {}) => call("delete", { sheet, id }, { requireAuth: true, ...options });
+const SHEET_LIST_ACTION_ALIASES = [
+  "list",
+  "listSheet",
+  "sheet.list",
+  "sheet_list",
+  "rows.list",
+  "listRows",
+  "getRows",
+  "readRows",
+  "getSheet",
+  "readSheet",
+  "read_sheet",
+  "get_sheet",
+  "select",
+  "get",
+  "read",
+];
+const SHEET_INSERT_ACTION_ALIASES = [
+  "insert",
+  "add",
+  "append",
+  "create",
+  "insertRow",
+  "appendRow",
+  "addRow",
+  "createRow",
+  "sheet.insert",
+  "sheet.add",
+  "sheet.append",
+  "rows.insert",
+  "rows.add",
+  "rows.append",
+];
+const SHEET_UPDATE_ACTION_ALIASES = [
+  "update",
+  "edit",
+  "patch",
+  "save",
+  "updateRow",
+  "editRow",
+  "saveRow",
+  "sheet.update",
+  "sheet.edit",
+  "rows.update",
+  "rows.edit",
+];
+const SHEET_DELETE_ACTION_ALIASES = [
+  "delete",
+  "remove",
+  "erase",
+  "deleteRow",
+  "removeRow",
+  "sheet.delete",
+  "rows.delete",
+];
+
+export const listSheet = (sheet, options = {}) =>
+  callSheetAction(SHEET_LIST_ACTION_ALIASES, listPayloadVariants(sheet), options);
+export const insertToSheet = (sheet, row, options = {}) =>
+  callSheetAction(
+    SHEET_INSERT_ACTION_ALIASES,
+    rowPayloadVariants(sheet, row),
+    { requireAuth: true, ...options }
+  );
+export const updateToSheet = (sheet, row, options = {}) =>
+  callSheetAction(
+    SHEET_UPDATE_ACTION_ALIASES,
+    rowPayloadVariants(sheet, row),
+    { requireAuth: true, ...options }
+  );
+export const deleteFromSheet = (sheet, id, options = {}) =>
+  callSheetAction(
+    SHEET_DELETE_ACTION_ALIASES,
+    idPayloadVariants(sheet, id),
+    { requireAuth: true, ...options }
+  );
 
 const RUNTIME_CONFIG_KEYS = [
   KEYS.SHEET_ID,
