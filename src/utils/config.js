@@ -586,17 +586,27 @@ export async function syncConfigFromRemote({ force = false } = {}) {
   remoteSyncPromise = (async () => {
     const sheetId = bootstrapValueFor(KEYS.SHEET_ID);
     const gidConfig = bootstrapValueFor(KEYS.SHEET_GID_CONFIG);
+    console.log("[ConfigSync] sheetId:", sheetId, "gidConfig:", gidConfig);
     if (!sheetId) return { ok: false, changed: false, reason: "missing_sheet_id" };
 
     let payload = {};
     try {
       payload = await fetchRemoteConfigViaApi({ sheetId, gidConfig });
-    } catch {
-      payload = await fetchRemoteConfigDirectSheet({ sheetId, gidConfig });
+      console.log("[ConfigSync] API payload:", Object.keys(payload?.config || {}));
+    } catch (apiErr) {
+      console.log("[ConfigSync] API failed, trying direct sheet:", apiErr?.message);
+      try {
+        payload = await fetchRemoteConfigDirectSheet({ sheetId, gidConfig });
+        console.log("[ConfigSync] Direct sheet payload:", Object.keys(payload?.config || {}));
+      } catch (sheetErr) {
+        console.error("[ConfigSync] Direct sheet also failed:", sheetErr?.message);
+        throw sheetErr;
+      }
     }
 
     const rawMap = payload?.config && typeof payload.config === "object" ? payload.config : {};
     const mapped = mapRemoteConfig(rawMap);
+    console.log("[ConfigSync] mapped keys:", Object.keys(mapped), "values:", JSON.stringify(mapped).substring(0, 300));
     const effectiveGid = String(payload?.gidConfig || mapped[KEYS.SHEET_GID_CONFIG] || gidConfig || "").trim();
     if (effectiveGid) mapped[KEYS.SHEET_GID_CONFIG] = effectiveGid;
     if (!mapped[KEYS.SHEET_ID]) mapped[KEYS.SHEET_ID] = extractSheetId(sheetId);
@@ -623,6 +633,7 @@ export async function syncConfigFromRemote({ force = false } = {}) {
       localStorage.setItem(REMOTE_SYNC_TTL_KEY, String(Date.now()));
     } catch {}
     if (changed) window.dispatchEvent(new Event("hb:config-changed"));
+    console.log("[ConfigSync] done. changed:", changed, "keys synced:", Object.keys(mapped).length);
     return { ok: true, changed, source: payload?.source || "remote" };
   })()
     .catch((error) => ({ ok: false, changed: false, error: String(error?.message || error || "sync_failed") }))
