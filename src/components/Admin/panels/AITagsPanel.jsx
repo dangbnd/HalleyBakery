@@ -290,9 +290,10 @@ export default function AITagsPanel({ canEdit = true }) {
     }, [keys]);
     useEffect(() => {
         writeLS("ai_models_order", enabledModels);
-        setConfig(KEYS.GEMINI_MODELS_ORDER, JSON.stringify(enabledModels));
+        const joinedStr = enabledModels.join(",");
+        setConfig(KEYS.GEMINI_MODELS_ORDER, joinedStr);
         // Lưu lên Sheet để đồng bộ thiết bị khác
-        pushConfigKeyToSheet("gemini_models_order", JSON.stringify(enabledModels)).catch(() => {});
+        pushConfigKeyToSheet("gemini_models_order", joinedStr).catch(() => {});
     }, [enabledModels]);
     useEffect(() => {
         writeLS("ai_prompt_template", prompt);
