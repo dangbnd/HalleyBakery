@@ -243,7 +243,7 @@ export function setGeminiKeys(nextKeys = []) {
  * Dùng Sheets API + OAuth token đã cache trong localStorage.
  * Tìm dòng có key trùng → update giá trị. Nếu chưa có → append.
  */
-async function pushConfigKeyToSheet(configKey, configValue) {
+export async function pushConfigKeyToSheet(configKey, configValue) {
   if (typeof window === "undefined") return;
   
   const sheetId = extractSheetId(getConfig(KEYS.SHEET_ID, ""));

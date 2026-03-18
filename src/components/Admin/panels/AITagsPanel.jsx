@@ -1,7 +1,7 @@
 // src/components/Admin/panels/AITagsPanel.jsx
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { LS, audit, parseBooleanLike, readLS, writeLS } from "../../../utils.js";
-import { KEYS, getConfig, getGeminiKeys, setGeminiKeys, setConfig } from "../../../utils/config.js";
+import { KEYS, getConfig, getGeminiKeys, setGeminiKeys, setConfig, pushConfigKeyToSheet } from "../../../utils/config.js";
 import { listConfiguredProductSheet, updateConfiguredProductRow, saveAITagsConfigToSheet } from "../shared/sheets.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
 
@@ -291,10 +291,14 @@ export default function AITagsPanel({ canEdit = true }) {
     useEffect(() => {
         writeLS("ai_models_order", enabledModels);
         setConfig(KEYS.GEMINI_MODELS_ORDER, JSON.stringify(enabledModels));
+        // Lưu lên Sheet để đồng bộ thiết bị khác
+        pushConfigKeyToSheet("gemini_models_order", JSON.stringify(enabledModels)).catch(() => {});
     }, [enabledModels]);
     useEffect(() => {
         writeLS("ai_prompt_template", prompt);
         setConfig(KEYS.AI_PROMPT_TEMPLATE, prompt);
+        // Lưu lên Sheet để đồng bộ thiết bị khác
+        pushConfigKeyToSheet("ai_prompt_template", prompt).catch(() => {});
     }, [prompt]);
 
     useEffect(() => {
