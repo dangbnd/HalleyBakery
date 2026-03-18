@@ -3,7 +3,7 @@ import { LS, audit, readLS } from "../../../utils.js";
 import { KEYS, getConfig, getGeminiKeys } from "../../../utils/config.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
 import { listDriveFileHashes, listDriveLeafFolders, uploadDriveFile } from "../shared/sheets.js";
-import { isTokenExpired, requestGoogleDriveToken, uploadFileDirectToDrive } from "../shared/driveDirect.js";
+import { isTokenExpired, requestGoogleDriveToken, uploadFileDirectToDrive, saveHashesToSheet, loadHashesFromSheet } from "../shared/driveDirect.js";
 
 const AI_MODEL = "gemini-2.0-flash";
 const OAUTH_CACHE_KEY = "admin.upload.oauth.v1";
@@ -463,9 +463,9 @@ export default function UploadPanel({ canEdit = true }) {
   const refreshDriveHashes = async () => {
     if (!canEdit) return;
     if (!directReady) return alert("Cần kết nối Google Drive Direct trước!");
-    setHashStatus({ status: "loading", message: "Đang tải...", total: 0 });
+    setHashStatus({ status: "loading", message: "Đang tải danh mục...", total: 0 });
     try {
-      await ensureDirectAccessToken();
+      const token = await ensureDirectAccessToken();
       // Tải folder/danh mục trước (thất bại thì vẫn cho qua để tải hash)
       let metaErr = "";
       try {
@@ -473,7 +473,9 @@ export default function UploadPanel({ canEdit = true }) {
       } catch (err) {
         metaErr = err.message;
       }
-      // Sau đó tải hash
+
+      // Tải hash từ Drive
+      setHashStatus({ status: "loading", message: "Đang quét hash ảnh trên Drive...", total: 0 });
       const hashes = await listDriveFileHashes({ rootFolderId: cfg.driveRootId });
       
       const map = new Map();
@@ -483,18 +485,29 @@ export default function UploadPanel({ canEdit = true }) {
       });
       setDriveHashIndex(map);
       
+      // Lưu hash lên Google Sheet tab "drive_hashes" để đồng bộ thiết bị khác
+      let sheetSaveMsg = "";
+      try {
+        setHashStatus({ status: "loading", message: `Đang lưu ${hashes.length} hash lên Sheet...`, total: hashes.length });
+        await saveHashesToSheet({ accessToken: token, sheetId: cfg.sheetId, hashes });
+        sheetSaveMsg = ` • Đã lưu lên Sheet`;
+      } catch (saveErr) {
+        console.warn("Lỗi lưu hash lên Sheet:", saveErr);
+        sheetSaveMsg = ` • Lỗi lưu Sheet: ${saveErr.message}`;
+      }
+
       const newStat = {
         status: "success",
-        message: metaErr ? `Lỗi danh mục: ${metaErr}` : "Tải thành công",
+        message: `Tải thành công${sheetSaveMsg}${metaErr ? ` • Danh mục: ${metaErr}` : ""}`,
         total: hashes.length,
         sha256Count: hashes.filter((row) => normalizeHashAlgo(row.hash, row.algo) === "sha256").length,
       };
       setHashStatus(newStat);
       
-      // Update cache
+      // Lưu cache local — dùng state hiện tại (sau refreshMeta đã set)
       writeMetaCache({ 
-        categories: categories || [], 
-        folders: folders || [], 
+        categories, 
+        folders, 
         tagOptions, 
         hashStatus: newStat, 
         driveHashes: hashes 

@@ -176,3 +176,98 @@ export async function uploadFileDirectToDrive({
     raw: data,
   };
 }
+
+/* ===== Save/Load drive hashes to Google Sheet tab "drive_hashes" ===== */
+
+const HASH_TAB_NAME = "drive_hashes";
+const HASH_HEADERS = ["hash", "algo", "name", "fileId", "folderId", "folderName", "size", "mimeType"];
+
+/**
+ * Lưu danh sách hash lên tab "drive_hashes" trong Google Sheet.
+ * Dùng Google Sheets API v4 (OAuth scope: drive).
+ */
+export async function saveHashesToSheet({ accessToken, sheetId, hashes = [] }) {
+  const token = s(accessToken);
+  if (!token) throw new Error("Thiếu access token");
+  if (!sheetId) throw new Error("Thiếu Sheet ID");
+
+  // 1. Tạo tab nếu chưa có
+  const metaUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`;
+  const metaRes = await fetch(metaUrl, { headers: { Authorization: `Bearer ${token}` } });
+  if (!metaRes.ok) throw new Error(`Không đọc được Sheet (HTTP ${metaRes.status})`);
+  const metaData = await metaRes.json();
+  const tabs = (metaData?.sheets || []).map(sh => s(sh?.properties?.title));
+
+  if (!tabs.includes(HASH_TAB_NAME)) {
+    const addRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requests: [{ addSheet: { properties: { title: HASH_TAB_NAME } } }],
+        }),
+      }
+    );
+    if (!addRes.ok) {
+      const errMsg = await readErrorMessage(addRes);
+      throw new Error(`Không tạo được tab ${HASH_TAB_NAME}: ${errMsg}`);
+    }
+  }
+
+  // 2. Xóa dữ liệu cũ + ghi mới
+  const range = `${HASH_TAB_NAME}!A1`;
+  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(HASH_TAB_NAME)}:clear`;
+  await fetch(clearUrl, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: "{}",
+  });
+
+  // 3. Ghi header + data
+  const rows = [HASH_HEADERS];
+  for (const h of hashes) {
+    rows.push(HASH_HEADERS.map(col => s(h[col] ?? "")));
+  }
+  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
+  const writeRes = await fetch(writeUrl, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ values: rows }),
+  });
+  if (!writeRes.ok) {
+    const errMsg = await readErrorMessage(writeRes);
+    throw new Error(`Không ghi được hash lên Sheet: ${errMsg}`);
+  }
+
+  return { ok: true, count: hashes.length };
+}
+
+/**
+ * Tải danh sách hash từ tab "drive_hashes" trên Google Sheet (đọc public CSV, không cần token).
+ */
+export async function loadHashesFromSheet({ sheetId }) {
+  if (!sheetId) return [];
+
+  // Lấy gid của tab "drive_hashes"
+  // Dùng cách tải toàn bộ sheet metadata nếu có token, hoặc thử CSV với gid đoán
+  // Approach: thử fetch qua gviz query
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(HASH_TAB_NAME)}`;
+  const res = await fetch(url);
+  if (!res.ok) return []; // tab chưa tồn tại → trả rỗng
+
+  const txt = await res.text();
+  try {
+    const json = JSON.parse(txt.substring(txt.indexOf("{"), txt.lastIndexOf("}") + 1));
+    const cols = (json.table?.cols || []).map(c => s(c.label || "").toLowerCase());
+    return (json.table?.rows || []).map(r => {
+      const obj = {};
+      (r.c || []).forEach((cell, i) => {
+        if (cols[i]) obj[cols[i]] = cell?.v != null ? String(cell.v) : "";
+      });
+      return obj;
+    }).filter(h => h.hash); // chỉ giữ dòng có hash
+  } catch {
+    return [];
+  }
+}
