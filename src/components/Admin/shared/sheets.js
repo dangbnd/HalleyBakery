@@ -120,11 +120,9 @@ async function postBody(body = {}, { requireAuth = false, authToken = "", webapp
   }
 
   const payload = adminAuth ? { ...body, _auth: adminAuth } : body;
-  if (shouldUseGsProxy(webApp)) {
-    return postViaProxy(webApp, payload);
-  }
 
-  const attempts = [
+  // Luôn thử gọi TRỰC TIẾP trước (nhanh hơn proxy ~10s)
+  const directAttempts = [
     {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
@@ -137,6 +135,46 @@ async function postBody(body = {}, { requireAuth = false, authToken = "", webapp
       redirect: "follow",
       body: JSON.stringify(payload),
     },
+  ];
+
+  let lastErr = null;
+  for (let i = 0; i < directAttempts.length; i++) {
+    try {
+      const { res, data } = await requestWithInit(webApp, directAttempts[i]);
+      if (!res.ok) {
+        lastErr = new Error(responseMessage(data) || `GS WebApp lỗi HTTP ${res.status}`);
+        continue;
+      }
+      const unknown = isUnknownAction(data);
+      const isEmptyObject =
+        data && typeof data === "object" && !Array.isArray(data) && Object.keys(data).length === 0;
+      const shouldRetry = unknown || isEmptyObject;
+      if (shouldRetry && i < directAttempts.length - 1) {
+        lastErr = new Error(responseMessage(data) || "Unknown action/op");
+        continue;
+      }
+      if (!shouldRetry) return data;
+      // Last direct attempt still returned unknown/empty — break and try proxy
+      lastErr = new Error(responseMessage(data) || "Unknown action/op");
+      break;
+    } catch (e) {
+      lastErr = e;
+      // CORS or network error — try proxy fallback
+      break;
+    }
+  }
+
+  // Fallback: dùng proxy nếu direct call bị CORS hoặc lỗi mạng
+  if (shouldUseGsProxy(webApp)) {
+    try {
+      return await postViaProxy(webApp, payload);
+    } catch (proxyErr) {
+      throw proxyErr;
+    }
+  }
+
+  // Thử thêm form-encoded cho non-GAS URLs
+  const formAttempts = [
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded;charset=utf-8" },
@@ -155,10 +193,9 @@ async function postBody(body = {}, { requireAuth = false, authToken = "", webapp
     },
   ];
 
-  let lastErr = null;
-  for (let i = 0; i < attempts.length; i++) {
+  for (let i = 0; i < formAttempts.length; i++) {
     try {
-      const { res, data } = await requestWithInit(webApp, attempts[i]);
+      const { res, data } = await requestWithInit(webApp, formAttempts[i]);
       if (!res.ok) {
         lastErr = new Error(responseMessage(data) || `GS WebApp lỗi HTTP ${res.status}`);
         continue;
@@ -166,8 +203,7 @@ async function postBody(body = {}, { requireAuth = false, authToken = "", webapp
       const unknown = isUnknownAction(data);
       const isEmptyObject =
         data && typeof data === "object" && !Array.isArray(data) && Object.keys(data).length === 0;
-      const shouldRetryTransport = unknown || isEmptyObject;
-      if (shouldRetryTransport && i < attempts.length - 1) {
+      if ((unknown || isEmptyObject) && i < formAttempts.length - 1) {
         lastErr = new Error(responseMessage(data) || "Unknown action/op");
         continue;
       }
