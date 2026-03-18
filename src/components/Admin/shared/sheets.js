@@ -219,37 +219,15 @@ async function callWithAliases(actions = [], payload = {}, options = {}) {
 }
 
 function listPayloadVariants(sheet = "") {
-  const v = s(sheet);
-  return [{ sheet: v }, { sheetName: v }, { tab: v }, { name: v }];
+  return [{ sheet: s(sheet) }];
 }
 
 function rowPayloadVariants(sheet = "", row = {}) {
-  const tab = s(sheet);
-  return [
-    { sheet: tab, row },
-    { sheetName: tab, row },
-    { tab, row },
-    { sheet: tab, data: row },
-    { sheetName: tab, data: row },
-    { sheet: tab, rowData: row },
-    { sheetName: tab, rowData: row },
-  ];
+  return [{ sheet: s(sheet), row }];
 }
 
 function idPayloadVariants(sheet = "", id = "") {
-  const tab = s(sheet);
-  const key = s(id);
-  return [
-    { sheet: tab, id: key },
-    { sheetName: tab, id: key },
-    { tab, id: key },
-    { sheet: tab, rowId: key },
-    { sheetName: tab, rowId: key },
-    { sheet: tab, key },
-    { sheetName: tab, key },
-    { sheet: tab, row: { id: key } },
-    { sheetName: tab, row: { id: key } },
-  ];
+  return [{ sheet: s(sheet), id: s(id) }];
 }
 
 async function callSheetAction(aliases = [], payloadVariants = [], options = {}) {
@@ -264,62 +242,11 @@ async function callSheetAction(aliases = [], payloadVariants = [], options = {})
   throw lastErr || new Error("GS WebApp chưa hỗ trợ thao tác Sheet");
 }
 
-// Basic sheet APIs
-const SHEET_LIST_ACTION_ALIASES = [
-  "list",
-  "listSheet",
-  "sheet.list",
-  "sheet_list",
-  "rows.list",
-  "listRows",
-  "getRows",
-  "readRows",
-  "getSheet",
-  "readSheet",
-  "read_sheet",
-  "get_sheet",
-  "select",
-  "get",
-  "read",
-];
-const SHEET_INSERT_ACTION_ALIASES = [
-  "insert",
-  "add",
-  "append",
-  "create",
-  "insertRow",
-  "appendRow",
-  "addRow",
-  "createRow",
-  "sheet.insert",
-  "sheet.add",
-  "sheet.append",
-  "rows.insert",
-  "rows.add",
-  "rows.append",
-];
-const SHEET_UPDATE_ACTION_ALIASES = [
-  "update",
-  "edit",
-  "patch",
-  "save",
-  "updateRow",
-  "editRow",
-  "saveRow",
-  "sheet.update",
-  "sheet.edit",
-  "rows.update",
-  "rows.edit",
-];
-const SHEET_DELETE_ACTION_ALIASES = [
-  "delete",
-  "remove",
-  "erase",
-  "deleteRow",
-  "removeRow",
-  "sheet.delete",
-  "rows.delete",
-];
+// Basic sheet APIs — chỉ giữ 2 alias, tránh spam gs-proxy
+const SHEET_LIST_ACTION_ALIASES = ["list", "sheet.list"];
+const SHEET_INSERT_ACTION_ALIASES = ["insert", "sheet.insert"];
+const SHEET_UPDATE_ACTION_ALIASES = ["update", "sheet.update"];
+const SHEET_DELETE_ACTION_ALIASES = ["delete", "sheet.delete"];
 
 export const listSheet = (sheet, options = {}) =>
   callSheetAction(SHEET_LIST_ACTION_ALIASES, listPayloadVariants(sheet), options);
