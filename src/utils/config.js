@@ -238,16 +238,36 @@ export function setGeminiKeys(nextKeys = []) {
   return keys;
 }
 
+const sheetWriteTimers = {};
+
 /**
  * Ghi một cặp key=value lên Config tab trong Google Sheet.
  * Dùng Sheets API + OAuth token đã cache trong localStorage.
- * Tìm dòng có key trùng → update giá trị. Nếu chưa có → append.
+ * Có debounce 2 giây để tránh gửi API liên tục khi gõ phím.
+ * Nếu tìm thấy nhiều dòng có cùng key, sẽ ưu tiên dòng cuối cùng (giống logic đọc file).
  */
 export async function pushConfigKeyToSheet(configKey, configValue) {
   if (typeof window === "undefined") return;
-  
+
   const sheetId = extractSheetId(getConfig(KEYS.SHEET_ID, ""));
   if (!sheetId) return;
+
+  // Debounce logic: clear timer cũ nếu có
+  if (sheetWriteTimers[configKey]) {
+    clearTimeout(sheetWriteTimers[configKey]);
+  }
+
+  // Tỷ lệ debounced (2 giây) để tránh race condition khi gõ phím
+  return new Promise((resolve) => {
+    sheetWriteTimers[configKey] = setTimeout(async () => {
+      delete sheetWriteTimers[configKey];
+      await executePushConfig(sheetId, configKey, configValue);
+      resolve();
+    }, 2000);
+  });
+}
+
+async function executePushConfig(sheetId, configKey, configValue) {
   
   // Lấy OAuth token từ cache upload panel
   let token = "";
@@ -292,8 +312,7 @@ export async function pushConfigKeyToSheet(configKey, configValue) {
     for (let i = 0; i < rows.length; i++) {
       const cellKey = String(rows[i]?.[0] || "").trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");
       if (cellKey === configKey.toLowerCase().replace(/[^a-z0-9_]/g, "_")) {
-        rowIndex = i + 1; // 1-indexed
-        break;
+        rowIndex = i + 1; // 1-indexed (ghi nhận lại mỗi khi tìm thấy, để lấy dòng cuối)
       }
     }
 
