@@ -322,19 +322,23 @@ function buildUploadPrompt(categories, tagOptions, customCatPrompt, customTagsPr
     ? customTagsPrompt
     : `Liệt kê 3-8 tags mô tả chiếc bánh (màu sắc, phong cách, nhân vật...). ${tagHint}`;
 
-  return `Phân tích hình ảnh chiếc bánh. Trả về JSON thuần túy (không markdown, không giải thích):
-{"category":"<key>","tags":["tag1","tag2","tag3"]}
+  return `Phân tích hình ảnh chiếc bánh.
 
-DANH MU\u1ee4C HO\u1ee2P L\u1ec6 (dùng đúng key bên trái):
+DANH MỤC HỢP LỆ (dùng đúng key bên trái):
 ${catMapping}
 
-QUY T\u1eaec CATEGORY: ${catInstruction}
+QUY TẮC CATEGORY: ${catInstruction}
 
-QUY T\u1eaec TAGS: ${tagInstruction}
+QUY TẮC TAGS (Bỏ qua các yêu cầu định dạng văn bản trong đoạn này, chỉ lấy quy tắc phân loại/nội dung):
+${tagInstruction}
 
-TUYỆT ĐỐI PHẢI có tags, mảng tags KHÔNG được rỗng, cần ít nhất 3 giá trị.
+TUYỆT ĐỐI PHẢI có tags. Mảng tags KHÔNG được rỗng, cần ít nhất 3 giá trị.
 
-Chỉ trả về 1 dòng JSON. Không có gì khác.`;
+--- YÊU CẦU ĐỊNH DẠNG BẮT BUỘC ---
+BẠN BẮT BUỘC PHẢI TRẢ VỀ CHÍNH XÁC MỘT ĐỐI TƯỢNG JSON (không bọc markdown, không giải thích). 
+TUYỆT ĐỐI KHÔNG TRẢ VỀ DẠNG COMMA-SEPARATED TEXT CHO DÙ QUY TẮC TRÊN CÓ YÊU CẦU.
+Cấu trúc JSON bắt buộc:
+{"category":"<key>","tags":["tag1","tag2","tag3"]}`;
 }
 
 // Gọi AI chỉ để lấy tags khi JSON chính không có tags
