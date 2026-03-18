@@ -208,9 +208,13 @@ export default function AITagsPanel({ canEdit = true }) {
     const [catFilter, setCatFilter] = useState("");
     const [page, setPage] = useState(1);
     const [prompt, setPrompt] = useState(() => {
-        const remotePrompt = s(getConfig(KEYS.AI_PROMPT_TEMPLATE, ""));
-        if (remotePrompt) return remotePrompt;
-        return readLS("ai_prompt_template", DEFAULT_PROMPT);
+        // Ưu tiên localStorage (giá trị user vừa edit trên thiết bị này)
+        const fromLS = readLS("ai_prompt_template", null);
+        if (typeof fromLS === "string" && fromLS.trim()) return fromLS;
+        // Fallback: remote config (cho thiết bị mới chưa có localStorage)
+        const fromConfig = s(getConfig(KEYS.AI_PROMPT_TEMPLATE, ""));
+        if (fromConfig) return fromConfig;
+        return DEFAULT_PROMPT;
     });
     const [showPrompt, setShowPrompt] = useState(false);
     const [showConfig, setShowConfig] = useState(false);
@@ -223,14 +227,18 @@ export default function AITagsPanel({ canEdit = true }) {
 
     // Multi-model management (ordered)
     const [enabledModels, setEnabledModels] = useState(() => {
+        // Ưu tiên localStorage (giá trị user vừa edit trên thiết bị này)
+        const rawLocal = readLS("ai_models_order", null);
+        if (rawLocal) {
+            const fromLocal = parseModelOrderRaw(
+                Array.isArray(rawLocal) ? JSON.stringify(rawLocal) : String(rawLocal || ""),
+                ALL_MODEL_SET
+            );
+            if (fromLocal.length) return fromLocal;
+        }
+        // Fallback: remote config
         const fromConfig = parseModelOrderRaw(getConfig(KEYS.GEMINI_MODELS_ORDER, ""), ALL_MODEL_SET);
         if (fromConfig.length) return fromConfig;
-        const rawLocal = readLS("ai_models_order", []);
-        const fromLocal = parseModelOrderRaw(
-            Array.isArray(rawLocal) ? JSON.stringify(rawLocal) : String(rawLocal || ""),
-            ALL_MODEL_SET
-        );
-        if (fromLocal.length) return fromLocal;
         return ALL_MODEL_IDS;
     });
 
@@ -293,7 +301,6 @@ export default function AITagsPanel({ canEdit = true }) {
         setConfig(KEYS.GEMINI_API_KEYS, keys.join("\n"));
         setConfig(KEYS.GEMINI_API_KEY, keys[0] || "");
         if (!mountedKeys.current) { mountedKeys.current = true; return; }
-        if (suppressPush.current) return;
         pushConfigKeyToSheet("gemini_api_keys", keys.join(",")).catch(() => {});
     }, [keys]);
     useEffect(() => {
@@ -301,33 +308,21 @@ export default function AITagsPanel({ canEdit = true }) {
         const joinedStr = enabledModels.join(",");
         setConfig(KEYS.GEMINI_MODELS_ORDER, joinedStr);
         if (!mountedModels.current) { mountedModels.current = true; return; }
-        if (suppressPush.current) return;
         pushConfigKeyToSheet("gemini_models_order", joinedStr).catch(() => {});
     }, [enabledModels]);
     useEffect(() => {
         writeLS("ai_prompt_template", prompt);
         setConfig(KEYS.AI_PROMPT_TEMPLATE, prompt);
         if (!mountedPrompt.current) { mountedPrompt.current = true; return; }
-        if (suppressPush.current) return;
         pushConfigKeyToSheet("ai_prompt_template", prompt).catch(() => {});
     }, [prompt]);
 
-    // Flag để chặn push khi đang nhận sync từ remote (tránh vòng lặp ghi đè)
-    const suppressPush = useRef(false);
-
     useEffect(() => {
         const onConfigChanged = () => {
-            suppressPush.current = true;
+            // Chỉ sync API keys từ remote (do config system quản lý)
+            // KHÔNG sync prompt và models ở đây vì sẽ ghi đè local edits
             const latest = getGeminiKeys();
             setKeys((prev) => (sameStringList(prev, latest) ? prev : latest));
-            const latestPrompt = s(getConfig(KEYS.AI_PROMPT_TEMPLATE, ""));
-            if (latestPrompt) setPrompt((prev) => (prev === latestPrompt ? prev : latestPrompt));
-            const latestModels = parseModelOrderRaw(getConfig(KEYS.GEMINI_MODELS_ORDER, ""), ALL_MODEL_SET);
-            if (latestModels.length) {
-                setEnabledModels((prev) => (sameStringList(prev, latestModels) ? prev : latestModels));
-            }
-            // Cho React xử lý state update xong rồi mới tắt suppress
-            setTimeout(() => { suppressPush.current = false; }, 500);
         };
         window.addEventListener("hb:config-changed", onConfigChanged);
         return () => window.removeEventListener("hb:config-changed", onConfigChanged);
