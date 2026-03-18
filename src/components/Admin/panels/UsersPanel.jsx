@@ -69,11 +69,17 @@ export default function UsersPanel() {
     const loadUsers = async () => {
         setLoading(true);
         try {
-            const rows = await listUsersFromSheet({ includeInactive: true });
-            applyLocal(rows);
+            // Timeout 8s — nếu Sheet chưa hỗ trợ action "list" thì không block mãi
+            const result = await Promise.race([
+                listUsersFromSheet({ includeInactive: true }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 8000)),
+            ]);
+            applyLocal(result);
             setMsg("");
         } catch (e) {
-            setMsg(e?.message || "Khong tai duoc danh sach user tu Sheet");
+            // Không block UI — vẫn cho thao tác
+            const errMsg = e?.message || "";
+            if (errMsg !== "Timeout") setMsg(errMsg || "Không tải được user từ Sheet");
         } finally {
             setLoading(false);
         }
@@ -83,6 +89,7 @@ export default function UsersPanel() {
         loadUsers();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
 
     const countActiveManagers = (list) => list.filter(u => u.active !== false && hasManageUsersPermission(u)).length;
 
