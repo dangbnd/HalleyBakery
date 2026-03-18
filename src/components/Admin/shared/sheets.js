@@ -1,4 +1,4 @@
-﻿// src/components/Admin/shared/sheets.js
+// src/components/Admin/shared/sheets.js
 import { LS, readLS } from "../../../utils.js";
 import { KEYS, getConfig, setConfig } from "../../../utils/config.js";
 
@@ -517,11 +517,41 @@ async function upsertConfigEntries(entries = [], { authToken = "", webappUrl = "
 }
 
 export async function saveRuntimeConfigToSheet(config = {}, options = {}) {
+  const effectiveWebappUrl = s(options?.webappUrl || config?.[KEYS.GS_WEBAPP_URL] || "");
+  const authToken = s(options?.authToken || "");
+
+  // Build config object with only non-empty values
+  const configObj = {};
+  for (const key of RUNTIME_CONFIG_KEYS) {
+    const val = s(config?.[key] ?? "");
+    if (val) configObj[key] = val;
+  }
+
+  // 1) Try batch save (single call — fast!)
+  try {
+    const data = await postBody(
+      { action: "config.save", config: configObj },
+      { requireAuth: true, authToken, webappUrl: effectiveWebappUrl }
+    );
+    if (data?.ok) {
+      return { ok: true, sheetName: "Config", inserted: data?.appended || 0, updated: data?.count || 0 };
+    }
+  } catch (batchErr) {
+    // If it's an unknown action error, the WebApp doesn't support batch save yet
+    const msg = s(batchErr?.message || "").toLowerCase();
+    const isUnknown = /unknown|no action|no handler|missing action|unsupported/i.test(msg);
+    if (!isUnknown) {
+      // Real error (auth, network, etc.) — don't fallback, throw
+      throw batchErr;
+    }
+    console.warn("[ConfigSync] Batch save not supported, falling back to individual CRUD (slow). Consider adding HB_ConfigSync.gs to Apps Script.");
+  }
+
+  // 2) Fallback: old one-by-one method (slow but works)
   const entries = RUNTIME_CONFIG_KEYS.map((key) => ({
     key,
     value: s(config?.[key] ?? ""),
   }));
-  const effectiveWebappUrl = s(options?.webappUrl || config?.[KEYS.GS_WEBAPP_URL] || "");
   return upsertConfigEntries(entries, { ...options, webappUrl: effectiveWebappUrl });
 }
 
