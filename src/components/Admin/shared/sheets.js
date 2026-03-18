@@ -373,7 +373,7 @@ const RUNTIME_CONFIG_KEYS = [
 ];
 
 const CONFIG_SHEET_CANDIDATES = ["Config", "config", "Cấu hình", "Cau hinh", "Settings", "URL"];
-const USER_SHEET_CANDIDATES = ["Users", "User", "Nguoi dung", "Người dùng"];
+const USER_SHEET_CANDIDATES = ["Users", "User", "user", "Nguoi dung", "Người dùng"];
 
 function normalizeCfgKey(value = "") {
   return String(value || "")
