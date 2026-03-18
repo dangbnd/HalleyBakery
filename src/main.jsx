@@ -40,21 +40,11 @@ function Root() {
 
   useEffect(() => {
     if (!ready) return;
-    const run = (force = false) => {
-      syncConfigFromRemote({ force }).catch(() => {});
-    };
-    const timer = setInterval(() => run(true), 60 * 1000);
-    const onFocus = () => run(true);
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") run(true);
-    };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      clearInterval(timer);
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
+    // Config chỉ thay đổi khi admin bấm Lưu → không cần check liên tục
+    const timer = setInterval(() => {
+      syncConfigFromRemote({ force: true }).catch(() => {});
+    }, 10 * 60 * 1000); // 10 phút 1 lần
+    return () => clearInterval(timer);
   }, [ready]);
 
   if (!ready) {

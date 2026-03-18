@@ -237,28 +237,26 @@ export default function AITagsPanel({ canEdit = true }) {
     // Fetch products
     const verP = useRef("");
     useEffect(() => {
-        let t, alive = true;
-        const loop = async () => {
+        let alive = true;
+        (async () => {
             try {
                 const a = await listConfiguredProductSheet().catch(() => null);
-                if (a?.ok && a.version !== verP.current) {
+                if (a?.ok) {
                     verP.current = a.version;
                     const rows = safe(a.rows).map(normProduct).filter(p => !!s(p.name).trim());
-                    setProducts(rows); writeLS("products", rows);
-                } else if (!a?.ok) {
+                    if (alive) { setProducts(rows); writeLS("products", rows); }
+                } else {
                     const sheetId = getConfig("sheet_id");
                     const gid = getConfig("sheet_gid_products");
                     if (sheetId) {
                         const rawRows = await fetchTabAsObjects({ sheetId, gid: (gid || "0") });
                         const rows = rawRows.map(normProduct).filter(p => !!s(p.name).trim());
-                        setProducts(rows); writeLS("products", rows);
+                        if (alive) { setProducts(rows); writeLS("products", rows); }
                     }
                 }
             } catch { }
-            if (alive) t = setTimeout(loop, 15000);
-        };
-        loop();
-        return () => { alive = false; clearTimeout(t); };
+        })();
+        return () => { alive = false; };
     }, []);
 
         // Category labels

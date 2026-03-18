@@ -66,28 +66,27 @@ export default function ProductsPanel({ canEdit = true, canDelete = true }) {
   const verP = useRef("");
 
   useEffect(() => {
-    let t, alive = true;
-    const loop = async () => {
+    let alive = true;
+    (async () => {
       try {
         const a = await listConfiguredProductSheet().catch(() => null);
-        if (a?.ok && a.version !== verP.current) {
+        if (a?.ok) {
           verP.current = a.version;
           const rows = safe(a.rows).map(normProduct).filter((p) => !!s(p.name).trim());
-          setProducts(rows); writeLS("products", rows);
-        } else if (!a?.ok) {
+          if (alive) { setProducts(rows); writeLS("products", rows); }
+        } else {
           const sheetId = getConfig("sheet_id");
           const gid = getConfig("sheet_gid_products");
           if (sheetId) {
             const rows = await fetchTabAsObjects({ sheetId, gid: (gid || "0") });
             const pRows = rows.map(normProduct).filter((p) => !!s(p.name).trim());
-            setProducts(pRows); writeLS("products", pRows);
+            if (alive) { setProducts(pRows); writeLS("products", pRows); }
           }
         }
       } catch { }
-      setLoading(false);
-      if (alive) t = setTimeout(loop, 10000);
-    };
-    loop(); return () => { alive = false; clearTimeout(t); };
+      if (alive) setLoading(false);
+    })();
+    return () => { alive = false; };
   }, []);
 
   const [editId, setEditId] = useState(null);
