@@ -269,7 +269,8 @@ export default async function handler(req, res) {
         const html = getIndexHtml();
         if (html) {
             res.setHeader("Content-Type", "text/html; charset=utf-8");
-            res.setHeader("Cache-Control", "public, max-age=0, s-maxage=86400, stale-while-revalidate=86400");
+            // Always serve latest HTML shell so users get newest hashed JS/CSS immediately.
+            res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
             return res.status(200).send(html);
         }
         // Fallback: redirect vÃ¡Â»Â static
