@@ -1,7 +1,7 @@
-import React, { useMemo, useCallback } from "react";
+import React, { useMemo, useCallback, useEffect, useState } from "react";
 import ProductImage, { getImageUrls } from "./ProductImage.jsx";
 import { PriceTag } from "./PriceTag.jsx";
-import { pickDefaultSize, priceFor } from "../lib/pricing.js";
+import { pickDefaultSize, priceFor, sizeOptions } from "../lib/pricing.js";
 import { cdn, prefetchImage } from "../utils/img.js";
 import { usePrefetchOnView } from "../hooks/usePrefetchOnView.js";
 import { buildProductChatLink, openChatTarget } from "../utils/chatLink.js";
@@ -22,18 +22,66 @@ function ZaloIcon() {
   );
 }
 
+function sizeSortValue(id = "", label = "") {
+  const raw = `${id} ${label}`.toLowerCase();
+  const m = raw.match(/(\d+(?:\.\d+)?)/);
+  return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+}
+
+function shortSizeLabel(id = "", label = "") {
+  const key = String(id || "").trim().toLowerCase();
+  let m = key.match(/^(\d{1,2})-0$/);
+  if (m) return `${m[1]}cm`;
+
+  m = key.match(/^(\d{1,2})-(\d{1,2})$/);
+  if (m) return `${m[1]}x${m[2]}cm`;
+
+  m = key.match(/^(\d{1,2}x\d{1,2})-(\d{1,2})$/);
+  if (m) return `${m[1]}x${m[2]}cm`;
+
+  const text = String(label || key).trim();
+  const k = text.match(/(\d+(?:\s*x\s*\d+){0,2})\s*cm/i);
+  if (k) return `${k[1].replace(/\s+/g, "")}cm`;
+
+  const n = text.match(/\d+/);
+  if (n) return `${n[0]}cm`;
+  return text || "Size";
+}
+
 export default function ProductCard({ p, onImageClick, filter }) {
-  const sel = useMemo(() => pickDefaultSize(p, filter), [p, filter]);
-  const price = useMemo(() => priceFor(p, sel), [p, sel]);
+  const defaultSel = useMemo(() => pickDefaultSize(p, filter), [p, filter]);
+  const [sel, setSel] = useState(defaultSel);
+
+  useEffect(() => {
+    setSel(defaultSel);
+  }, [p?.id, defaultSel]);
+
+  const sizeChips = useMemo(() => {
+    const opts = sizeOptions(p).filter((o) => Number.isFinite(Number(o.price)) && Number(o.price) > 0);
+    return opts
+      .map((o) => ({
+        id: String(o.id || ""),
+        label: shortSizeLabel(o.id, o.label),
+        order: sizeSortValue(o.id, o.label),
+      }))
+      .sort((a, b) => a.order - b.order);
+  }, [p]);
+
+  const effectiveSel = sel || defaultSel || sizeChips[0]?.id || null;
+  const price = useMemo(() => priceFor(p, effectiveSel), [p, effectiveSel]);
+  const selectedSizeLabel = useMemo(
+    () => sizeChips.find((x) => x.id === effectiveSel)?.label || "",
+    [sizeChips, effectiveSel]
+  );
 
   const messengerCta = useMemo(
-    () => buildProductChatLink({ product: p, sizeLabel: "", intent: "ask_price", preferred: "messenger" }),
-    [p]
+    () => buildProductChatLink({ product: p, sizeLabel: selectedSizeLabel, intent: "ask_price", preferred: "messenger" }),
+    [p, selectedSizeLabel]
   );
 
   const zaloCta = useMemo(
-    () => buildProductChatLink({ product: p, sizeLabel: "", intent: "ask_price", preferred: "zalo" }),
-    [p]
+    () => buildProductChatLink({ product: p, sizeLabel: selectedSizeLabel, intent: "ask_price", preferred: "zalo" }),
+    [p, selectedSizeLabel]
   );
 
   const srcBase = getImageUrls(p)[0] || "";
@@ -71,6 +119,30 @@ export default function ProductCard({ p, onImageClick, filter }) {
         <div className="min-w-0">
           <div className="text-sm font-medium truncate">{p?.name}</div>
         </div>
+
+        {!!sizeChips.length && (
+          <div className="mt-1.5 flex items-center gap-1 overflow-x-auto pb-1">
+            {sizeChips.map((s) => {
+              const active = s.id === effectiveSel;
+              return (
+                <button
+                  type="button"
+                  key={s.id}
+                  onClick={() => setSel(s.id)}
+                  className={
+                    "h-6 px-2 rounded-full border text-[11px] leading-none whitespace-nowrap transition " +
+                    (active
+                      ? "border-rose-500 bg-rose-50 text-rose-600 font-semibold"
+                      : "border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300")
+                  }
+                  aria-label={`Chon size ${s.label}`}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <div className="mt-1.5 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
           <PriceTag value={price} className="min-w-0 truncate whitespace-nowrap text-rose-600 text-sm font-semibold" />

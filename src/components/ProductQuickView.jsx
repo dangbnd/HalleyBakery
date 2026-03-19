@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import ProductImage, { getImageUrls } from "./ProductImage.jsx";
 import { cdn, cdnThumb, prefetchImage } from "../utils/img.js";
 import { VND } from "./PriceTag.jsx";
+import { coercePriceBySizeMap } from "../lib/pricing.js";
 import { buildProductChatLink, openChatTarget } from "../utils/chatLink.js";
 
 const onlyDigits = (s) => String(s || "").replace(/[^\d]/g, "");
@@ -11,7 +12,8 @@ const onlyDigits = (s) => String(s || "").replace(/[^\d]/g, "");
 function buildSizeRows(product = {}) {
   const rows = [];
   const table = Array.isArray(product?.pricing?.table) ? product.pricing.table : [];
-  const pbs = product?.priceBySize && typeof product.priceBySize === "object" ? product.priceBySize : null;
+  const pbs = coercePriceBySizeMap(product?.priceBySize);
+  const hasPbs = Object.keys(pbs).length > 0;
 
   if (table.length) {
     for (const r of table) {
@@ -20,7 +22,7 @@ function buildSizeRows(product = {}) {
       const price = Number(pbs?.[key] ?? r.price);
       if (Number.isFinite(price) && price > 0) rows.push({ key, label, price });
     }
-  } else if (pbs) {
+  } else if (hasPbs) {
     for (const k of Object.keys(pbs)) {
       const price = Number(pbs[k]);
       if (Number.isFinite(price) && price > 0) {

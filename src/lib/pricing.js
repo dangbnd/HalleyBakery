@@ -1,12 +1,116 @@
 // src/lib/pricing.js
+const THOUSANDS_GROUP_RE = /^\d{1,3}([.,]\d{3})+$/;
+
 const n = (v) => {
-  const x = Number(v);
-  return Number.isFinite(x) ? x : NaN;
+  if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
+  const s = String(v ?? "").trim();
+  if (!s) return NaN;
+
+  const direct = Number(s);
+  if (Number.isFinite(direct)) return direct;
+
+  const lower = s.toLowerCase();
+  const unit = /(?:\btr\b|trieu)/.test(lower)
+    ? 1_000_000
+    : /(?:\bk\b|nghin|ngan)/.test(lower)
+      ? 1_000
+      : 1;
+
+  const m = lower.match(/(\d+(?:[.,]\d+)?)/);
+  if (!m) return NaN;
+  const rawNum = m[1];
+  const base = THOUSANDS_GROUP_RE.test(rawNum)
+    ? Number(rawNum.replace(/[.,]/g, ""))
+    : Number(rawNum.replace(",", "."));
+  if (!Number.isFinite(base)) return NaN;
+  return base * unit;
 };
+
+function normalizeSizeKey(key = "") {
+  const raw = String(key ?? "").trim();
+  if (!raw) return "";
+  if (/^\d+\s*-\s*\d+$/.test(raw)) return raw.replace(/\s+/g, "");
+
+  const lower = raw.toLowerCase().replace(/\s+/g, "");
+  if (/^\d+$/.test(lower)) return `${lower}-0`;
+
+  let m = lower.match(/^(\d{1,2})cm$/);
+  if (m) return `${m[1]}-0`;
+
+  m = lower.match(/^(\d{1,2}x\d{1,2})x(\d{1,2})cm?$/);
+  if (m) return `${m[1]}-${m[2]}`;
+
+  m = lower.match(/^(\d{1,2}x\d{1,2})$/);
+  if (m) return `${m[1]}-0`;
+
+  return raw;
+}
+
+function detectSizeKeyFromLine(line = "") {
+  const src = String(line || "");
+  const lower = src.toLowerCase();
+
+  let m = lower.match(/(\d{1,2}\s*x\s*\d{1,2})\s*x\s*(\d{1,2})\s*cm/);
+  if (m) return `${m[1].replace(/\s+/g, "").replace(/x+/g, "x")}-${m[2]}`;
+
+  m = lower.match(/(\d{1,2})\s*cm/);
+  if (m) return `${m[1]}-0`;
+
+  m = src.match(/size\s*[:\-]?\s*([a-z0-9x-]+)/i);
+  if (m) return normalizeSizeKey(m[1]);
+
+  return "";
+}
+
+export function coercePriceBySizeMap(raw) {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      const key = normalizeSizeKey(k);
+      const price = n(v);
+      if (key && Number.isFinite(price) && price > 0) out[key] = price;
+    }
+    return out;
+  }
+
+  const text = String(raw ?? "").trim();
+  if (!text) return {};
+
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return coercePriceBySizeMap(parsed);
+    }
+  } catch {
+    // keep parsing as free text
+  }
+
+  const out = {};
+  const lines = text
+    .split(/[\n,;]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const rhs = line.includes(":") ? line.split(":").slice(1).join(":") : line;
+    const price = n(rhs);
+    if (!Number.isFinite(price) || price <= 0) continue;
+
+    let key = detectSizeKeyFromLine(line);
+    if (!key) {
+      const kv = line.match(/^(.+?)\s*[:=-]\s*(.+)$/);
+      if (!kv) continue;
+      key = normalizeSizeKey(kv[1].replace(/^[-*\s]+/, "").replace(/^size\s+/i, "").trim());
+    }
+    if (!key) continue;
+    out[key] = price;
+  }
+  return out;
+}
 
 export function sizeOptions(p = {}) {
   const table = Array.isArray(p?.pricing?.table) ? p.pricing.table : [];
-  const bySize = p?.priceBySize && typeof p.priceBySize === "object" ? p.priceBySize : {};
+  const bySize = coercePriceBySizeMap(p?.priceBySize);
   const availableSizes = Array.isArray(p?.availableSizes) ? p.availableSizes : [];
 
   // ưu tiên thứ tự theo table
@@ -48,7 +152,7 @@ export function sizeOptions(p = {}) {
 
 export function priceFor(p = {}, sizeId) {
   if (!p) return null;
-  const bySize = p?.priceBySize || {};
+  const bySize = coercePriceBySizeMap(p?.priceBySize);
   if (sizeId && n(bySize[sizeId]) > 0) return n(bySize[sizeId]);
 
   const base = n(p?.price);
