@@ -113,14 +113,14 @@ export default function ProductCard({ p, onImageClick, filter }) {
           q={70}
           lqip={false}
         />
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/45 to-transparent p-2 text-left">
+          <div className="text-sm font-semibold text-white drop-shadow truncate text-left">{p?.name}</div>
+        </div>
       </button>
 
       <div className="p-3">
         <div className="flex items-center gap-2">
-          <div className="min-w-0 flex items-center gap-2">
-            <div className="text-sm font-medium truncate">{p?.name}</div>
-            <PriceTag value={price} className="shrink-0 whitespace-nowrap text-rose-600 text-sm font-semibold" />
-          </div>
+          <PriceTag value={price} className="shrink-0 whitespace-nowrap text-rose-600 text-sm font-semibold" />
 
           <div className="ml-auto flex items-center gap-1 shrink-0">
             {messengerCta.href && messengerCta.channel === "messenger" && (
@@ -155,8 +155,8 @@ export default function ProductCard({ p, onImageClick, filter }) {
 
         {!!sizeChips.length && (
           <div
-            className="mt-1.5 grid gap-1 pb-1"
-            style={{ gridTemplateColumns: `repeat(${sizeChips.length}, minmax(0, 1fr))` }}
+            className="mt-2.5 grid grid-cols-2 gap-1 pb-1 sm:[grid-template-columns:repeat(var(--size-cols),minmax(0,1fr))]"
+            style={{ "--size-cols": Math.max(sizeChips.length, 1) }}
           >
             {sizeChips.map((s) => {
               const active = s.id === effectiveSel;
@@ -166,7 +166,7 @@ export default function ProductCard({ p, onImageClick, filter }) {
                   key={s.id}
                   onClick={() => setSel(s.id)}
                   className={
-                    "h-6 min-w-0 w-full px-1 rounded-full border text-[11px] leading-none text-center truncate transition " +
+                    "h-6 min-w-0 w-full px-1 rounded-full border text-[10px] sm:text-[11px] leading-none text-center whitespace-nowrap transition " +
                     (active
                       ? "border-rose-500 bg-rose-50 text-rose-600 font-semibold"
                       : "border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300")
