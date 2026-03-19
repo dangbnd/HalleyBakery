@@ -4,11 +4,10 @@ import { getImageUrl } from "./ProductImage.jsx";
 import { cdn } from "../utils/img.js";
 import FbPost from "./FbPost.jsx";
 
-const isFbUrl = (u) => /^https?:\/\/(www\.)?facebook\.com\//.test(u || "");
+const isFbUrl = (u) => /^https?:\/\/((m|www)\.)?(facebook\.com|fb\.watch)\//.test(u || "");
 const normalizeFbUrl = (u) => {
   try {
     const x = new URL(u);
-    x.search = "";
     x.hash = "";
     return x.toString();
   } catch {

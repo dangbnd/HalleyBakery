@@ -84,7 +84,15 @@ const allPrices = (p = {}) => {
 };
 
 const norm = (s = "") => s.toString().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
-const normFb = (u) => { try { const x = new URL(u); x.search = ""; x.hash = ""; return x.toString(); } catch { return u; } };
+const normFb = (u) => {
+  try {
+    const x = new URL(u);
+    x.hash = "";
+    return x.toString();
+  } catch {
+    return u;
+  }
+};
 const HOME_LIMITS = { default: 8 };
 const FB_URL_RE = /^(https?:\/\/)?((m|www)\.)?(facebook\.com|fb\.watch)\//i;
 
@@ -640,6 +648,7 @@ export default function App() {
           menu: false,
           pages: false,
           announcements: false,
+          fb: false,
         };
 
         // 1. Ưu tiên fetch từ API gộp (nhanh, 1 request) - chỉ khi user cấu hình
@@ -684,6 +693,7 @@ export default function App() {
               if (mappedFb.length) {
                 setFbUrls(mappedFb);
                 writeLS(LS.FB_URLS, mappedFb);
+                unifiedLoaded.fb = true;
               }
             }
             if (unified.types?.length) { writeLS(LS.TYPES, mapTypes(unified.types)); }
@@ -898,6 +908,18 @@ export default function App() {
           loadOpt(SHEET.gids.sizes, mapSizes, () => { }, LS.SIZES),
           loadOpt(SHEET.gids.announcements, mapAnnouncements, setAnnouncements, LS.ANNOUNCEMENTS, unifiedLoaded.announcements),
         ].filter(Boolean)).catch(e => console.error("loadOpt fail:", e));
+
+        // Fallback FB posts when unified API does not provide fb data.
+        if (allowDirectSheetReads && SHEET.id && SHEET.gids.fb && !unifiedLoaded.fb) {
+          try {
+            const fbRows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.fb });
+            const mappedFb = extractFbUrlsFromRows(fbRows);
+            setFbUrls(mappedFb);
+            writeLS(LS.FB_URLS, mappedFb);
+          } catch (e) {
+            console.warn("[Halley] skip FB fallback load:", e.message);
+          }
+        }
       } finally {
         setDataLoading(false);
       }
