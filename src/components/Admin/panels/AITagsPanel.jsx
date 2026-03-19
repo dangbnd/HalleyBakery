@@ -372,6 +372,7 @@ export default function AITagsPanel({ canEdit = true }) {
     // AI state
     const [suggestions, setSuggestions] = useState({});
     const [loading, setLoading] = useState({});
+    const [applying, setApplying] = useState({});
     const [errors, setErrors] = useState({});
     const [statusMsg, setStatusMsg] = useState({});
     const [batchRunning, setBatchRunning] = useState(false);
@@ -471,6 +472,8 @@ export default function AITagsPanel({ canEdit = true }) {
 
     const applyTags = useCallback(async (product, tags) => {
         if (!canEdit || !hasAdminToken) return;
+        if (applying[product.id]) return;
+        setApplying((state) => ({ ...state, [product.id]: true }));
         const finalTags = mergeWithMandatoryTags(product, tags);
         const clean = { ...product, tags: finalTags };
         try {
@@ -483,9 +486,14 @@ export default function AITagsPanel({ canEdit = true }) {
         } catch (e) {
             console.error("AI apply tags failed:", e);
             setErrors(err => ({ ...err, [product.id]: e?.message || "Không lưu được tag vào Sheet" }));
+        } finally {
+            setApplying((state) => {
+                const next = { ...state };
+                delete next[product.id];
+                return next;
+            });
         }
-    }, [canEdit, hasAdminToken, products, mergeWithMandatoryTags]);
-
+    }, [canEdit, hasAdminToken, products, mergeWithMandatoryTags, applying]);
     const runBatch = useCallback(async () => {
         if (!canEdit || !keys.length || !activeModels.length) return;
         const targets = paged.filter(p => firstImg(p) && !suggestions[p.id] && !loading[p.id]);
@@ -738,6 +746,7 @@ export default function AITagsPanel({ canEdit = true }) {
                     const currentTags = tagsArr(p.tags);
                     const aiTags = suggestions[p.id] || "";
                     const isLoading = loading[p.id];
+                    const isApplying = !!applying[p.id];
                     const error = errors[p.id];
                     const status = statusMsg[p.id];
                     return (
@@ -754,7 +763,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                     <div className="text-[10px] text-gray-400">{catLabel(p.category)}</div>
                                 </div>
                                 {/* AI button */}
-                                <button onClick={() => tagOne(p)} disabled={!canEdit || isLoading || !firstImg(p)}
+                                <button onClick={() => tagOne(p)} disabled={!canEdit || isLoading || isApplying || !firstImg(p)}
                                     className="shrink-0 h-8 w-8 rounded-lg bg-purple-50 border border-purple-200 text-purple-600 hover:bg-purple-100 transition disabled:opacity-30 flex items-center justify-center text-base">
                                     {isLoading ? <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> : "✨"}
                                 </button>
@@ -768,7 +777,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                 ) : aiTags ? (
                                     <div className="space-y-1.5">
                                         <div className="text-[9px] text-purple-600 font-semibold uppercase tracking-wider">✨ AI gợi ý:</div>
-                                        <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken}
+                                        <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken} isApplying={isApplying}
                                             onApply={(tags) => applyTags(p, tags)}
                                             onDismiss={() => setSuggestions(s => { const n = { ...s }; delete n[p.id]; return n; })} />
                                     </div>
@@ -811,6 +820,7 @@ export default function AITagsPanel({ canEdit = true }) {
                             const currentTags = tagsArr(p.tags);
                             const aiTags = suggestions[p.id] || "";
                             const isLoading = loading[p.id];
+                            const isApplying = !!applying[p.id];
                             const error = errors[p.id];
                             const status = statusMsg[p.id];
                             return (
@@ -849,14 +859,14 @@ export default function AITagsPanel({ canEdit = true }) {
                                         ) : error ? (
                                             <span className="text-[10px] text-red-500 font-medium">{error}</span>
                                         ) : aiTags ? (
-                                            <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken} onApply={(tags) => applyTags(p, tags)}
+                                            <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken} isApplying={isApplying} onApply={(tags) => applyTags(p, tags)}
                                                 onDismiss={() => setSuggestions(s => { const n = { ...s }; delete n[p.id]; return n; })} />
                                         ) : (
                                             <span className="text-[10px] text-gray-300">—</span>
                                         )}
                                     </td>
                                     <td className="py-2 px-3 text-center">
-                                        <button onClick={() => tagOne(p)} disabled={!canEdit || isLoading || !firstImg(p)}
+                                        <button onClick={() => tagOne(p)} disabled={!canEdit || isLoading || isApplying || !firstImg(p)}
                                             className="p-1.5 rounded-lg text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition disabled:opacity-30 sm:opacity-0 sm:group-hover:opacity-100 opacity-100"
                                             title="AI gợi ý tag">✨</button>
                                     </td>
@@ -901,8 +911,9 @@ export default function AITagsPanel({ canEdit = true }) {
     );
 }
 
-function AITagEditor({ tags, canEdit = true, onApply, onDismiss }) {
+function AITagEditor({ tags, canEdit = true, isApplying = false, onApply, onDismiss }) {
     const [editing, setEditing] = useState(tags);
+    const disabled = !canEdit || isApplying;
     return (
         <div className="space-y-1.5">
             <div className="flex flex-wrap gap-0.5">
@@ -911,13 +922,29 @@ function AITagEditor({ tags, canEdit = true, onApply, onDismiss }) {
                 ))}
             </div>
             <input className="w-full border border-purple-200 rounded px-2 py-1 text-[10px] bg-purple-50/30 focus:outline-none focus:ring-1 focus:ring-purple-300 disabled:opacity-60"
-                value={editing} onChange={e => setEditing(e.target.value)} disabled={!canEdit} />
+                value={editing} onChange={e => setEditing(e.target.value)} disabled={disabled} />
             <div className="flex gap-1">
-                <button disabled={!canEdit} onClick={() => onApply(editing)} className="px-2 py-0.5 text-[10px] font-medium bg-emerald-500 text-white rounded hover:bg-emerald-600 transition disabled:opacity-40">✅ Áp dụng</button>
-                <button onClick={onDismiss} className="px-2 py-0.5 text-[10px] font-medium text-gray-500 hover:bg-gray-100 rounded transition">❌ Bỏ</button>
+                <button
+                    disabled={disabled}
+                    onClick={() => onApply(editing)}
+                    className="px-2 py-0.5 text-[10px] font-medium bg-emerald-500 text-white rounded hover:bg-emerald-600 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                    {isApplying ? (
+                        <span className="inline-flex items-center gap-1">
+                            <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                            Đang áp dụng...
+                        </span>
+                    ) : "Áp dụng"}
+                </button>
+                <button
+                    onClick={onDismiss}
+                    disabled={isApplying}
+                    className="px-2 py-0.5 text-[10px] font-medium text-gray-500 hover:bg-gray-100 rounded transition disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                    Bỏ
+                </button>
             </div>
         </div>
     );
 }
-
 const PgBtn = ({ children, ...p }) => <button {...p} className="w-6 h-6 flex items-center justify-center text-xs rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 transition">{children}</button>;
