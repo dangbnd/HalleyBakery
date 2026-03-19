@@ -709,12 +709,13 @@ export default function App() {
             }));
             unifiedOk = true;
           } else if (typeof window !== "undefined") {
-            const isRelativeAll = /^\/api\/all(?:\?|$)/i.test(allUrl);
             const host = String(window.location?.hostname || "").toLowerCase();
             const isPublicHost = !!host && !["localhost", "127.0.0.1", "0.0.0.0"].includes(host);
-            if (isRelativeAll && isPublicHost) {
-              allowDirectSheetReads = false;
-              console.warn("[Halley] /api/all unavailable. Skip direct Google Sheet fallback on public host.");
+            if (isPublicHost) {
+              // Fail-safe: if unified endpoint is unavailable on public host, fallback
+              // to direct Sheet reads instead of rendering an empty storefront after F5.
+              allowDirectSheetReads = true;
+              console.warn("[Halley] /api/all unavailable. Fallback to direct Google Sheet reads.");
             }
           }
         }

@@ -63,6 +63,7 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
   const [idx, setIdx] = useState(0);
   const images = useMemo(() => getImageUrls(product), [product]);
   const sizeRows = useMemo(() => buildSizeRows(product), [product]);
+  const hasSizeRows = sizeRows.length > 0;
   const tags = useMemo(() => toTagArray(product?.tags), [product?.tags]);
 
   const primarySizeLabel = sizeRows[0]?.label || "";
@@ -194,7 +195,9 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
 
               <div className="mt-4">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-medium">{"K\u00EDch th\u01B0\u1EDBc c\u00F3 s\u1EB5n"}</div>
+                  <div className={hasSizeRows ? "text-sm font-medium" : "text-sm font-semibold text-rose-600"}>
+                    {hasSizeRows ? "B\u00E1nh c\u00F3 c\u00E1c size" : "Li\u00EAn h\u1EC7"}
+                  </div>
 
                   <div className="flex items-center justify-end gap-2 shrink-0">
                     {messengerCta.href && messengerCta.channel === "messenger" && (
@@ -227,19 +230,21 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
                   </div>
                 </div>
 
-                <div className="qv-sizes mt-2">
-                  <div className="qv-grid">
-                    {sizeRows.map(({ key, label, price }) => {
-                      const text = label || (/\d/.test(String(key)) ? `Size ${key}cm` : `Size ${key}`);
-                      return (
-                        <div key={key} className="qv-chip">
-                          <span className="qv-label">{text}</span>
-                          <span className="qv-price">{VND.format(price)}</span>
-                        </div>
-                      );
-                    })}
+                {hasSizeRows && (
+                  <div className="qv-sizes mt-2">
+                    <div className="qv-grid">
+                      {sizeRows.map(({ key, label, price }) => {
+                        const text = label || (/\d/.test(String(key)) ? `Size ${key}cm` : `Size ${key}`);
+                        return (
+                          <div key={key} className="qv-chip">
+                            <span className="qv-label">{text}</span>
+                            <span className="qv-price">{VND.format(price)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               {product.category ? (
