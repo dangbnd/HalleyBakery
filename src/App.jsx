@@ -534,11 +534,8 @@ export default function App() {
       const add = new URLSearchParams(qs);
       add.forEach((v, k) => u.searchParams.set(k, v));
     }
-    // hash cho home
-    if (route === "home" && homeActive && homeActive !== "all") u.hash = `#${homeActive}`;
-    else u.hash = "";
     window.history.replaceState(null, "", u);
-  }, [route, q, activeCat, filterState, homeActive]);
+  }, [route, q, activeCat, filterState]);
 
   /* FB urls */
   useEffect(() => {
