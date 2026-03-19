@@ -119,12 +119,15 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
         <div className="mx-auto w-full max-w-6xl bg-white rounded-2xl shadow-xl overflow-hidden">
           <div className="flex flex-col lg:flex-row">
             <div className="lg:w-2/3 p-3 md:p-4">
-              <div className="relative bg-gray-50 rounded-xl overflow-hidden ring-1 ring-gray-200">
+              <div
+                className="relative mx-auto bg-gray-50 rounded-xl overflow-hidden ring-1 ring-gray-200 aspect-[4/5]"
+                style={{ width: "min(100%, calc(78vh * 4 / 5))" }}
+              >
                 {!!images.length && (
                   <ProductImage
                     product={product}
                     index={idx}
-                    className="w-full h-[60vh] md:h-[70vh] object-contain"
+                    className="absolute inset-0 w-full h-full object-contain"
                     priority
                     w={960}
                     h={0}

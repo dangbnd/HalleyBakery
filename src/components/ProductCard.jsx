@@ -120,7 +120,7 @@ export default function ProductCard({ p, onImageClick, filter }) {
 
       <div className="p-3">
         <div className="flex items-center gap-2">
-          <PriceTag value={price} className="shrink-0 whitespace-nowrap text-rose-600 text-sm font-semibold" />
+          <PriceTag value={price} className="shrink-0 whitespace-nowrap text-rose-600 text-[16px] font-semibold" />
 
           <div className="ml-auto flex items-center gap-1 shrink-0">
             {messengerCta.href && messengerCta.channel === "messenger" && (
