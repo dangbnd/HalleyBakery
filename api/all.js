@@ -24,11 +24,15 @@ function normalizeSheetId(input = "") {
   if (!s) return "";
   const m = s.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   if (m) return m[1];
-  return s.replace(/^['"]|['"]$/g, "");
+  const cleaned = s.replace(/^['"]|['"]$/g, "");
+  const m2 = cleaned.match(/^([a-zA-Z0-9-_]{10,})/);
+  return m2 ? m2[1] : cleaned;
 }
 
 function normalizeGid(v = "") {
-  return String(v || "").trim().replace(/[^\d]/g, "");
+  const s = String(v || "").trim();
+  const m = s.match(/(\d{1,})/);
+  return m ? m[1] : "";
 }
 
 function normalizeText(s = "") {

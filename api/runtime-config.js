@@ -10,11 +10,15 @@ function normalizeSheetId(input = "") {
   if (!s) return "";
   const m = s.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   if (m) return m[1];
-  return s.replace(/^['"]|['"]$/g, "");
+  const cleaned = s.replace(/^['"]|['"]$/g, "");
+  const m2 = cleaned.match(/^([a-zA-Z0-9-_]{10,})/);
+  return m2 ? m2[1] : cleaned;
 }
 
 function normalizeGid(input = "") {
-  return String(input || "").trim().replace(/[^\d]/g, "");
+  const s = String(input || "").trim();
+  const m = s.match(/(\d{1,})/);
+  return m ? m[1] : "";
 }
 
 function normalizeCfgKey(k = "") {
@@ -79,9 +83,8 @@ function parseKeyValueTable(text = "") {
   for (const row of dataRows) {
     const key = normalizeCfgKey(row[0] || "");
     if (!key) continue;
-    // Cắt bỏ key ở cột 0, nối lại tất cả các cột còn lại để không bị đứt đoạn bởi dấu phẩy CSV
-    const valueParts = row.slice(1);
-    out[key] = valueParts.join(",").trim();
+    // Runtime config expects key/value in first 2 columns; ignore extra analytics columns.
+    out[key] = String(row[1] ?? "").trim();
   }
   return out;
 }

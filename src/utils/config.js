@@ -349,7 +349,9 @@ function extractSheetId(input = "") {
   if (!s) return "";
   const m = s.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   if (m) return m[1];
-  return s.replace(/^['"]|['"]$/g, "");
+  const cleaned = s.replace(/^['"]|['"]$/g, "");
+  const m2 = cleaned.match(/^([a-zA-Z0-9-_]{10,})/);
+  return m2 ? m2[1] : cleaned;
 }
 
 function extractDriveFolderId(input = "") {
@@ -362,12 +364,44 @@ function extractDriveFolderId(input = "") {
   return s.replace(/^['"]|['"]$/g, "");
 }
 
+const GID_KEYS = new Set([
+  KEYS.SHEET_GID_CONFIG,
+  KEYS.SHEET_GID_FB,
+  KEYS.SHEET_GID_PRODUCTS,
+  KEYS.SHEET_GID_CATEGORIES,
+  KEYS.SHEET_GID_TAGS,
+  KEYS.SHEET_GID_MENU,
+  KEYS.SHEET_GID_PAGES,
+  KEYS.SHEET_GID_TYPES,
+  KEYS.SHEET_GID_LEVELS,
+  KEYS.SHEET_GID_SIZES,
+  KEYS.SHEET_GID_ANNOUNCEMENTS,
+]);
+
+function normalizeGidLike(input = "") {
+  const s = String(input || "").trim();
+  const m = s.match(/(\d{1,})/);
+  return m ? m[1] : "";
+}
+
+function firstCsvToken(input = "") {
+  return String(input || "")
+    .split(",")
+    .map((x) => String(x || "").trim())
+    .find(Boolean) || "";
+}
+
 function normalizeValue(key, value) {
   const raw = String(value ?? "").trim();
   if (!raw) return "";
   if (key === KEYS.SHEET_ID) return extractSheetId(raw);
   if (key === KEYS.DRIVE_FOLDER_ID) return extractDriveFolderId(raw);
-  if (key === KEYS.SUPER_ADMIN_EMAIL) return raw.toLowerCase();
+  if (GID_KEYS.has(key)) return normalizeGidLike(raw);
+  if (key === KEYS.PRODUCT_TABS) return raw.replace(/,+$/g, "").trim();
+  if (key === KEYS.API_ALL_URL || key === KEYS.GS_WEBAPP_URL || key === KEYS.MESSENGER_LINK || key === KEYS.ZALO_LINK || key === KEYS.GOOGLE_OAUTH_CLIENT_ID || key === KEYS.GS_WEBAPP_TOKEN) {
+    return firstCsvToken(raw);
+  }
+  if (key === KEYS.SUPER_ADMIN_EMAIL) return firstCsvToken(raw).toLowerCase();
   return raw;
 }
 
@@ -583,9 +617,8 @@ function parseKeyValueTable(text = "") {
   for (const row of dataRows) {
     const key = normalizeCfgKey(row[0] || "");
     if (!key) continue;
-    // Nối tất cả cột từ cột B trở đi — fix lỗi value chứa dấu phẩy bị CSV tách ra nhiều cột
-    const valueParts = row.slice(1);
-    out[key] = valueParts.join(",").trim();
+    // Runtime config is key/value in first 2 columns; ignore extra columns in sheet.
+    out[key] = String(row[1] ?? "").trim();
   }
   return out;
 }
