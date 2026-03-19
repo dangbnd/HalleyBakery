@@ -86,6 +86,20 @@ const allPrices = (p = {}) => {
 const norm = (s = "") => s.toString().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
 const normFb = (u) => { try { const x = new URL(u); x.search = ""; x.hash = ""; return x.toString(); } catch { return u; } };
 const HOME_LIMITS = { default: 8 };
+const FB_URL_RE = /^(https?:\/\/)?((m|www)\.)?(facebook\.com|fb\.watch)\//i;
+
+function extractFbUrlsFromRows(rows = []) {
+  const pick = (r) => r?.url || r?.fb || r?.fb_url || r?.post || r?.link || r?.col0 || r?.col1 || "";
+  const out = [];
+  for (const r of Array.isArray(rows) ? rows : []) {
+    String(pick(r))
+      .split(/[\n,;|]/)
+      .map((s) => s.trim())
+      .filter((s) => FB_URL_RE.test(s))
+      .forEach((s) => out.push(normFb(s)));
+  }
+  return [...new Set(out)];
+}
 
 const cmpNameNatural = (a = "", b = "") =>
   String(a || "").localeCompare(String(b || ""), "vi", { numeric: true, sensitivity: "base" });
@@ -539,6 +553,7 @@ export default function App() {
 
   /* FB urls */
   useEffect(() => {
+    if (isPublicHostRuntime()) return;
     const SHEET_ID = getConfig("sheet_id");
     const FB_GID = getConfig("sheet_gid_fb");
     if (!SHEET_ID || !FB_GID) return;
@@ -663,6 +678,13 @@ export default function App() {
               const mapped = mapAnnouncements(unified.announcements);
               setAnnouncements(mapped); writeLS(LS.ANNOUNCEMENTS, mapped);
               unifiedLoaded.announcements = true;
+            }
+            if (unified.fb?.length) {
+              const mappedFb = extractFbUrlsFromRows(unified.fb);
+              if (mappedFb.length) {
+                setFbUrls(mappedFb);
+                writeLS(LS.FB_URLS, mappedFb);
+              }
             }
             if (unified.types?.length) { writeLS(LS.TYPES, mapTypes(unified.types)); }
             if (unified.levels?.length) { writeLS(LS.LEVELS, mapLevels(unified.levels)); }

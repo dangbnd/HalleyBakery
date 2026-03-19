@@ -176,6 +176,24 @@ function FbCarousel({ urls = [], interval = 3000, className = "", height = 340 }
   );
 }
 
+function FbFallback({ height = 340 }) {
+  return (
+    <div className="rounded-2xl border bg-white/70 grid place-items-center text-center px-6" style={{ height }}>
+      <div>
+        <div className="text-sm text-gray-600">Bai viet Facebook dang duoc cap nhat</div>
+        <a
+          href="https://www.facebook.com/halleybakery/"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex mt-3 px-4 py-2 rounded-full border text-sm font-medium hover:bg-gray-50"
+        >
+          Xem fanpage
+        </a>
+      </div>
+    </div>
+  );
+}
+
 export function Hero({ products = [], interval = 2000, fbUrls = [], onBannerClick }) {
   const slides = useMemo(
     () =>
@@ -344,7 +362,7 @@ export function Hero({ products = [], interval = 2000, fbUrls = [], onBannerClic
         {!isMobile && (
           <div>
             {showFb ? (
-              <FbCarousel urls={fbClean} interval={3000} height={heroH} />
+              fbClean.length ? <FbCarousel urls={fbClean} interval={3000} height={heroH} /> : <FbFallback height={heroH} />
             ) : (
               <div className="rounded-2xl border bg-white/60 animate-pulse" style={{ height: heroH }} />
             )}
@@ -355,7 +373,7 @@ export function Hero({ products = [], interval = 2000, fbUrls = [], onBannerClic
       {isMobile && (
         <div className="mt-4">
           {showFb ? (
-            <FbCarousel urls={fbClean} interval={3000} height={410} />
+            fbClean.length ? <FbCarousel urls={fbClean} interval={3000} height={410} /> : <FbFallback height={410} />
           ) : (
             <div className="rounded-2xl border bg-white/60 animate-pulse" style={{ height: 410 }} />
           )}
