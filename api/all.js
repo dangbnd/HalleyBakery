@@ -224,14 +224,19 @@ async function loadUnifiedFromSheet(cfg) {
 
   const plans = [];
 
-    plans.push(
-      Promise.all(
-        tabs.map(async (t) => {
+  // Product tabs are best-effort: a wrong gid must not fail entire endpoint.
+  plans.push(
+    Promise.all(
+      tabs.map(async (t) => {
+        try {
           const rows = await fetchCsvTab({ sheetId, gid: t.gid });
           return rows.map((r) => normalizeProductRow(r, t));
-        })
-      ).then((all) => ({ key: "products", value: all.flat() }))
-    );
+        } catch {
+          return [];
+        }
+      })
+    ).then((all) => ({ key: "products", value: all.flat() }))
+  );
 
   const singleTabs = [
     ["menu", pickGid(cfg, "gidMenu")],

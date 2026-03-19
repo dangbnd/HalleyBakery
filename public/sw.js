@@ -1,5 +1,5 @@
 // Halley Bakery Service Worker
-const CACHE_NAME = 'halley-v1';
+const CACHE_NAME = 'halley-v2';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',

@@ -380,6 +380,12 @@ function isLocalHost(host = "") {
   return h === "localhost" || h === "127.0.0.1" || h === "0.0.0.0";
 }
 
+function isPublicHostRuntime() {
+  if (typeof window === "undefined") return false;
+  const host = String(window.location?.hostname || "").toLowerCase();
+  return !!host && !isLocalHost(host);
+}
+
 function getSharedCookieDomain() {
   if (typeof window === "undefined") return "";
   const host = String(window.location?.hostname || "").toLowerCase();
@@ -705,6 +711,10 @@ export async function syncConfigFromRemote({ force = false } = {}) {
       payload = await fetchRemoteConfigViaApi({ sheetId, gidConfig });
       console.log("[ConfigSync] API payload:", Object.keys(payload?.config || {}));
     } catch (apiErr) {
+      if (isPublicHostRuntime()) {
+        console.warn("[ConfigSync] API failed on public host. Skip direct sheet fallback:", apiErr?.message);
+        return { ok: false, changed: false, error: String(apiErr?.message || "runtime_config_api_failed") };
+      }
       console.log("[ConfigSync] API failed, trying direct sheet:", apiErr?.message);
       try {
         payload = await fetchRemoteConfigDirectSheet({ sheetId, gidConfig });

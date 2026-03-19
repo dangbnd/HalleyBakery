@@ -349,6 +349,12 @@ function isUsableRemoteUrl(v = "") {
   return true;
 }
 
+function isPublicHostRuntime() {
+  if (typeof window === "undefined") return false;
+  const host = String(window.location?.hostname || "").toLowerCase();
+  return !!host && !["localhost", "127.0.0.1", "0.0.0.0"].includes(host);
+}
+
 
 
 export default function App() {
@@ -487,13 +493,6 @@ export default function App() {
     }
 
     clearRuntimeDataCache();
-    setFbUrls([]);
-    setProducts([]);
-    setCategories([]);
-    setMenu([]);
-    setPages([]);
-    setTags([]);
-    setAnnouncements([]);
     setDataLoading(true);
   }, [configSignature]);
   useEffect(() => {
@@ -624,7 +623,7 @@ export default function App() {
       try {
         let prodRows;
         let unifiedOk = false;
-        let allowDirectSheetReads = true;
+        let allowDirectSheetReads = !isPublicHostRuntime();
         const unifiedLoaded = {
           menu: false,
           pages: false,

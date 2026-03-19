@@ -18,7 +18,7 @@ function Root() {
     (async () => {
       // Cho admin subdomain nhiều thời gian hơn vì config phải kéo từ Sheet
       const isAdminDomain = window.location.hostname.startsWith("admin.");
-      const timeoutMs = isAdminDomain ? 6000 : 2500;
+      const timeoutMs = isAdminDomain ? 6000 : 700;
       try {
         await Promise.race([
           syncConfigFromRemote({ force: true }),
@@ -26,8 +26,8 @@ function Root() {
         ]);
       } catch {}
       if (!cancelled) setReady(true);
-      // Retry lần 2 nếu lần đầu chưa xong (chạy nền, không block UI)
-      if (!cancelled) {
+      // Public site: tránh gọi thêm 1 lượt sync để giảm request lúc first load.
+      if (!cancelled && isAdminDomain) {
         setTimeout(() => {
           syncConfigFromRemote({ force: true }).catch(() => {});
         }, 3000);

@@ -152,8 +152,15 @@ async function readConfigFromSheet({ sheetId = "", gidConfig = "" } = {}) {
   if (!gid) gid = await inferConfigGid(id);
   if (!gid) return { config: {}, gidConfig: "" };
 
-  const res = await fetchWithTimeout(`https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid}`);
-  if (!res.ok) throw new Error(`Config tab HTTP ${res.status}`);
+  let res = await fetchWithTimeout(`https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid}`);
+  if (!res.ok) {
+    const inferred = await inferConfigGid(id);
+    if (!inferred || inferred === gid) throw new Error(`Config tab HTTP ${res.status}`);
+    gid = inferred;
+    res = await fetchWithTimeout(`https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid}`);
+    if (!res.ok) throw new Error(`Config tab HTTP ${res.status}`);
+  }
+
   const csv = await res.text();
   return { config: parseKeyValueTable(csv), gidConfig: gid };
 }
@@ -195,7 +202,16 @@ export default async function handler(req, res) {
     CACHE.set(cacheKey, { at: now, data: payload });
     return json(res, 200, { ok: true, ...payload, cached: false });
   } catch (e) {
-    return json(res, 500, { ok: false, error: String(e?.message || "runtime_config_failed") });
+    // Fail-soft for storefront: return empty config instead of 500 to avoid client fallback storms.
+    return json(res, 200, {
+      ok: true,
+      sheetId: "",
+      gidConfig: "",
+      config: {},
+      fetchedAt: new Date().toISOString(),
+      source: "error_fallback",
+      error: String(e?.message || "runtime_config_failed"),
+      cached: false,
+    });
   }
 }
-
