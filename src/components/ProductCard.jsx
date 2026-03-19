@@ -154,7 +154,10 @@ export default function ProductCard({ p, onImageClick, filter }) {
         </div>
 
         {!!sizeChips.length && (
-          <div className="mt-1.5 flex items-center gap-1 overflow-x-auto whitespace-nowrap pb-1">
+          <div
+            className="mt-1.5 grid gap-1 pb-1"
+            style={{ gridTemplateColumns: `repeat(${sizeChips.length}, minmax(0, 1fr))` }}
+          >
             {sizeChips.map((s) => {
               const active = s.id === effectiveSel;
               return (
@@ -163,7 +166,7 @@ export default function ProductCard({ p, onImageClick, filter }) {
                   key={s.id}
                   onClick={() => setSel(s.id)}
                   className={
-                    "h-6 px-2 rounded-full border text-[11px] leading-none transition " +
+                    "h-6 min-w-0 w-full px-1 rounded-full border text-[11px] leading-none text-center truncate transition " +
                     (active
                       ? "border-rose-500 bg-rose-50 text-rose-600 font-semibold"
                       : "border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300")
