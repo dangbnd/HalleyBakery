@@ -72,6 +72,47 @@ const parseModelOrderRaw = (raw, allowSet) => {
     }
     return out;
 };
+const stripDiacritics = (text) => s(text).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const normCategoryKey = (text) => stripDiacritics(text).toLowerCase().replace(/\s+/g, " ").trim();
+const normTag = (tag) => s(tag).trim().toLowerCase().replace(/\s+/g, " ");
+const mergeTagLists = (...lists) => {
+    const seen = new Set();
+    const out = [];
+    lists.forEach((list) => {
+        (list || []).forEach((tag) => {
+            const clean = normTag(tag);
+            if (!clean || seen.has(clean)) return;
+            seen.add(clean);
+            out.push(clean);
+        });
+    });
+    return out;
+};
+const parseMandatoryTagsByCategory = (promptText) => {
+    const map = new Map();
+    s(promptText).split(/\r?\n/).forEach((line) => {
+        const cleaned = s(line).trim().replace(/^[-*•\d.)\s]+/, "");
+        if (!cleaned) return;
+        const idx = cleaned.indexOf(":");
+        if (idx <= 0) return;
+        const left = cleaned.slice(0, idx).trim();
+        const right = cleaned.slice(idx + 1).trim();
+        if (!right) return;
+
+        const words = left.split(/\s+/).filter(Boolean);
+        if (words.length < 3) return;
+        const head = normCategoryKey(words.slice(0, 2).join(" "));
+        if (head !== "danh muc") return;
+
+        const categoryRaw = words.slice(2).join(" ").trim();
+        const categoryKey = normCategoryKey(categoryRaw);
+        if (!categoryKey) return;
+
+        const existing = map.get(categoryKey) || [];
+        map.set(categoryKey, mergeTagLists(existing, tagsArr(right)));
+    });
+    return map;
+};
 
 /* ===== MODELS AVAILABLE (free tier) ===== */
 const ALL_MODELS = [
@@ -390,6 +431,13 @@ export default function AITagsPanel({ canEdit = true }) {
         products.forEach(p => { if (p.category) set.add(p.category); });
         return [...set].sort();
     }, [products]);
+    const mandatoryTagsByCategory = useMemo(() => parseMandatoryTagsByCategory(prompt), [prompt]);
+    const mergeWithMandatoryTags = useCallback((product, tagsText) => {
+        const categoryKey = normCategoryKey(product?.category || "");
+        const required = mandatoryTagsByCategory.get(categoryKey) || [];
+        const merged = mergeTagLists(required, tagsArr(tagsText));
+        return merged.join(", ");
+    }, [mandatoryTagsByCategory]);
 
     const totalPages = Math.max(1, Math.ceil(view.length / PAGE_SIZE));
     const safePage = Math.min(page, totalPages);
@@ -411,30 +459,32 @@ export default function AITagsPanel({ canEdit = true }) {
             const tags = await callWithRotation(keys, activeModels, img, finalPrompt,
                 (label) => setStatusMsg(s => ({ ...s, [product.id]: label }))
             );
-            setSuggestions(s => ({ ...s, [product.id]: tags }));
+            const mergedTags = mergeWithMandatoryTags(product, tags);
+            setSuggestions(s => ({ ...s, [product.id]: mergedTags }));
             setStatusMsg(s => { const n = { ...s }; delete n[product.id]; return n; });
         } catch (err) {
             setErrors(e => ({ ...e, [product.id]: err.message }));
         } finally {
             setLoading(l => { const n = { ...l }; delete n[product.id]; return n; });
         }
-    }, [activeModels, canEdit, keys, prompt]);
+    }, [activeModels, canEdit, keys, prompt, mergeWithMandatoryTags]);
 
     const applyTags = useCallback(async (product, tags) => {
         if (!canEdit || !hasAdminToken) return;
-        const clean = { ...product, tags };
+        const finalTags = mergeWithMandatoryTags(product, tags);
+        const clean = { ...product, tags: finalTags };
         try {
             await updateConfiguredProductRow(clean);
             const next = products.map(p => p.id === product.id ? clean : p);
             setProducts(next);
             writeLS("products", next);
             setSuggestions(s => { const n = { ...s }; delete n[product.id]; return n; });
-            audit("ai.tags.apply", { productId: product.id, name: product.name, tags, user: (readLS(LS.AUTH) || {}).username || "?" });
+            audit("ai.tags.apply", { productId: product.id, name: product.name, tags: finalTags, user: (readLS(LS.AUTH) || {}).username || "?" });
         } catch (e) {
             console.error("AI apply tags failed:", e);
             setErrors(err => ({ ...err, [product.id]: e?.message || "Không lưu được tag vào Sheet" }));
         }
-    }, [canEdit, hasAdminToken, products]);
+    }, [canEdit, hasAdminToken, products, mergeWithMandatoryTags]);
 
     const runBatch = useCallback(async () => {
         if (!canEdit || !keys.length || !activeModels.length) return;
