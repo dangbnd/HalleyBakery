@@ -116,38 +116,13 @@ export default function ProductCard({ p, onImageClick, filter }) {
       </button>
 
       <div className="p-3">
-        <div className="min-w-0">
-          <div className="text-sm font-medium truncate">{p?.name}</div>
-        </div>
-
-        {!!sizeChips.length && (
-          <div className="mt-1.5 flex items-center gap-1 overflow-x-auto pb-1">
-            {sizeChips.map((s) => {
-              const active = s.id === effectiveSel;
-              return (
-                <button
-                  type="button"
-                  key={s.id}
-                  onClick={() => setSel(s.id)}
-                  className={
-                    "h-6 px-2 rounded-full border text-[11px] leading-none whitespace-nowrap transition " +
-                    (active
-                      ? "border-rose-500 bg-rose-50 text-rose-600 font-semibold"
-                      : "border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300")
-                  }
-                  aria-label={`Chon size ${s.label}`}
-                >
-                  {s.label}
-                </button>
-              );
-            })}
+        <div className="flex items-center gap-2">
+          <div className="min-w-0 flex items-center gap-2">
+            <div className="text-sm font-medium truncate">{p?.name}</div>
+            <PriceTag value={price} className="shrink-0 whitespace-nowrap text-rose-600 text-sm font-semibold" />
           </div>
-        )}
 
-        <div className="mt-1.5 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
-          <PriceTag value={price} className="min-w-0 truncate whitespace-nowrap text-rose-600 text-sm font-semibold" />
-
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="ml-auto flex items-center gap-1 shrink-0">
             {messengerCta.href && messengerCta.channel === "messenger" && (
               <a
                 href={messengerCta.href}
@@ -177,6 +152,30 @@ export default function ProductCard({ p, onImageClick, filter }) {
             )}
           </div>
         </div>
+
+        {!!sizeChips.length && (
+          <div className="mt-1.5 flex items-center gap-1 overflow-x-auto whitespace-nowrap pb-1">
+            {sizeChips.map((s) => {
+              const active = s.id === effectiveSel;
+              return (
+                <button
+                  type="button"
+                  key={s.id}
+                  onClick={() => setSel(s.id)}
+                  className={
+                    "h-6 px-2 rounded-full border text-[11px] leading-none transition " +
+                    (active
+                      ? "border-rose-500 bg-rose-50 text-rose-600 font-semibold"
+                      : "border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300")
+                  }
+                  aria-label={`Chon size ${s.label}`}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
       </div>
     </article>
