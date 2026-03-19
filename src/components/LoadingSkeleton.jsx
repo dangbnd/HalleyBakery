@@ -1,6 +1,6 @@
 ﻿// src/components/LoadingSkeleton.jsx
 
-export default function LoadingSkeleton({ count = 8, message = "Ban cho chut chut nhe..." }) {
+export default function LoadingSkeleton({ count = 8, message = "Bạn chờ chút chút nhé..." }) {
   return (
     <section className="relative max-w-6xl mx-auto px-4 py-8 min-h-[60vh]">
       {/* Centered Logo Overlay - positioned in top third */}

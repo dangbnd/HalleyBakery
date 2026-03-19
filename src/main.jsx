@@ -13,7 +13,7 @@ const AdminIndex = lazy(() => import("./components/Admin/index.jsx"));
 function FullscreenLoading() {
   return (
     <div className="bg-gray-50 min-h-screen">
-      <LoadingSkeleton count={8} message="Ban cho chut chut nhe..." />
+      <LoadingSkeleton count={8} message="Bạn chờ chút chút nhé..." />
     </div>
   );
 }
