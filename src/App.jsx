@@ -624,6 +624,7 @@ export default function App() {
       try {
         let prodRows;
         let unifiedOk = false;
+        let allowDirectSheetReads = true;
         const unifiedLoaded = {
           menu: false,
           pages: false,
@@ -639,7 +640,7 @@ export default function App() {
         });
         if (allUrl) {
           const unified = await fetchUnifiedData(allUrl);
-          if (unified && unified.products && unified.products.length) {
+          if (unified && Array.isArray(unified.products)) {
             if (unified?._meta?.refreshedAt) {
               setConfig("last_sync_at", unified._meta.refreshedAt);
             }
@@ -689,10 +690,21 @@ export default function App() {
               ).trim().toLowerCase(),
             }));
             unifiedOk = true;
+          } else if (typeof window !== "undefined") {
+            const isRelativeAll = /^\/api\/all(?:\?|$)/i.test(allUrl);
+            const host = String(window.location?.hostname || "").toLowerCase();
+            const isPublicHost = !!host && !["localhost", "127.0.0.1", "0.0.0.0"].includes(host);
+            if (isRelativeAll && isPublicHost) {
+              allowDirectSheetReads = false;
+              console.warn("[Halley] /api/all unavailable. Skip direct Google Sheet fallback on public host.");
+            }
           }
         }
 
         // 2. Fallback: multi-tab (chỉ khi API gộp không trả được data)
+        if (!prodRows && !allowDirectSheetReads) {
+          prodRows = [];
+        }
         if (!prodRows) {
           if (SHEET.id) {
             const tabsEnv = getConfig("product_tabs").trim();
@@ -777,7 +789,7 @@ export default function App() {
         try {
           const [typesResult, levelsResult] = await Promise.all([
             (async () => {
-              if (SHEET.id && SHEET.gids.types) {
+              if (allowDirectSheetReads && SHEET.id && SHEET.gids.types) {
                 const trows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.types });
                 const mapped = mapTypes(trows);
                 writeLS(LS.TYPES, mapped);
@@ -786,7 +798,7 @@ export default function App() {
               return readLS(LS.TYPES, []);
             })(),
             (async () => {
-              if (SHEET.id && SHEET.gids.levels) {
+              if (allowDirectSheetReads && SHEET.id && SHEET.gids.levels) {
                 const lrows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.levels });
                 const mapped = mapLevels(lrows);
                 writeLS(LS.LEVELS, mapped);
@@ -808,7 +820,7 @@ export default function App() {
 
           // Load Menu trước để lấy label cho categories
           let menuMap = {};
-          if (SHEET.id && SHEET.gids.menu && !unifiedLoaded.menu) {
+          if (allowDirectSheetReads && SHEET.id && SHEET.gids.menu && !unifiedLoaded.menu) {
             try {
               const menuRows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.menu });
               const mapped = mapMenu(menuRows);
@@ -846,6 +858,7 @@ export default function App() {
         }
 
         const loadOpt = async (gid, mapper, setter, lsKey, alreadyLoaded = false) => {
+          if (!allowDirectSheetReads) return;
           if (!SHEET.id || !gid) return;
           if (alreadyLoaded) return;
           try {
@@ -955,8 +968,37 @@ export default function App() {
     [categories]
   );
 
-  const menuCatsWithAll = useMemo(() => [{ key: "all", title: "Tất cả" }, ...productCatsFromMenu], [productCatsFromMenu]);
-  const categoryKeysFromMenu = useMemo(() => new Set(productCatsFromMenu.map((c) => c.key)), [productCatsFromMenu]);
+  const fallbackHomeCats = useMemo(() => {
+    if (productCatsFromMenu.length > 0) return [];
+
+    const fromConfig = (categories || [])
+      .map((c) => ({
+        key: String(c?.key || "").trim(),
+        title: String(c?.title || c?.key || "").trim(),
+      }))
+      .filter((c) => c.key);
+    if (fromConfig.length) return fromConfig;
+
+    const seen = new Set();
+    const fromProducts = [];
+    for (const p of products || []) {
+      const key = String(p?.category || "").trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      fromProducts.push({
+        key,
+        title: String(categoryTitleMap[key] || key).trim(),
+      });
+    }
+    return fromProducts;
+  }, [productCatsFromMenu, categories, products, categoryTitleMap]);
+
+  const homeSectionCats = useMemo(
+    () => (productCatsFromMenu.length ? productCatsFromMenu : fallbackHomeCats),
+    [productCatsFromMenu, fallbackHomeCats]
+  );
+  const menuCatsWithAll = useMemo(() => [{ key: "all", title: "Tất cả" }, ...homeSectionCats], [homeSectionCats]);
+  const categoryKeysFromMenu = useMemo(() => new Set(homeSectionCats.map((c) => c.key)), [homeSectionCats]);
 
   /* list theo route */
   const baseForRoute = useMemo(() => {
@@ -965,7 +1007,7 @@ export default function App() {
   }, [route, products, descByKey]);
   /* list cho search */
   const nqVal = useMemo(() => q.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""), [q]);
-  const catTitle = useMemo(() => Object.fromEntries(productCatsFromMenu.map((c) => [c.key, norm(c.title || c.key)])), [productCatsFromMenu]);
+  const catTitle = useMemo(() => Object.fromEntries(homeSectionCats.map((c) => [c.key, norm(c.title || c.key)])), [homeSectionCats]);
 
   const listForSearch = useMemo(() => {
     const base = products || [];
@@ -1010,8 +1052,7 @@ export default function App() {
     return applyFilters(base);
   }, [route, listForSearch, baseForRoute, filterState]);
 
-  const homeSectionCats = useMemo(() => productCatsFromMenu, [productCatsFromMenu]);
-  const homeMenuReady = productCatsFromMenu.length > 0;
+  const homeMenuReady = homeSectionCats.length > 0 || !dataLoading;
 
   const homeSections = useMemo(() => {
     if (route !== "home") return [];
@@ -1135,7 +1176,7 @@ export default function App() {
     const query = qDeb.trim().toLowerCase();
     if (!query) return [];
 
-    const cats = productCatsFromMenu
+    const cats = homeSectionCats
       .filter(c => (c.title || c.key || "").toLowerCase().includes(query))
       .map(c => ({ type: "category", label: c.title || c.key, key: c.key }));
 
@@ -1154,7 +1195,7 @@ export default function App() {
       }));
 
     return [...cats, ...prods];
-  }, [qDeb, products, productCatsFromMenu]);
+  }, [qDeb, products, homeSectionCats]);
 
   function handleSuggestionSelect(s) {
     if (s?.type === "category" && s.key) {
