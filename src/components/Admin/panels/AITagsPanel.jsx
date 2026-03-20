@@ -494,9 +494,22 @@ export default function AITagsPanel({ canEdit = true }) {
             });
         }
     }, [canEdit, hasAdminToken, products, applying]);
+    const openEditor = useCallback((product) => {
+        if (!canEdit || !hasAdminToken) return;
+        setSuggestions((state) => ({
+            ...state,
+            [product.id]: Object.prototype.hasOwnProperty.call(state, product.id) ? state[product.id] : s(product.tags),
+        }));
+        setErrors((state) => {
+            const next = { ...state };
+            delete next[product.id];
+            return next;
+        });
+    }, [canEdit, hasAdminToken]);
+
     const runBatch = useCallback(async () => {
         if (!canEdit || !keys.length || !activeModels.length) return;
-        const targets = paged.filter(p => firstImg(p) && !suggestions[p.id] && !loading[p.id]);
+        const targets = paged.filter((p) => firstImg(p) && !Object.prototype.hasOwnProperty.call(suggestions, p.id) && !loading[p.id]);
         if (!targets.length) return;
         setBatchRunning(true);
         batchAbort.current = false;
@@ -704,9 +717,9 @@ export default function AITagsPanel({ canEdit = true }) {
                             <button onClick={stopBatch} className="h-6 px-2 text-[10px] font-medium text-red-600 border border-red-200 rounded-full hover:bg-red-50 transition">Dừng</button>
                         </div>
                     ) : (
-                        <button onClick={runBatch} disabled={!canEdit || !paged.some(p => firstImg(p) && !suggestions[p.id])}
+                        <button onClick={runBatch} disabled={!canEdit || !paged.some((p) => firstImg(p) && !Object.prototype.hasOwnProperty.call(suggestions, p.id))}
                             className="h-7 px-3 text-[10px] font-semibold text-white bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 rounded-full shadow-sm transition disabled:opacity-40">
-                            ✨ ({paged.filter(p => firstImg(p) && !suggestions[p.id]).length})
+                            ✨ ({paged.filter((p) => firstImg(p) && !Object.prototype.hasOwnProperty.call(suggestions, p.id)).length})
                         </button>
                     )}
                     {/* Pagination - right */}
@@ -744,7 +757,8 @@ export default function AITagsPanel({ canEdit = true }) {
                 {paged.map(p => {
                     const thumb = firstImg(p) ? fixThumbUrl(firstImg(p), 96) : null;
                     const currentTags = tagsArr(p.tags);
-                    const aiTags = suggestions[p.id] || "";
+                    const hasSuggestion = Object.prototype.hasOwnProperty.call(suggestions, p.id);
+                    const aiTags = hasSuggestion ? suggestions[p.id] : "";
                     const isLoading = loading[p.id];
                     const isApplying = !!applying[p.id];
                     const error = errors[p.id];
@@ -762,11 +776,24 @@ export default function AITagsPanel({ canEdit = true }) {
                                     <div className="text-xs font-semibold text-gray-800 truncate">{p.name}</div>
                                     <div className="text-[10px] text-gray-400">{catLabel(p.category)}</div>
                                 </div>
-                                {/* AI button */}
-                                <button onClick={() => tagOne(p)} disabled={!canEdit || isLoading || isApplying || !firstImg(p)}
-                                    className="shrink-0 h-8 w-8 rounded-lg bg-purple-50 border border-purple-200 text-purple-600 hover:bg-purple-100 transition disabled:opacity-30 flex items-center justify-center text-base">
-                                    {isLoading ? <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> : "✨"}
-                                </button>
+                                <div className="shrink-0 flex items-center gap-1">
+                                    <button
+                                        onClick={() => openEditor(p)}
+                                        disabled={!canEdit || !hasAdminToken || isLoading || isApplying}
+                                        className="h-8 w-8 rounded-lg bg-gray-50 border border-gray-200 text-gray-500 hover:text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition disabled:opacity-30 flex items-center justify-center"
+                                        title="Sửa tag"
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                                    </button>
+                                    <button
+                                        onClick={() => tagOne(p)}
+                                        disabled={!canEdit || isLoading || isApplying || !firstImg(p)}
+                                        className="h-8 w-8 rounded-lg bg-purple-50 border border-purple-200 text-purple-600 hover:bg-purple-100 transition disabled:opacity-30 flex items-center justify-center text-base"
+                                        title="AI gợi ý tag"
+                                    >
+                                        {isLoading ? <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> : "✨"}
+                                    </button>
+                                </div>
                             </div>
                             {/* Tags area */}
                             <div className="px-3 pb-2.5">
@@ -774,7 +801,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                     <div className="text-[10px] text-red-500 bg-red-50 rounded-lg px-2 py-1">{error}</div>
                                 ) : isLoading ? (
                                     <div className="text-[10px] text-purple-500 animate-pulse">{status || "Đang phân tích..."}</div>
-                                ) : aiTags ? (
+                                ) : hasSuggestion ? (
                                     <div className="space-y-1.5">
                                         <div className="text-[9px] text-purple-600 font-semibold uppercase tracking-wider">✨ AI gợi ý:</div>
                                         <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken} isApplying={isApplying}
@@ -818,7 +845,8 @@ export default function AITagsPanel({ canEdit = true }) {
                         {paged.map(p => {
                             const thumb = fixThumbUrl(firstImg(p), 96);
                             const currentTags = tagsArr(p.tags);
-                            const aiTags = suggestions[p.id] || "";
+                            const hasSuggestion = Object.prototype.hasOwnProperty.call(suggestions, p.id);
+                            const aiTags = hasSuggestion ? suggestions[p.id] : "";
                             const isLoading = loading[p.id];
                             const isApplying = !!applying[p.id];
                             const error = errors[p.id];
@@ -858,17 +886,32 @@ export default function AITagsPanel({ canEdit = true }) {
                                             </div>
                                         ) : error ? (
                                             <span className="text-[10px] text-red-500 font-medium">{error}</span>
-                                        ) : aiTags ? (
+                                        ) : hasSuggestion ? (
                                             <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken} isApplying={isApplying} onApply={(tags) => applyTags(p, tags)}
                                                 onDismiss={() => setSuggestions(s => { const n = { ...s }; delete n[p.id]; return n; })} />
                                         ) : (
                                             <span className="text-[10px] text-gray-300">—</span>
                                         )}
                                     </td>
-                                    <td className="py-2 px-3 text-center">
-                                        <button onClick={() => tagOne(p)} disabled={!canEdit || isLoading || isApplying || !firstImg(p)}
-                                            className="p-1.5 rounded-lg text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition disabled:opacity-30 sm:opacity-0 sm:group-hover:opacity-100 opacity-100"
-                                            title="AI gợi ý tag">✨</button>
+                                    <td className="py-2 px-3">
+                                        <div className="flex items-center justify-center gap-1">
+                                            <button
+                                                onClick={() => openEditor(p)}
+                                                disabled={!canEdit || !hasAdminToken || isLoading || isApplying}
+                                                className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition disabled:opacity-30"
+                                                title="Sửa tag"
+                                            >
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                                            </button>
+                                            <button
+                                                onClick={() => tagOne(p)}
+                                                disabled={!canEdit || isLoading || isApplying || !firstImg(p)}
+                                                className="p-1.5 rounded-lg text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition disabled:opacity-30"
+                                                title="AI gợi ý tag"
+                                            >
+                                                {isLoading ? <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg> : "✨"}
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
                             );
@@ -914,6 +957,9 @@ export default function AITagsPanel({ canEdit = true }) {
 function AITagEditor({ tags, canEdit = true, isApplying = false, onApply, onDismiss }) {
     const [editing, setEditing] = useState(tags);
     const disabled = !canEdit || isApplying;
+    useEffect(() => {
+        setEditing(tags);
+    }, [tags]);
     return (
         <div className="space-y-1.5">
             <div className="flex flex-wrap gap-0.5">
