@@ -843,6 +843,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                         <div className="text-[9px] text-purple-600 font-semibold uppercase tracking-wider">✨ AI gợi ý:</div>
                                         <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken} isApplying={isApplying || applyAllRunning}
                                             onApply={(tags) => applyTags(p, tags)}
+                                            onChange={(tags) => setSuggestions((s) => ({ ...s, [p.id]: tags }))}
                                             onDismiss={() => setSuggestions(s => { const n = { ...s }; delete n[p.id]; return n; })} />
                                     </div>
                                 ) : currentTags.length > 0 ? (
@@ -925,6 +926,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                             <span className="text-[10px] text-red-500 font-medium">{error}</span>
                                         ) : hasSuggestion ? (
                                             <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken} isApplying={isApplying || applyAllRunning} onApply={(tags) => applyTags(p, tags)}
+                                                onChange={(tags) => setSuggestions((s) => ({ ...s, [p.id]: tags }))}
                                                 onDismiss={() => setSuggestions(s => { const n = { ...s }; delete n[p.id]; return n; })} />
                                         ) : (
                                             <span className="text-[10px] text-gray-300">—</span>
@@ -991,12 +993,16 @@ export default function AITagsPanel({ canEdit = true }) {
     );
 }
 
-function AITagEditor({ tags, canEdit = true, isApplying = false, onApply, onDismiss }) {
+function AITagEditor({ tags, canEdit = true, isApplying = false, onApply, onDismiss, onChange }) {
     const [editing, setEditing] = useState(tags);
     const disabled = !canEdit || isApplying;
     useEffect(() => {
         setEditing(tags);
     }, [tags]);
+    const handleChange = (value) => {
+        setEditing(value);
+        if (typeof onChange === "function") onChange(value);
+    };
     return (
         <div className="space-y-1.5">
             <div className="flex flex-wrap gap-0.5">
@@ -1005,7 +1011,7 @@ function AITagEditor({ tags, canEdit = true, isApplying = false, onApply, onDism
                 ))}
             </div>
             <input className="w-full border border-purple-200 rounded px-2 py-1 text-[10px] bg-purple-50/30 focus:outline-none focus:ring-1 focus:ring-purple-300 disabled:opacity-60"
-                value={editing} onChange={e => setEditing(e.target.value)} disabled={disabled} />
+                value={editing} onChange={e => handleChange(e.target.value)} disabled={disabled} />
             <div className="flex gap-1">
                 <button
                     disabled={disabled}
