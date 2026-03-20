@@ -474,7 +474,7 @@ export default function AITagsPanel({ canEdit = true }) {
         if (!canEdit || !hasAdminToken) return;
         if (applying[product.id]) return;
         setApplying((state) => ({ ...state, [product.id]: true }));
-        const finalTags = mergeWithMandatoryTags(product, tags);
+        const finalTags = mergeTagLists(tagsArr(tags)).join(", ");
         const clean = { ...product, tags: finalTags };
         try {
             await updateConfiguredProductRow(clean);
@@ -493,7 +493,7 @@ export default function AITagsPanel({ canEdit = true }) {
                 return next;
             });
         }
-    }, [canEdit, hasAdminToken, products, mergeWithMandatoryTags, applying]);
+    }, [canEdit, hasAdminToken, products, applying]);
     const runBatch = useCallback(async () => {
         if (!canEdit || !keys.length || !activeModels.length) return;
         const targets = paged.filter(p => firstImg(p) && !suggestions[p.id] && !loading[p.id]);
