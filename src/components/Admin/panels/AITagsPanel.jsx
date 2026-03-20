@@ -378,6 +378,9 @@ export default function AITagsPanel({ canEdit = true }) {
     const [batchRunning, setBatchRunning] = useState(false);
     const batchAbort = useRef(false);
     const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 });
+    const [applyAllRunning, setApplyAllRunning] = useState(false);
+    const applyAllAbort = useRef(false);
+    const [applyAllProgress, setApplyAllProgress] = useState({ done: 0, total: 0 });
     const [imgModal, setImgModal] = useState(null);
     const syncTimerRef = useRef(null);
     const lastSyncFingerprintRef = useRef("");
@@ -478,9 +481,11 @@ export default function AITagsPanel({ canEdit = true }) {
         const clean = { ...product, tags: finalTags };
         try {
             await updateConfiguredProductRow(clean);
-            const next = products.map(p => p.id === product.id ? clean : p);
-            setProducts(next);
-            writeLS("products", next);
+            setProducts((prev) => {
+                const next = prev.map((p) => (p.id === product.id ? clean : p));
+                writeLS("products", next);
+                return next;
+            });
             setSuggestions(s => { const n = { ...s }; delete n[product.id]; return n; });
             audit("ai.tags.apply", { productId: product.id, name: product.name, tags: finalTags, user: (readLS(LS.AUTH) || {}).username || "?" });
         } catch (e) {
@@ -493,7 +498,7 @@ export default function AITagsPanel({ canEdit = true }) {
                 return next;
             });
         }
-    }, [canEdit, hasAdminToken, products, applying]);
+    }, [canEdit, hasAdminToken, applying]);
     const openEditor = useCallback((product) => {
         if (!canEdit || !hasAdminToken) return;
         setSuggestions((state) => ({
@@ -522,8 +527,25 @@ export default function AITagsPanel({ canEdit = true }) {
         }
         setBatchRunning(false);
     }, [activeModels, canEdit, keys, loading, paged, suggestions, tagOne]);
+    const runApplyAll = useCallback(async () => {
+        if (!canEdit || !hasAdminToken || applyAllRunning) return;
+        const targets = paged.filter((p) => Object.prototype.hasOwnProperty.call(suggestions, p.id) && !applying[p.id]);
+        if (!targets.length) return;
+        setApplyAllRunning(true);
+        applyAllAbort.current = false;
+        setApplyAllProgress({ done: 0, total: targets.length });
+        for (let i = 0; i < targets.length; i++) {
+            if (applyAllAbort.current) break;
+            const product = targets[i];
+            const nextTags = suggestions[product.id] ?? "";
+            await applyTags(product, nextTags);
+            setApplyAllProgress({ done: i + 1, total: targets.length });
+        }
+        setApplyAllRunning(false);
+    }, [applyAllRunning, applying, canEdit, hasAdminToken, paged, suggestions, applyTags]);
 
     const stopBatch = () => { batchAbort.current = true; };
+    const stopApplyAll = () => { applyAllAbort.current = true; };
 
     // Key management functions
     const addKey = () => {
@@ -710,6 +732,7 @@ export default function AITagsPanel({ canEdit = true }) {
                 {/* ── Row 3: auto-tag left · pagination right ── */}
                 <div className="flex items-center justify-between">
                     {/* Auto-tag button - left */}
+                    <div className="flex items-center gap-1.5">
                     {batchRunning ? (
                         <div className="flex items-center gap-1.5">
                             <svg className="w-3.5 h-3.5 animate-spin text-purple-600" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -717,11 +740,25 @@ export default function AITagsPanel({ canEdit = true }) {
                             <button onClick={stopBatch} className="h-6 px-2 text-[10px] font-medium text-red-600 border border-red-200 rounded-full hover:bg-red-50 transition">Dừng</button>
                         </div>
                     ) : (
-                        <button onClick={runBatch} disabled={!canEdit || !paged.some((p) => firstImg(p) && !Object.prototype.hasOwnProperty.call(suggestions, p.id))}
+                        <button onClick={runBatch} disabled={!canEdit || applyAllRunning || !paged.some((p) => firstImg(p) && !Object.prototype.hasOwnProperty.call(suggestions, p.id))}
                             className="h-7 px-3 text-[10px] font-semibold text-white bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 rounded-full shadow-sm transition disabled:opacity-40">
                             ✨ ({paged.filter((p) => firstImg(p) && !Object.prototype.hasOwnProperty.call(suggestions, p.id)).length})
                         </button>
                     )}
+                    {applyAllRunning ? (
+                        <div className="flex items-center gap-1.5">
+                            <svg className="w-3.5 h-3.5 animate-spin text-emerald-600" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                            <span className="text-[10px] text-emerald-600">{applyAllProgress.done}/{applyAllProgress.total}</span>
+                            <button onClick={stopApplyAll} className="h-6 px-2 text-[10px] font-medium text-red-600 border border-red-200 rounded-full hover:bg-red-50 transition">Dung</button>
+                        </div>
+                    ) : (
+                        <button onClick={runApplyAll}
+                            disabled={!canEdit || !hasAdminToken || batchRunning || !paged.some((p) => Object.prototype.hasOwnProperty.call(suggestions, p.id))}
+                            className="h-7 px-3 text-[10px] font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-full shadow-sm transition disabled:opacity-40">
+                            Ap dung tat ca ({paged.filter((p) => Object.prototype.hasOwnProperty.call(suggestions, p.id)).length})
+                        </button>
+                    )}
+                    </div>
                     {/* Pagination - right */}
                     {totalPages > 1 && (() => {
                         const pages = [];
@@ -779,7 +816,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                 <div className="shrink-0 flex items-center gap-1">
                                     <button
                                         onClick={() => openEditor(p)}
-                                        disabled={!canEdit || !hasAdminToken || isLoading || isApplying}
+                                        disabled={!canEdit || !hasAdminToken || applyAllRunning || isLoading || isApplying}
                                         className="h-8 w-8 rounded-lg bg-gray-50 border border-gray-200 text-gray-500 hover:text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition disabled:opacity-30 flex items-center justify-center"
                                         title="Sửa tag"
                                     >
@@ -787,7 +824,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                     </button>
                                     <button
                                         onClick={() => tagOne(p)}
-                                        disabled={!canEdit || isLoading || isApplying || !firstImg(p)}
+                                        disabled={!canEdit || applyAllRunning || isLoading || isApplying || !firstImg(p)}
                                         className="h-8 w-8 rounded-lg bg-purple-50 border border-purple-200 text-purple-600 hover:bg-purple-100 transition disabled:opacity-30 flex items-center justify-center text-base"
                                         title="AI gợi ý tag"
                                     >
@@ -804,7 +841,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                 ) : hasSuggestion ? (
                                     <div className="space-y-1.5">
                                         <div className="text-[9px] text-purple-600 font-semibold uppercase tracking-wider">✨ AI gợi ý:</div>
-                                        <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken} isApplying={isApplying}
+                                        <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken} isApplying={isApplying || applyAllRunning}
                                             onApply={(tags) => applyTags(p, tags)}
                                             onDismiss={() => setSuggestions(s => { const n = { ...s }; delete n[p.id]; return n; })} />
                                     </div>
@@ -887,7 +924,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                         ) : error ? (
                                             <span className="text-[10px] text-red-500 font-medium">{error}</span>
                                         ) : hasSuggestion ? (
-                                            <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken} isApplying={isApplying} onApply={(tags) => applyTags(p, tags)}
+                                            <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken} isApplying={isApplying || applyAllRunning} onApply={(tags) => applyTags(p, tags)}
                                                 onDismiss={() => setSuggestions(s => { const n = { ...s }; delete n[p.id]; return n; })} />
                                         ) : (
                                             <span className="text-[10px] text-gray-300">—</span>
@@ -897,7 +934,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                         <div className="flex items-center justify-center gap-1">
                                             <button
                                                 onClick={() => openEditor(p)}
-                                                disabled={!canEdit || !hasAdminToken || isLoading || isApplying}
+                                                disabled={!canEdit || !hasAdminToken || applyAllRunning || isLoading || isApplying}
                                                 className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition disabled:opacity-30"
                                                 title="Sửa tag"
                                             >
@@ -905,7 +942,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                             </button>
                                             <button
                                                 onClick={() => tagOne(p)}
-                                                disabled={!canEdit || isLoading || isApplying || !firstImg(p)}
+                                                disabled={!canEdit || applyAllRunning || isLoading || isApplying || !firstImg(p)}
                                                 className="p-1.5 rounded-lg text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition disabled:opacity-30"
                                                 title="AI gợi ý tag"
                                             >
