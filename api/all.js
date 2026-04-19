@@ -204,8 +204,17 @@ async function fetchCsvTab({ sheetId, gid }) {
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
-    const rows = parseCSV(String(text || "").replace(/^\uFEFF/, ""));
+    const contentType = String(res.headers.get("content-type") || "").toLowerCase();
+    const raw = String(text || "").replace(/^\uFEFF/, "");
+    const trimmed = raw.trimStart();
+    if (!contentType.includes("csv") && /^<!doctype html|^<html\b/i.test(trimmed)) {
+      throw new Error(`Expected CSV export, received HTML for gid=${gid}`);
+    }
+    const rows = parseCSV(raw);
     const rawHead = rows.shift() || [];
+    if (!rawHead.some((cell) => String(cell || "").trim())) {
+      throw new Error(`Empty CSV header for gid=${gid}`);
+    }
     const head = rawHead.map(normalizeHeader);
     return rows
       .filter((r) => r.some((x) => String(x || "").trim() !== ""))
@@ -228,18 +237,37 @@ async function loadUnifiedFromSheet(cfg) {
 
   const plans = [];
 
-  // Product tabs are best-effort: a wrong gid must not fail entire endpoint.
   plans.push(
     Promise.all(
       tabs.map(async (t) => {
         try {
           const rows = await fetchCsvTab({ sheetId, gid: t.gid });
-          return rows.map((r) => normalizeProductRow(r, t));
-        } catch {
-          return [];
+          return {
+            ok: true,
+            rows: rows.map((r) => normalizeProductRow(r, t)),
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            rows: [],
+            error: error?.message || `Failed to load tab ${t.key}`,
+            tab: t,
+          };
         }
       })
-    ).then((all) => ({ key: "products", value: all.flat() }))
+    ).then((all) => {
+      const successful = all.filter((x) => x.ok);
+      if (!successful.length) {
+        const reason =
+          all
+            .filter((x) => !x.ok)
+            .map((x) => x.error)
+            .filter(Boolean)
+            .join("; ") || "No product tab could be loaded";
+        throw new Error(reason);
+      }
+      return { key: "products", value: successful.flatMap((x) => x.rows) };
+    })
   );
 
   const singleTabs = [
@@ -365,11 +393,43 @@ function withMeta(entry, opts = {}) {
   };
 }
 
+function countItems(v) {
+  return Array.isArray(v) ? v.length : 0;
+}
+
+function hasAnyUnifiedContent(data = {}) {
+  return [
+    "products",
+    "menu",
+    "pages",
+    "announcements",
+    "categories",
+    "tags",
+    "types",
+    "levels",
+    "sizes",
+    "fb",
+  ].some((key) => countItems(data?.[key]) > 0);
+}
+
+function shouldRejectRefresh(nextData, prevEntry) {
+  const nextProducts = countItems(nextData?.products);
+  if (nextProducts > 0) return false;
+
+  const prevProducts = countItems(prevEntry?.data?.products);
+  if (prevProducts > 0) return true;
+
+  return !hasAnyUnifiedContent(nextData);
+}
+
 function refreshCache(key, cfg) {
   if (INFLIGHT.has(key)) return INFLIGHT.get(key);
   const p = loadUnifiedFromSheet(cfg)
     .then((data) => {
       const current = CACHE.get(key);
+      if (shouldRejectRefresh(data, current)) {
+        throw new Error("Suspicious empty unified payload");
+      }
       const version = (current?.version || 0) + 1;
       const next = { data, refreshedAt: Date.now(), version };
       CACHE.set(key, next);

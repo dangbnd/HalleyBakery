@@ -377,6 +377,16 @@ function isPublicHostRuntime() {
   return !!host && !["localhost", "127.0.0.1", "0.0.0.0"].includes(host);
 }
 
+function hasConfiguredProductSource({ sheetId = "", productTabs = "", gidProducts = "" } = {}) {
+  return !!String(sheetId || "").trim() && !!(String(productTabs || "").trim() || String(gidProducts || "").trim());
+}
+
+function isSuspiciousUnifiedPayload(unified, source = {}) {
+  if (!unified || !Array.isArray(unified.products)) return false;
+  if (!hasConfiguredProductSource(source)) return false;
+  return unified.products.length === 0;
+}
+
 
 
 export default function App() {
@@ -650,16 +660,97 @@ export default function App() {
           announcements: false,
           fb: false,
         };
+        const productTabsConfig = getConfig("product_tabs").trim();
+        const apiAllUrl = getConfig("api_all_url").trim();
+        const unifiedSource = {
+          sheetId: SHEET.id,
+          productTabs: productTabsConfig,
+          gidProducts: SHEET.gids.products,
+        };
+        const applyUnifiedPayload = (unified) => {
+          if (!unified || !Array.isArray(unified.products)) return false;
+          if (unified?._meta?.refreshedAt) {
+            setConfig("last_sync_at", unified._meta.refreshedAt);
+          }
+          if (unified.categories?.length) {
+            const mapped = mapCategories(unified.categories);
+            setCategories(mapped); writeLS(LS.CATEGORIES, mapped);
+          }
+          if (unified.tags?.length) {
+            const mapped = mapTags(unified.tags);
+            setTags(mapped); writeLS(LS.TAGS, mapped);
+          }
+          if (unified.menu?.length) {
+            const mapped = mapMenu(unified.menu);
+            setMenu(mapped); writeLS(LS.MENU, mapped);
+            unifiedLoaded.menu = true;
+          }
+          if (unified.pages?.length) {
+            const mapped = mapPages(unified.pages);
+            setPages(mapped); writeLS(LS.PAGES, mapped);
+            unifiedLoaded.pages = true;
+          }
+          if (unified.announcements?.length) {
+            const mapped = mapAnnouncements(unified.announcements);
+            setAnnouncements(mapped); writeLS(LS.ANNOUNCEMENTS, mapped);
+            unifiedLoaded.announcements = true;
+          }
+          if (unified.fb?.length) {
+            const mappedFb = extractFbUrlsFromRows(unified.fb);
+            if (mappedFb.length) {
+              setFbUrls(mappedFb);
+              writeLS(LS.FB_URLS, mappedFb);
+              unifiedLoaded.fb = true;
+            }
+          }
+          if (unified.types?.length) { writeLS(LS.TYPES, mapTypes(unified.types)); }
+          if (unified.levels?.length) { writeLS(LS.LEVELS, mapLevels(unified.levels)); }
+
+          prodRows = unified.products.map((r) => ({
+            ...r,
+            images: String(r.images || "").trim(),
+            price: String(r.price || r.gia || ""),
+            sizes: String(r.sizes || r.size || r.Sizes || r.Size || ""),
+            priceBySize: (r.pricebysize ?? r.priceBySize ?? ""),
+            visibility: String(r.visibility ?? r.Visibility ?? r.show ?? r.hienthi ?? r["hiá»ƒn thá»‹"] ?? "public").trim().toLowerCase(),
+            priceVisibility: String(r.priceVisibility ?? r.pricevisibility ?? r.showPrice ?? r.showprice ?? r.show_price ?? r.hienGia ?? r["hiá»ƒn thá»‹ giÃ¡"] ?? "").trim().toLowerCase(),
+            description: String(r.description || r.desc || r.mo_ta || "").trim(),
+            descriptionVisibility: String(
+              r.descriptionVisibility ?? r.descriptionvisibility ??
+              r.descVisibility ?? r.descvisibility ??
+              r.showDesc ?? r.showdesc ??
+              r.showDescription ?? r.showdescription ??
+              r.hienMoTa ?? r["hiá»ƒn thá»‹ mÃ´ táº£"] ?? r["hien thi mo ta"] ?? ""
+            ).trim().toLowerCase(),
+          }));
+          return true;
+        };
 
         // 1. Ưu tiên fetch từ API gộp (nhanh, 1 request) - chỉ khi user cấu hình
         const allUrl = buildUnifiedApiUrl({
-          apiAllUrl: getConfig("api_all_url").trim(),
+          apiAllUrl,
           sheetId: SHEET.id,
-          productTabs: getConfig("product_tabs").trim(),
+          productTabs: productTabsConfig,
           gids: SHEET.gids,
         });
         if (allUrl) {
-          const unified = await fetchUnifiedData(allUrl);
+          let unified = await fetchUnifiedData(allUrl);
+          if (isSuspiciousUnifiedPayload(unified, unifiedSource)) {
+            const forcedUrl = buildUnifiedApiUrl({
+              apiAllUrl,
+              sheetId: SHEET.id,
+              productTabs: productTabsConfig,
+              gids: SHEET.gids,
+              force: true,
+            });
+            console.warn("[Halley] Unified API returned empty products. Retry with force=1.");
+            if (forcedUrl) unified = await fetchUnifiedData(forcedUrl);
+            if (isSuspiciousUnifiedPayload(unified, unifiedSource)) {
+              allowDirectSheetReads = true;
+              unified = null;
+              console.warn("[Halley] Unified API still empty after force refresh. Fallback to direct Google Sheet reads.");
+            }
+          }
           if (unified && Array.isArray(unified.products)) {
             if (unified?._meta?.refreshedAt) {
               setConfig("last_sync_at", unified._meta.refreshedAt);
