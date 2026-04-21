@@ -6,7 +6,14 @@ import { prefetchImage } from "../utils/img.js";
 
 const PAGE_SIZE = 20; // Số sản phẩm mỗi lần hiện
 
-export default function ProductList({ products = [], onImageClick, filter }) {
+export default function ProductList({
+  products = [],
+  onImageClick,
+  filter,
+  isFavorite,
+  onFavoriteToggle,
+  onMessengerClick,
+}) {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const sentinelRef = useRef(null);
 
@@ -52,7 +59,14 @@ export default function ProductList({ products = [], onImageClick, filter }) {
       <div ref={gridRef} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
         {visible.map((p) => (
           <div key={pidOf(p)} data-card>
-            <ProductCard p={p} onImageClick={onImageClick} filter={filter} />
+            <ProductCard
+              p={p}
+              onImageClick={onImageClick}
+              filter={filter}
+              isFavorite={isFavorite?.(p)}
+              onFavoriteToggle={onFavoriteToggle}
+              onMessengerClick={onMessengerClick}
+            />
           </div>
         ))}
       </div>

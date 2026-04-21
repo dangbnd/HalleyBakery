@@ -78,7 +78,7 @@ export const roleOrder = { owner: 5, manager: 4, editor: 3, staff: 2, viewer: 1 
 
 const ROLE_DEFAULT_PERMISSIONS = {
   viewer: ["products.view"],
-  staff: ["products.view", "upload.view", "aitags.view", "audit.view"],
+  staff: ["products.view", "upload.view", "aitags.view", "audit.view", "analytics.view"],
   editor: [
     "products.view", "products.edit",
     "upload.view", "upload.edit",
@@ -87,6 +87,7 @@ const ROLE_DEFAULT_PERMISSIONS = {
     "typesize.view", "typesize.edit",
     "pages.view", "pages.edit",
     "audit.view",
+    "analytics.view",
     "settings.view",
   ],
   manager: [
@@ -97,6 +98,7 @@ const ROLE_DEFAULT_PERMISSIONS = {
     "typesize.view", "typesize.edit",
     "pages.view", "pages.edit",
     "audit.view",
+    "analytics.view",
     "settings.view", "settings.edit",
   ],
   owner: [
@@ -107,6 +109,7 @@ const ROLE_DEFAULT_PERMISSIONS = {
     "typesize.view", "typesize.edit",
     "pages.view", "pages.edit",
     "audit.view",
+    "analytics.view",
     "settings.view", "settings.edit",
     "users.manage",
   ],
@@ -115,6 +118,7 @@ const ROLE_DEFAULT_PERMISSIONS = {
 const ADMIN_TAB_PERMISSIONS = {
   products: ["products.view", "products.edit", "products.delete"],
   upload: ["upload.view", "upload.edit"],
+  analytics: ["analytics.view"],
   users: ["users.manage"],
   aitags: ["aitags.view", "aitags.edit"],
   audit: ["audit.view"],

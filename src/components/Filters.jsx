@@ -2,6 +2,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { tagKey } from "../utils/tagKey.js";
 
+const foldText = (value = "") =>
+  String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d");
+
+const SMART_TAG_GROUPS = [
+  { title: "Màu", needles: ["xanh", "hong", "do", "vang", "trang", "den", "tim", "cam", "nau", "pastel"] },
+  { title: "Sự kiện", needles: ["sinh nhat", "birthday", "thoi noi", "day thang", "cuoi", "wedding", "anniversary", "valentine", "noel"] },
+  { title: "Chủ đề", needles: ["baby", "be trai", "be gai", "hoa", "basic", "cute", "cartoon", "princess", "oto", "gau"] },
+];
+
 export default function Filters({ products = [], tags = [], onChange, className = "" }) {
   /* ---------- TAGS ---------- */
   const normTag = (t) => {
@@ -104,10 +117,30 @@ export default function Filters({ products = [], tags = [], onChange, className 
   }, [products]);
 
   const filteredTags = useMemo(() => {
-    const k = qTag.trim().toLowerCase();
+    const k = foldText(qTag.trim());
     if (!k) return allTags;
-    return allTags.filter((x) => x.label.toLowerCase().includes(k));
+    return allTags.filter((x) => foldText(x.label).includes(k) || foldText(x.id).includes(k));
   }, [allTags, qTag]);
+
+  const smartTagGroups = useMemo(() => {
+    return SMART_TAG_GROUPS.map((group) => ({
+      ...group,
+      items: allTags
+        .filter((tag) => {
+          const label = foldText(`${tag.label} ${tag.id}`);
+          return group.needles.some((needle) => label.includes(foldText(needle)));
+        })
+        .slice(0, 14),
+    })).filter((group) => group.items.length > 0);
+  }, [allTags]);
+
+  const toggleTag = (t) => {
+    markInteracted();
+    const next = new Set(tagSet);
+    tagSet.has(t.id) ? next.delete(t.id) : next.add(t.id);
+    setTagSet(next);
+    setTagLabels(prev => ({ ...prev, [t.id]: t.label }));
+  };
 
   const fmt = (v) => new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(v) + "đ";
 
@@ -245,6 +278,34 @@ export default function Filters({ products = [], tags = [], onChange, className 
           className="rounded-full border px-3 py-1.5 text-xs w-full mb-2"
         />
 
+        {!!smartTagGroups.length && (
+          <div className="mb-3 space-y-2">
+            {smartTagGroups.map((group) => (
+              <div key={group.title}>
+                <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">{group.title}</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {group.items.map((t) => {
+                    const on = tagSet.has(t.id);
+                    return (
+                      <button
+                        key={`${group.title}-${t.id}`}
+                        type="button"
+                        onClick={() => toggleTag(t)}
+                        className={
+                          "px-2.5 py-1 rounded-full text-[11px] border transition " +
+                          (on ? "bg-rose-50 border-rose-300 text-rose-700" : "border-gray-200 bg-gray-50 hover:bg-white")
+                        }
+                      >
+                        {t.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="max-h-44 overflow-auto flex flex-wrap gap-2">
           {filteredTags.map((t) => {
             // t.id = slug không dấu; t.label = nhãn có dấu
@@ -252,13 +313,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
             return (
               <button
                 key={t.id}
-                onClick={() => {
-                  markInteracted();
-                  const next = new Set(tagSet);
-                  on ? next.delete(t.id) : next.add(t.id);
-                  setTagSet(next);
-                  setTagLabels(prev => ({ ...prev, [t.id]: t.label }));
-                }}
+                onClick={() => toggleTag(t)}
                 className={
                   "px-3 py-1.5 rounded-full text-xs border transition " +
                   (on ? "bg-rose-50 border-rose-300 text-rose-700" : "border-gray-200 hover:bg-gray-50")

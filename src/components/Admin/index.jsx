@@ -8,6 +8,7 @@ import SettingsPanel from "./panels/SettingsPanel.jsx";
 import AuditPanel from "./panels/AuditPanel.jsx";
 import UsersPanel from "./panels/UsersPanel.jsx";
 import AITagsPanel from "./panels/AITagsPanel.jsx";
+import AnalyticsPanel from "./panels/AnalyticsPanel.jsx";
 import {
   LS,
   audit,
@@ -19,6 +20,7 @@ import {
 } from "../../utils.js";
 
 const NAVS = [
+  { key: "analytics", label: "Thống kê" },
   { key: "products", label: "Sản phẩm" },
   { key: "upload", label: "Upload" },
   { key: "users", label: "Người dùng" },
@@ -36,6 +38,14 @@ function NavIcon({ k, size = 20, active = false }) {
       <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z" />
       <line x1="3" x2="21" y1="6" y2="6" />
       <path d="M16 10a4 4 0 0 1-8 0" />
+    </svg>
+  );
+  if (k === "analytics") return (
+    <svg {...base}>
+      <path d="M3 3v18h18" />
+      <rect x="7" y="11" width="3" height="6" rx="1" />
+      <rect x="12" y="7" width="3" height="10" rx="1" />
+      <rect x="17" y="5" width="3" height="12" rx="1" />
     </svg>
   );
   if (k === "upload") return (
@@ -330,6 +340,8 @@ export default function AdminIndex() {
             canDelete={hasPermission(user, "products.delete")}
           />
         );
+      case "analytics":
+        return <AnalyticsPanel />;
       case "upload":
         return <UploadPanel canEdit={hasPermission(user, "upload.edit")} />;
       case "typesize":

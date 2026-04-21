@@ -14,10 +14,10 @@ function MessengerIcon() {
   );
 }
 
-function ZaloIcon() {
+function HeartIcon({ filled = false }) {
   return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-      <path d="M4 3h16a1 1 0 0 1 1 1v16.5a.5.5 0 0 1-.8.4L17 19H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm4 5h3l-3 5h3v2H6l3-5H6V8zm7 0h2v7h-2V8zm-3 0h2v7h-2V8z" />
+    <svg viewBox="0 0 24 24" width="16" height="16" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20.8 4.6a5.4 5.4 0 0 0-7.6 0L12 5.8l-1.2-1.2a5.4 5.4 0 0 0-7.6 7.6l1.2 1.2L12 21l7.6-7.6 1.2-1.2a5.4 5.4 0 0 0 0-7.6Z" />
     </svg>
   );
 }
@@ -48,7 +48,14 @@ function shortSizeLabel(id = "", label = "") {
   return text || "Size";
 }
 
-export default function ProductCard({ p, onImageClick, filter }) {
+export default function ProductCard({
+  p,
+  onImageClick,
+  filter,
+  isFavorite = false,
+  onFavoriteToggle,
+  onMessengerClick,
+}) {
   const defaultSel = useMemo(() => pickDefaultSize(p, filter), [p, filter]);
   const [sel, setSel] = useState(defaultSel);
 
@@ -79,11 +86,6 @@ export default function ProductCard({ p, onImageClick, filter }) {
     [p, selectedSizeLabel]
   );
 
-  const zaloCta = useMemo(
-    () => buildProductChatLink({ product: p, sizeLabel: selectedSizeLabel, intent: "ask_price", preferred: "zalo" }),
-    [p, selectedSizeLabel]
-  );
-
   const srcBase = getImageUrls(p)[0] || "";
   const prefetch = useCallback(() => {
     prefetchImage(cdn(srcBase, { w: 480, h: 480, q: 70 }));
@@ -95,7 +97,7 @@ export default function ProductCard({ p, onImageClick, filter }) {
     <article
       ref={prefetchRef}
       id={`prod-${p?.id}`}
-      className="group rounded-2xl border bg-white overflow-hidden"
+      className="group relative rounded-2xl border bg-white overflow-hidden"
       style={{ contentVisibility: "auto", containIntrinsicSize: "300px 380px" }}
       data-card
     >
@@ -118,6 +120,21 @@ export default function ProductCard({ p, onImageClick, filter }) {
         </div>
       </button>
 
+      <button
+        type="button"
+        onClick={() => onFavoriteToggle?.(p)}
+        className={
+          "absolute right-2 top-2 h-8 w-8 rounded-full border grid place-items-center shadow-sm transition active:scale-95 " +
+          (isFavorite
+            ? "border-rose-200 bg-white text-rose-500"
+            : "border-white/70 bg-white/90 text-gray-500 hover:text-rose-500")
+        }
+        aria-label={isFavorite ? `Bo yeu thich ${p?.name || "mau banh"}` : `Luu yeu thich ${p?.name || "mau banh"}`}
+        title={isFavorite ? "Bỏ yêu thích" : "Yêu thích"}
+      >
+        <HeartIcon filled={isFavorite} />
+      </button>
+
       <div className="p-3">
         <div className="flex items-center gap-2">
           <PriceTag value={price} className="shrink-0 whitespace-nowrap text-rose-600 text-[16px] font-semibold" />
@@ -126,7 +143,10 @@ export default function ProductCard({ p, onImageClick, filter }) {
             {messengerCta.href && messengerCta.channel === "messenger" && (
               <a
                 href={messengerCta.href}
-                onClick={(e) => openChatTarget(messengerCta, e)}
+                onClick={(e) => {
+                  onMessengerClick?.(p, messengerCta);
+                  openChatTarget(messengerCta, e);
+                }}
                 target="_blank"
                 rel="noopener"
                 className="h-6 w-6 md:h-8 md:w-8 rounded-full bg-[#006AFF] text-white grid place-items-center shadow-sm hover:opacity-90 active:scale-95 transition"
@@ -137,19 +157,6 @@ export default function ProductCard({ p, onImageClick, filter }) {
               </a>
             )}
 
-            {zaloCta.href && zaloCta.channel === "zalo" && (
-              <a
-                href={zaloCta.href}
-                onClick={(e) => openChatTarget(zaloCta, e)}
-                target="_blank"
-                rel="noopener"
-                className="h-6 w-6 md:h-8 md:w-8 rounded-full bg-[#0068FF] text-white grid place-items-center shadow-sm hover:opacity-90 active:scale-95 transition"
-                aria-label={`Nhan Zalo ve ${p?.name || "mau banh"}`}
-                title="Nhan Zalo"
-              >
-                <ZaloIcon />
-              </a>
-            )}
           </div>
         </div>
 

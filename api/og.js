@@ -209,6 +209,16 @@ function findProductByPid(products, pid) {
     }) || null;
 }
 
+function pidFromProductPath(pathname = "") {
+    const match = String(pathname || "").match(/^\/p\/([^/?#]+)/);
+    if (!match) return "";
+    try {
+        return decodeURIComponent(match[1]);
+    } catch {
+        return match[1] || "";
+    }
+}
+
 function ogHtml({ title, description, image, url }) {
     return `<!DOCTYPE html><html lang="vi"><head>
 <meta charset="UTF-8">
@@ -284,7 +294,7 @@ export default async function handler(req, res) {
     const menu = cachedMenu || [];
 
     const url = new URL(req.url || "/", SITE_URL);
-    const pid = url.searchParams.get("pid");
+    const pid = pidFromProductPath(url.pathname) || url.searchParams.get("pid");
     const cat = url.searchParams.get("cat") || url.searchParams.get("view");
     const q = url.searchParams.get("q");
     const fullUrl = `${SITE_URL}${url.pathname}${url.search}`;

@@ -15,6 +15,7 @@ import Filters from "./components/Filters.jsx";
 import FilterSheet from "./components/FilterSheet.jsx";
 import { ProductList } from "./components/ProductList.jsx";
 import ProductQuickView from "./components/ProductQuickView.jsx";
+import ProductShelf from "./components/ProductShelf.jsx";
 import PageViewer from "./components/PageViewer.jsx";
 import MessageButton from "./components/MessageButton.jsx";
 import BackToTop from "./components/BackToTop.jsx";
@@ -29,6 +30,16 @@ import {
 } from "./services/sheets.js";
 import { tagKey } from "./utils/tagKey.js";
 import { useDebounced } from "./hooks/useDebounced.js";
+import {
+  CUSTOMER_BEHAVIOR_EVENT,
+  addRecentProduct,
+  getFavoriteIds,
+  getFavoriteProducts,
+  getRecentProducts,
+  recordCustomerEvent,
+  toggleFavoriteProduct,
+} from "./utils/customerBehavior.js";
+import { submitConsultLead } from "./services/consult.js";
 
 /* ---------------- helpers ---------------- */
 
@@ -54,6 +65,158 @@ const fold = (s = "") =>
     .replace(/đ/g, "d");
 
 const hasDiacritics = (s = "") => lower(s) !== fold(s);
+
+const SEARCH_SYNONYM_GROUPS = [
+  ["baby", "em be", "be", "tre em", "kid", "kids"],
+  ["be trai", "trai", "con trai", "boy"],
+  ["be gai", "gai", "con gai", "girl"],
+  ["sinh nhat", "birthday", "sn", "happy birthday"],
+  ["thoi noi", "day thang", "baby shower"],
+  ["hoa", "flower", "floral"],
+  ["xanh", "blue", "green"],
+  ["hong", "pink"],
+  ["do", "red"],
+  ["vang", "yellow"],
+  ["trang", "white"],
+  ["den", "black"],
+  ["tim", "purple"],
+  ["noel", "christmas"],
+  ["cuoi", "wedding"],
+  ["valentine", "love"],
+];
+
+const splitFoldedWords = (value = "") => words(fold(value));
+
+function searchGroupsForQuery(query = "") {
+  const raw = fold(query).trim();
+  const tokens = splitFoldedWords(raw);
+  const groups = tokens.map((token) => new Set([token]));
+
+  SEARCH_SYNONYM_GROUPS.forEach((group) => {
+    const folded = group.map(fold).filter(Boolean);
+    const groupWords = new Set(folded.flatMap(splitFoldedWords));
+    const hit = folded.some((phrase) => raw.includes(phrase)) || tokens.some((token) => groupWords.has(token));
+    if (!hit) return;
+    const expanded = [...new Set([...groupWords, ...folded])];
+    const targetIndex = groups.findIndex((set) => [...set].some((token) => groupWords.has(token)));
+    if (targetIndex >= 0) expanded.forEach((token) => groups[targetIndex].add(token));
+    else groups.push(new Set(expanded));
+  });
+
+  return groups
+    .map((set) => [...set].filter((token) => token && token.length >= 2))
+    .filter((group) => group.length > 0);
+}
+
+function productSearchText(product = {}, categoryTitle = "") {
+  return [
+    product.name,
+    product.title,
+    product.category,
+    categoryTitle,
+    Array.isArray(product.tags) ? product.tags.join(" ") : product.tags,
+    product.desc,
+    product.description,
+    product.level,
+    Array.isArray(product.sizes) ? product.sizes.join(" ") : product.sizes,
+  ].filter(Boolean).join(" ");
+}
+
+function scoreSearchProduct(product, query, categoryTitle = "") {
+  const qRaw = fold(query).trim();
+  const groups = searchGroupsForQuery(query);
+  if (!qRaw || !groups.length) return 1;
+
+  const nameText = fold(product?.name || "");
+  const hay = fold(productSearchText(product, categoryTitle));
+  const tagText = fold(Array.isArray(product?.tags) ? product.tags.join(" ") : String(product?.tags || ""));
+
+  let score = 0;
+  if (nameText.includes(qRaw)) score += 80;
+  if (hay.includes(qRaw)) score += 40;
+
+  for (const group of groups) {
+    const matched = group.filter((needle) => hay.includes(needle));
+    if (!matched.length) return 0;
+    score += 10 + matched.length * 3;
+    if (matched.some((needle) => nameText.includes(needle))) score += 10;
+    if (matched.some((needle) => tagText.includes(needle))) score += 6;
+  }
+
+  return score + Number(product?.popular || 0);
+}
+
+function randomSeed() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function hashString(value = "") {
+  let h = 2166136261;
+  const text = String(value || "");
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function seededRandom(seed = "") {
+  let state = hashString(seed) || 1;
+  return () => {
+    state += 0x6D2B79F5;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffleProducts(list = [], seed = "") {
+  const out = [...list];
+  const rand = seededRandom(seed);
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+const WEAK_RELATED_TAGS = new Set([
+  "basic",
+  "don-gian",
+  "toi-gian",
+  "nhe-nhang",
+  "cute",
+  "de-thuong",
+  "pastel",
+  "trang",
+  "den",
+  "xam",
+  "do",
+  "hong",
+  "xanh",
+  "xanh-la",
+  "xanh-duong",
+  "vang",
+  "vang-kem",
+  "kem",
+  "tim",
+  "cam",
+  "nau",
+  "be",
+].map(tagKey));
+
+function shuffleProductsByMetric(items = [], seed = "", metric = "strongOverlapCount") {
+  const groups = new Map();
+  for (const item of items) {
+    const value = Number(item?.[metric] || 0);
+    if (!groups.has(value)) groups.set(value, []);
+    groups.get(value).push(item.product);
+  }
+  return [...groups.keys()]
+    .sort((a, b) => b - a)
+    .flatMap((value, index) => shuffleProducts(groups.get(value) || [], `${seed}:${metric}:${value}:${index}`));
+}
 
 const primaryImage = firstImg;
 
@@ -93,7 +256,7 @@ const normFb = (u) => {
     return u;
   }
 };
-const HOME_LIMITS = { default: 8 };
+const HOME_LIMITS = { default: 4 };
 const FB_URL_RE = /^(https?:\/\/)?((m|www)\.)?(facebook\.com|fb\.watch)\//i;
 
 function extractFbUrlsFromRows(rows = []) {
@@ -387,6 +550,37 @@ function isSuspiciousUnifiedPayload(unified, source = {}) {
   return unified.products.length === 0;
 }
 
+function pidFromProductPath(pathname = "") {
+  const match = String(pathname || "").match(/^\/p\/([^/?#]+)/);
+  if (!match) return "";
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1] || "";
+  }
+}
+
+function setProductPath(product, mode = "push") {
+  if (typeof window === "undefined" || !product) return;
+  const pid = pidOf(product);
+  if (!pid) return;
+  const u = new URL(window.location.href);
+  u.pathname = `/p/${encodeURIComponent(pid)}`;
+  u.searchParams.delete("pid");
+  window.history[mode === "replace" ? "replaceState" : "pushState"](null, "", u);
+}
+
+function clearProductPath() {
+  if (typeof window === "undefined") return;
+  const u = new URL(window.location.href);
+  const hadProductPath = !!pidFromProductPath(u.pathname);
+  const hadPid = u.searchParams.has("pid");
+  if (!hadProductPath && !hadPid) return;
+  if (hadProductPath) u.pathname = "/";
+  if (hadPid) u.searchParams.delete("pid");
+  window.history.replaceState(null, "", u);
+}
+
 
 
 export default function App() {
@@ -401,13 +595,27 @@ export default function App() {
   // (để khi đóng QuickView không history.back() ra khỏi site)
   const quickInitFromURLRef = useRef(false);
   const didInitQuickURLRef = useRef(false);
+  const lastTrackedSearchRef = useRef("");
+  const lastTrackedUrlProductRef = useRef("");
   const [activeCat, setActiveCat] = useState("all");
   const [homeActive, setHomeActive] = useState("all");
   const [filterState, setFilterState] = useState(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filtersResetKey, setFiltersResetKey] = useState(0);
+  const [relatedShuffleSeed, setRelatedShuffleSeed] = useState(() => randomSeed());
 
   const [user, setUser] = useState(() => readLS(LS.AUTH, null));
+  const [behaviorTick, setBehaviorTick] = useState(0);
+
+  useEffect(() => {
+    const refresh = () => setBehaviorTick((n) => n + 1);
+    window.addEventListener(CUSTOMER_BEHAVIOR_EVENT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(CUSTOMER_BEHAVIOR_EVENT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
 
   // Cập nhật config runtime khi Settings lưu (same-tab + cross-tab).
   useEffect(() => {
@@ -603,6 +811,15 @@ export default function App() {
     }
   }, [q]);
 
+  useEffect(() => {
+    const query = qDeb.trim();
+    if (query.length < 2) return;
+    const key = fold(query);
+    if (!key || key === lastTrackedSearchRef.current) return;
+    lastTrackedSearchRef.current = key;
+    recordCustomerEvent("search_query", { query, source: "typeahead" });
+  }, [qDeb]);
+
   /* admin shortcuts */
   useEffect(() => { if (location.hash === "#admin") setRoute("admin"); }, []);
   useEffect(() => {
@@ -615,18 +832,25 @@ export default function App() {
   useEffect(() => {
     const syncFromURL = () => {
       const url = new URL(location.href);
-      const pid = url.searchParams.get("pid");
-      if (!pid) { setQuick(null); return; }
+      const pid = pidFromProductPath(url.pathname) || url.searchParams.get("pid");
+      if (!pid) { setQuick(null); lastTrackedUrlProductRef.current = ""; return; }
 
       const found = (products || []).find(p =>
         pid === pidOf(p) || String(p.id) === pid // hỗ trợ link cũ chỉ có id
       );
       setQuick(found || null);
+      if (found && lastTrackedUrlProductRef.current !== pid) {
+        lastTrackedUrlProductRef.current = pid;
+        setRelatedShuffleSeed(randomSeed());
+        addRecentProduct(found);
+        recordCustomerEvent("detail_open", { product: found, source: "deep_link" });
+      }
     };
 
     if (!didInitQuickURLRef.current) {
       didInitQuickURLRef.current = true;
-      quickInitFromURLRef.current = !!new URL(location.href).searchParams.get("pid");
+      const initUrl = new URL(location.href);
+      quickInitFromURLRef.current = !!(pidFromProductPath(initUrl.pathname) || initUrl.searchParams.get("pid"));
     }
 
     syncFromURL();                       // lần đầu
@@ -1147,6 +1371,15 @@ export default function App() {
     const qTrim = q.trim();
     if (!qTrim) return base;
 
+    return base
+      .map((p) => ({
+        product: p,
+        score: scoreSearchProduct(p, qTrim, catTitle[p.category] || p.category || ""),
+      }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score || cmpGrid(a.product, b.product))
+      .map((item) => item.product);
+
     // GIỮ DẤU + theo TỪ
     const qTokens = words(qTrim);
     const strict = base.filter((p) => {
@@ -1197,6 +1430,53 @@ export default function App() {
     }
     return arr;
   }, [route, homeSectionCats, filtered]);
+
+  const favoriteIdSet = useMemo(() => new Set(getFavoriteIds()), [behaviorTick]);
+  const favoriteProducts = useMemo(() => getFavoriteProducts(products), [products, behaviorTick]);
+  const recentProducts = useMemo(() => getRecentProducts(products), [products, behaviorTick]);
+  const isFavorite = useCallback((p) => favoriteIdSet.has(pidOf(p)), [favoriteIdSet]);
+
+  const relatedProducts = useMemo(() => {
+    if (!quick) return [];
+    const quickPid = pidOf(quick);
+    const quickTags = new Set((Array.isArray(quick.tags) ? quick.tags : String(quick.tags || "").split(","))
+      .map((t) => tagKey(t))
+      .filter(Boolean));
+    const quickStrongTags = new Set([...quickTags].filter((t) => !WEAK_RELATED_TAGS.has(t)));
+    const seedBase = `${relatedShuffleSeed}:${quickPid}`;
+    const candidates = (products || [])
+      .filter((p) => pidOf(p) !== quickPid)
+      .map((p) => {
+        const sameCategory = !!(p.category && quick.category && p.category === quick.category);
+        const tags = [...new Set((Array.isArray(p.tags) ? p.tags : String(p.tags || "").split(","))
+          .map((t) => tagKey(t))
+          .filter(Boolean))];
+        const strongOverlapCount = tags.filter((t) => quickStrongTags.has(t)).length;
+        const weakOverlapCount = tags.filter((t) => quickTags.has(t) && WEAK_RELATED_TAGS.has(t)).length;
+        return {
+          product: p,
+          sameCategory,
+          strongOverlapCount,
+          weakOverlapCount,
+        };
+      })
+      .filter((item) => item.sameCategory || item.strongOverlapCount > 0);
+
+    const sameCategoryAndStrong = shuffleProductsByMetric(
+      candidates.filter((item) => item.sameCategory && item.strongOverlapCount > 0),
+      `${seedBase}:cat-strong`
+    );
+    const sameCategoryOnly = shuffleProducts(
+      candidates.filter((item) => item.sameCategory && item.strongOverlapCount === 0).map((item) => item.product),
+      `${seedBase}:cat-only`
+    );
+    const strongCrossCategory = shuffleProductsByMetric(
+      candidates.filter((item) => !item.sameCategory && item.strongOverlapCount > 0),
+      `${seedBase}:strong-cross`
+    );
+
+    return [...sameCategoryAndStrong, ...sameCategoryOnly, ...strongCrossCategory];
+  }, [quick, products, relatedShuffleSeed]);
 
   const getOffset = useCallback(() => {
     const el = catbarRef.current; if (!el) return 0;
@@ -1275,8 +1555,9 @@ export default function App() {
   /* -------- Navigation -------- */
   const resetSearchAndFilters = () => { if (q) setQ(""); if (filterState) setFilterState(null); setFiltersOpen(false); setFiltersResetKey((k) => k + 1); };
 
-  function handlePickCategory(key) {
+  function handlePickCategory(key, source = "category_bar") {
     resetSearchAndFilters();
+    recordCustomerEvent("category_click", { category: key, source });
     if (route === "home") {
       if (key === "all") { scrollTop(); setHomeActive("all"); const u = new URL(location.href); u.hash = ""; history.replaceState(null, "", u); }
       else { setActiveCat(key); setRoute(key); const u = new URL(location.href); u.hash = ""; history.replaceState(null, "", u); }
@@ -1308,6 +1589,44 @@ export default function App() {
     const query = qDeb.trim().toLowerCase();
     if (!query) return [];
 
+    const queryFold = fold(query);
+    const includesQuery = (value = "") => fold(value).includes(queryFold);
+    const queryHints = SEARCH_SYNONYM_GROUPS
+      .filter((group) => group.some((item) => fold(item).includes(queryFold) || queryFold.includes(fold(item))))
+      .flatMap((group) => group.slice(0, 3))
+      .map((label) => ({ type: "query", label }))
+      .slice(0, 6);
+
+    const tagSuggestions = [...new Map((products || [])
+      .flatMap((p) => Array.isArray(p.tags) ? p.tags : String(p.tags || "").split(","))
+      .map((tag) => String(tag || "").trim())
+      .filter(Boolean)
+      .filter((tag) => includesQuery(tag))
+      .map((tag) => [tagKey(tag), { type: "tag", label: `#${tag}`, tag }])
+    ).values()].slice(0, 12);
+
+    const catsSmart = homeSectionCats
+      .filter(c => includesQuery(c.title || c.key || ""))
+      .map(c => ({ type: "category", label: c.title || c.key, key: c.key }));
+
+    const prodsSmart = (products || [])
+      .map((p) => ({
+        product: p,
+        score: scoreSearchProduct(p, query, catTitle[p.category] || p.category || ""),
+      }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score || cmpGrid(a.product, b.product))
+      .slice(0, 50)
+      .map(({ product: p }) => ({
+        type: "product",
+        label: p.name,
+        pid: pidOf(p),
+        thumb: primaryImage(p),
+        product: p,
+      }));
+
+    return [...catsSmart, ...queryHints, ...tagSuggestions, ...prodsSmart];
+
     const cats = homeSectionCats
       .filter(c => (c.title || c.key || "").toLowerCase().includes(query))
       .map(c => ({ type: "category", label: c.title || c.key, key: c.key }));
@@ -1327,9 +1646,25 @@ export default function App() {
       }));
 
     return [...cats, ...prods];
-  }, [qDeb, products, homeSectionCats]);
+  }, [qDeb, products, homeSectionCats, catTitle]);
 
   function handleSuggestionSelect(s) {
+    recordCustomerEvent("search_suggestion_click", {
+      query: q,
+      tag: s?.tag || "",
+      category: s?.key || "",
+      product: s?.product,
+      source: s?.type || "suggestion",
+    });
+    if (s?.type === "query") {
+      setQ(String(s.label || "").replace(/^#/, ""));
+      setRoute("search");
+      return;
+    }
+    if (s?.type === "tag" && s.tag) {
+      handlePickTagFromQuickView(s.tag);
+      return;
+    }
     if (s?.type === "category" && s.key) {
       handlePickCategory(s.key);
       return;
@@ -1340,10 +1675,7 @@ export default function App() {
         (s.pid ? (products || []).find(x => String(x.id) === String(s.pid)) : null);
 
       if (p) {
-        setQuick(p);
-        const u = new URL(location.href);
-        u.searchParams.set("pid", pidOf(p));
-        window.history.pushState(null, "", u);
+        openQuick(p, "suggestion");
         if (route !== "search") setRoute("search");
       }
       return;
@@ -1371,14 +1703,19 @@ export default function App() {
     </div>
   );
 
-  const openQuick = useCallback((p) => {
+  const openQuick = useCallback((p, source = "card") => {
+    if (!p) return;
     setQuick(p);
-    const u = new URL(location.href);
-    u.searchParams.set("pid", pidOf(p));
-    window.history.pushState(null, "", u);
+    setRelatedShuffleSeed(randomSeed());
+    addRecentProduct(p);
+    recordCustomerEvent("detail_open", { product: p, source });
+    setProductPath(p);
   }, []);
   const closeQuick = useCallback(() => {
     setQuick(null);
+    lastTrackedUrlProductRef.current = "";
+    clearProductPath();
+    return;
     // Luôn dùng replaceState để xoá pid — history.back() có thể rời trang (incognito, direct link)
     const u = new URL(location.href);
     if (u.searchParams.has("pid")) {
@@ -1387,11 +1724,34 @@ export default function App() {
     }
   }, []);
 
+  const handleFavoriteToggle = useCallback((p) => {
+    const result = toggleFavoriteProduct(p);
+    recordCustomerEvent(result.active ? "favorite_add" : "favorite_remove", { product: p, source: "favorite_button" });
+    setBehaviorTick((n) => n + 1);
+  }, []);
+
+  const handleMessengerClick = useCallback((p, target) => {
+    recordCustomerEvent("messenger_click", {
+      product: p,
+      channel: target?.channel || "messenger",
+      href: target?.href || "",
+      source: "messenger_button",
+    });
+  }, []);
+
+  const handleConsultSubmit = useCallback(async (product, form) => {
+    const result = await submitConsultLead({ product, form });
+    recordCustomerEvent("consult_submit", { product, source: "consult_form", meta: { remoteOk: !!result?.remoteOk } });
+    setBehaviorTick((n) => n + 1);
+    return result;
+  }, []);
+
   /* click tag từ QuickView */
   const handlePickTagFromQuickView = useCallback((tag) => {
     const raw = String(tag || "").trim();
     const slug = tagKey(raw);
     if (!slug) return;
+    recordCustomerEvent("tag_click", { tag: raw, product: quick, source: "quick_view" });
     setQ("");
     setFilterState((st) => {
       const prev = st || {};
@@ -1424,11 +1784,27 @@ export default function App() {
     // Nếu xoá hết tags + không có search query → về trang chủ
     const currentTags = filterState?.tags;
     const willBeEmpty = t === "*" || (currentTags?.size === 1 && currentTags.has(t));
-    if (willBeEmpty && !q?.trim()) {
+    if (route === "search" && willBeEmpty && !q?.trim()) {
       setRoute("home");
       setActiveCat("all");
     }
   };
+
+  const handleSearchSubmit = useCallback((qq) => {
+    const query = String(qq || "").trim();
+    if (query) recordCustomerEvent("search_submit", { query, source: "header" });
+    setRoute(query ? "search" : activeCat !== "all" ? activeCat : "all");
+  }, [activeCat]);
+
+  const openFavoritesPage = useCallback(() => {
+    setQ("");
+    setActiveCat("all");
+    setFilterState(null);
+    setFiltersResetKey((k) => k + 1);
+    setRoute("favorites");
+    recordCustomerEvent("favorites_page_open", { source: "favorite_shelf" });
+    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+  }, []);
 
 
 
@@ -1439,6 +1815,62 @@ export default function App() {
 
   if (showSkeleton) {
     mainContent = <LoadingSkeleton count={8} message="Đang tải sản phẩm…" />;
+  } else if (route === "favorites") {
+    const list = applyFilters(favoriteProducts);
+    const hasSaved = favoriteProducts.length > 0;
+    mainContent = (
+      <section className="max-w-6xl mx-auto p-4">
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900">Mẫu yêu thích</h2>
+            <p className="mt-1 text-sm text-gray-500">Đã lưu {favoriteProducts.length} mẫu trên trình duyệt này.</p>
+          </div>
+          {hasSaved ? (
+            <button
+              type="button"
+              onClick={() => setFiltersOpen(true)}
+              className="h-9 px-4 rounded-full border bg-white text-sm text-gray-700 hover:bg-gray-50"
+            >
+              Lọc mẫu đã lưu
+            </button>
+          ) : null}
+        </div>
+
+        {hasSaved ? (
+          <>
+            <HeaderRow
+              count={list.length}
+              sort={filterState?.sort}
+              onSortChange={(v) => setFilterState((s) => ({ ...(s || {}), sort: v }))}
+            />
+            <ActiveFilters filterState={filterState} clearTag={clearTag} masterTags={tags} />
+            {list.length > 0 ? (
+              <ProductList
+                products={list}
+                onImageClick={openQuick}
+                filter={filterState}
+                isFavorite={isFavorite}
+                onFavoriteToggle={handleFavoriteToggle}
+                onMessengerClick={handleMessengerClick}
+              />
+            ) : (
+              <div className="py-16 text-center text-gray-400 text-sm">Không có mẫu yêu thích khớp bộ lọc.</div>
+            )}
+          </>
+        ) : (
+          <div className="py-16 text-center">
+            <div className="text-base font-medium text-gray-700">Bạn chưa lưu mẫu nào.</div>
+            <button
+              type="button"
+              onClick={() => navigate("home")}
+              className="mt-3 h-9 px-4 rounded-full bg-rose-500 text-white text-sm font-medium hover:bg-rose-600"
+            >
+              Xem sản phẩm
+            </button>
+          </div>
+        )}
+      </section>
+    );
   } else if (customPage) {
     mainContent = <PageViewer page={customPage} />;
   } else if (route === "search") {
@@ -1458,6 +1890,9 @@ export default function App() {
               products={list}
               onImageClick={openQuick}
               filter={filterState}
+              isFavorite={isFavorite}
+              onFavoriteToggle={handleFavoriteToggle}
+              onMessengerClick={handleMessengerClick}
             />
           ) : dataLoading ? (
             <LoadingSkeleton count={4} message="Đang tìm kiếm sản phẩm…" />
@@ -1477,18 +1912,31 @@ export default function App() {
             products={products}
             interval={2000}
             fbUrls={fbUrls}
-            onBannerClick={(p) => {
-              setQuick(p);
-              const u = new URL(location.href);
-              u.searchParams.set("pid", pidOf(p));
-              window.history.pushState(null, "", u);
-            }}
+            onBannerClick={(p) => openQuick(p, "hero")}
           />
         )}
         {showCatBar ? CatBar : null}
 
         {isHome ? (
           <section className="max-w-6xl mx-auto p-4 space-y-10">
+            <ProductShelf
+              title="Mẫu yêu thích"
+              products={favoriteProducts}
+              onProductClick={(p) => openQuick(p, "favorite_shelf")}
+              isFavorite={isFavorite}
+              onFavoriteToggle={handleFavoriteToggle}
+              onMessengerClick={handleMessengerClick}
+              actionLabel={favoriteProducts.length > 4 ? "Xem tất cả" : ""}
+              onAction={favoriteProducts.length > 4 ? openFavoritesPage : undefined}
+            />
+            <ProductShelf
+              title="Đã xem gần đây"
+              products={recentProducts}
+              onProductClick={(p) => openQuick(p, "recent_shelf")}
+              isFavorite={isFavorite}
+              onFavoriteToggle={handleFavoriteToggle}
+              onMessengerClick={handleMessengerClick}
+            />
             {(() => {
               const sections = homeSections.map(({ key, title, items }) => {
                 return (
@@ -1497,7 +1945,13 @@ export default function App() {
                       <h3 className="text-lg font-semibold">{title}</h3>
                       <button className="text-rose-600 hover:underline" onClick={() => { navigate(key); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" })); }}>Xem tất cả</button>
                     </div>
-                    <ProductList products={items} onImageClick={openQuick} />
+                    <ProductList
+                      products={items}
+                      onImageClick={openQuick}
+                      isFavorite={isFavorite}
+                      onFavoriteToggle={handleFavoriteToggle}
+                      onMessengerClick={handleMessengerClick}
+                    />
                   </div>
                 );
               });
@@ -1520,6 +1974,9 @@ export default function App() {
                 products={list}
                 onImageClick={openQuick}
                 filter={filterState}
+                isFavorite={isFavorite}
+                onFavoriteToggle={handleFavoriteToggle}
+                onMessengerClick={handleMessengerClick}
               />
             ) : dataLoading ? (
               <LoadingSkeleton count={8} message="Đang tải sản phẩm…" />
@@ -1546,9 +2003,7 @@ export default function App() {
           hotline={DATA.hotline}
           searchQuery={q}
           onSearchChange={setQ}
-          onSearchSubmit={(qq) =>
-            setRoute(qq.trim() ? "search" : activeCat !== "all" ? activeCat : "all")
-          }
+          onSearchSubmit={handleSearchSubmit}
           suggestions={suggestions}
           onSuggestionSelect={handleSuggestionSelect}
         />
@@ -1569,6 +2024,14 @@ export default function App() {
             product={quick}
             onClose={closeQuick}
             onPickTag={handlePickTagFromQuickView}
+            onPickCategory={(key) => handlePickCategory(key, "quick_view")}
+            categoryLabel={categoryTitleMap[quick?.category] || quick?.category || ""}
+            relatedProducts={relatedProducts}
+            onRelatedPick={(p) => openQuick(p, "related")}
+            isFavorite={isFavorite(quick)}
+            onFavoriteToggle={handleFavoriteToggle}
+            onMessengerClick={handleMessengerClick}
+            onConsultSubmit={handleConsultSubmit}
           />
         </SectionErrorBoundary>
       )}
@@ -1577,7 +2040,7 @@ export default function App() {
         <FilterSheet open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Bộ lọc">
           <Filters
             key={filtersResetKey}
-            products={route === "search" ? listForSearch : baseForRoute}
+            products={route === "favorites" ? favoriteProducts : route === "search" ? listForSearch : baseForRoute}
             tags={tags}
             onChange={setFilterState}
           />

@@ -1,13 +1,16 @@
 // src/components/ProductQuickView.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ProductImage, { getImageUrls } from "./ProductImage.jsx";
 import { cdn, cdnThumb, prefetchImage } from "../utils/img.js";
 import { VND } from "./PriceTag.jsx";
 import { coercePriceBySizeMap } from "../lib/pricing.js";
 import { buildProductChatLink, openChatTarget } from "../utils/chatLink.js";
+import ConsultForm from "./ConsultForm.jsx";
+import { pidOf } from "../utils/pid.js";
 
 const onlyDigits = (s) => String(s || "").replace(/[^\d]/g, "");
+const RELATED_PAGE_SIZE = 8;
 
 function buildSizeRows(product = {}) {
   const rows = [];
@@ -51,16 +54,44 @@ function MessengerIcon() {
   );
 }
 
-function ZaloIcon() {
+function HeartIcon({ filled = false }) {
   return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-      <path d="M4 3h16a1 1 0 0 1 1 1v16.5a.5.5 0 0 1-.8.4L17 19H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm4 5h3l-3 5h3v2H6l3-5H6V8zm7 0h2v7h-2V8zm-3 0h2v7h-2V8z" />
+    <svg viewBox="0 0 24 24" width="16" height="16" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20.8 4.6a5.4 5.4 0 0 0-7.6 0L12 5.8l-1.2-1.2a5.4 5.4 0 0 0-7.6 7.6l1.2 1.2L12 21l7.6-7.6 1.2-1.2a5.4 5.4 0 0 0 0-7.6Z" />
     </svg>
   );
 }
 
-export default function ProductQuickView({ product, onClose, onPickTag }) {
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+export default function ProductQuickView({
+  product,
+  onClose,
+  onPickTag,
+  onPickCategory,
+  categoryLabel = "",
+  relatedProducts = [],
+  onRelatedPick,
+  isFavorite = false,
+  onFavoriteToggle,
+  onMessengerClick,
+  onConsultSubmit,
+}) {
   const [idx, setIdx] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const [showConsult, setShowConsult] = useState(false);
+  const [relatedVisibleCount, setRelatedVisibleCount] = useState(RELATED_PAGE_SIZE);
+  const [relatedScrollHeight, setRelatedScrollHeight] = useState(null);
+  const imageFrameRef = useRef(null);
+  const relatedScrollRef = useRef(null);
+  const relatedSentinelRef = useRef(null);
   const images = useMemo(() => getImageUrls(product), [product]);
   const sizeRows = useMemo(() => buildSizeRows(product), [product]);
   const hasSizeRows = sizeRows.length > 0;
@@ -71,14 +102,49 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
     () => buildProductChatLink({ product, sizeLabel: primarySizeLabel, intent: "ask_price", preferred: "messenger" }),
     [product, primarySizeLabel]
   );
-  const zaloCta = useMemo(
-    () => buildProductChatLink({ product, sizeLabel: primarySizeLabel, intent: "ask_price", preferred: "zalo" }),
-    [product, primarySizeLabel]
+  const shareUrl = messengerCta.productLink || "";
+  const visibleRelatedProducts = useMemo(
+    () => relatedProducts.slice(0, relatedVisibleCount),
+    [relatedProducts, relatedVisibleCount]
   );
+  const hasMoreRelated = relatedVisibleCount < relatedProducts.length;
 
   useEffect(() => {
     setIdx(0);
+    setCopied(false);
+    setShowConsult(false);
+    setRelatedVisibleCount(RELATED_PAGE_SIZE);
+    if (relatedScrollRef.current) relatedScrollRef.current.scrollTop = 0;
   }, [product?.id]);
+
+  useEffect(() => {
+    setRelatedVisibleCount((count) => Math.min(Math.max(count, RELATED_PAGE_SIZE), Math.max(relatedProducts.length, RELATED_PAGE_SIZE)));
+  }, [relatedProducts.length]);
+
+  const syncRelatedHeight = useCallback(() => {
+    const imageFrame = imageFrameRef.current;
+    const relatedScroll = relatedScrollRef.current;
+    if (!imageFrame || !relatedScroll) return;
+    const isDesktop = typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches;
+    if (!isDesktop) {
+      setRelatedScrollHeight(null);
+      return;
+    }
+    const imageRect = imageFrame.getBoundingClientRect();
+    const scrollRect = relatedScroll.getBoundingClientRect();
+    const next = Math.floor(imageRect.bottom - scrollRect.top);
+    setRelatedScrollHeight(next >= 180 ? next : 180);
+  }, []);
+
+  useLayoutEffect(() => {
+    syncRelatedHeight();
+    const id = requestAnimationFrame(syncRelatedHeight);
+    window.addEventListener("resize", syncRelatedHeight);
+    return () => {
+      cancelAnimationFrame(id);
+      window.removeEventListener("resize", syncRelatedHeight);
+    };
+  }, [syncRelatedHeight, product?.id, images.length, relatedProducts.length, showConsult, hasSizeRows, tags.length]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -111,16 +177,50 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
     return () => document.head.removeChild(link);
   }, [idx, images]);
 
+  useEffect(() => {
+    if (!hasMoreRelated) return;
+    const root = relatedScrollRef.current;
+    const target = relatedSentinelRef.current;
+    if (!root || !target) return;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        setRelatedVisibleCount((count) => Math.min(count + RELATED_PAGE_SIZE, relatedProducts.length));
+      },
+      { root, rootMargin: "180px 0px", threshold: 0.01 }
+    );
+    io.observe(target);
+    return () => io.disconnect();
+  }, [hasMoreRelated, relatedProducts.length, relatedVisibleCount]);
+
   if (!product) return null;
+
+  const copyShareLink = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  const submitConsult = async (form) => {
+    const result = await onConsultSubmit?.(product, form);
+    return result;
+  };
 
   return createPortal(
     <div className="fixed inset-0 z-[1000]" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="absolute inset-0 p-3 md:p-6 overflow-auto">
-        <div className="mx-auto w-full max-w-6xl bg-white rounded-2xl shadow-xl overflow-hidden">
-          <div className="flex flex-col lg:flex-row">
-            <div className="lg:w-2/3 p-3 md:p-4">
+      <div className="absolute inset-0 p-3 md:p-6 overflow-auto lg:overflow-hidden">
+        <div className="mx-auto w-full max-w-6xl bg-white rounded-2xl shadow-xl overflow-hidden lg:h-[calc(100dvh-48px)] lg:max-h-[920px]">
+          <div className="flex flex-col lg:flex-row lg:h-full lg:min-h-0">
+            <div className="lg:w-2/3 p-3 md:p-4 lg:min-h-0 lg:flex lg:flex-col">
               <div
+                ref={imageFrameRef}
                 className="relative mx-auto bg-gray-50 rounded-xl overflow-hidden ring-1 ring-gray-200 aspect-[4/5]"
                 style={{ width: "min(100%, calc(78vh * 4 / 5))" }}
               >
@@ -180,18 +280,54 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
               )}
             </div>
 
-            <div className="lg:w-1/3 border-t lg:border-l lg:border-t-0 p-4 md:p-6">
-              <div className="flex items-center gap-3">
-                <h3 className="text-lg md:text-xl font-semibold truncate">{product.name}</h3>
+            <div className="lg:w-1/3 border-t lg:border-l lg:border-t-0 p-4 md:p-6 flex flex-col min-h-0">
+              <div className="flex items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="min-w-0 flex-1 text-lg md:text-xl font-semibold truncate">{product.name}</h3>
+                    <button
+                      type="button"
+                      onClick={() => setShowConsult((v) => !v)}
+                      className="h-9 px-4 rounded-full bg-rose-500 text-white text-sm font-medium hover:bg-rose-600 shrink-0"
+                    >
+                      Tư vấn mẫu này
+                    </button>
+                  </div>
+
+                  {product.category ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
+                      <span>{"Danh m\u1EE5c:"}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onPickCategory?.(product.category);
+                          onClose?.();
+                        }}
+                        className="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-xs font-medium text-rose-700 hover:bg-rose-100"
+                        aria-label={`Xem danh muc ${categoryLabel || product.category}`}
+                        title={`Xem danh muc ${categoryLabel || product.category}`}
+                      >
+                        {categoryLabel || product.category}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
 
                 <button
-                  className="ml-auto h-9 w-9 rounded-full border grid place-items-center hover:bg-gray-50"
+                  className="h-9 w-9 rounded-full border grid place-items-center hover:bg-gray-50 shrink-0"
                   onClick={onClose}
                   aria-label="Dong"
                 >
                   ✕
                 </button>
               </div>
+
+              {showConsult ? (
+                <ConsultForm
+                  product={product}
+                  onSubmit={submitConsult}
+                />
+              ) : null}
 
               <div className="mt-4">
                 <div className="flex items-center justify-between gap-2">
@@ -200,10 +336,36 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
                   </div>
 
                   <div className="flex items-center justify-end gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => onFavoriteToggle?.(product)}
+                      className={
+                        "h-8 w-8 rounded-full border grid place-items-center shadow-sm hover:bg-gray-50 active:scale-95 transition " +
+                        (isFavorite ? "border-rose-200 text-rose-500 bg-rose-50" : "text-gray-500 bg-white")
+                      }
+                      aria-label={isFavorite ? `Bo yeu thich ${product?.name || "mau banh"}` : `Luu yeu thich ${product?.name || "mau banh"}`}
+                      title={isFavorite ? "Bỏ yêu thích" : "Yêu thích"}
+                    >
+                      <HeartIcon filled={isFavorite} />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={copyShareLink}
+                      className="h-8 w-8 rounded-full border bg-white text-gray-600 grid place-items-center shadow-sm hover:bg-gray-50 active:scale-95 transition"
+                      aria-label="Sao chep link san pham"
+                      title={copied ? "Đã copy" : "Copy link"}
+                    >
+                      <CopyIcon />
+                    </button>
+
                     {messengerCta.href && messengerCta.channel === "messenger" && (
                       <a
                         href={messengerCta.href}
-                        onClick={(e) => openChatTarget(messengerCta, e)}
+                        onClick={(e) => {
+                          onMessengerClick?.(product, messengerCta);
+                          openChatTarget(messengerCta, e);
+                        }}
                         target="_blank"
                         rel="noopener"
                         className="h-8 w-8 rounded-full bg-[#006AFF] text-white grid place-items-center shadow-sm hover:opacity-90 active:scale-95 transition"
@@ -214,21 +376,12 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
                       </a>
                     )}
 
-                    {zaloCta.href && zaloCta.channel === "zalo" && (
-                      <a
-                        href={zaloCta.href}
-                        onClick={(e) => openChatTarget(zaloCta, e)}
-                        target="_blank"
-                        rel="noopener"
-                        className="h-8 w-8 rounded-full bg-[#0068FF] text-white grid place-items-center shadow-sm hover:opacity-90 active:scale-95 transition"
-                        aria-label={`Nhan Zalo ve ${product?.name || "mau banh"}`}
-                        title="Nhan Zalo"
-                      >
-                        <ZaloIcon />
-                      </a>
-                    )}
                   </div>
                 </div>
+
+                {copied ? (
+                  <div className="mt-2 text-xs text-emerald-700">Đã copy link sản phẩm.</div>
+                ) : null}
 
                 {hasSizeRows && (
                   <div className="qv-sizes mt-2">
@@ -247,16 +400,10 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
                 )}
               </div>
 
-              {product.category ? (
-                <div className="mt-4 text-sm text-gray-600">
-                  {"Danh m\u1EE5c:"} <span className="font-medium text-gray-800">{product.category}</span>
-                </div>
-              ) : null}
-
               {!!tags.length && (
                 <div className="mt-4">
-                  <div className="text-sm font-medium mb-2">Tags</div>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="text-sm font-medium">Tag:</div>
                     {tags.map((t, i) => (
                       <button
                         type="button"
@@ -281,6 +428,61 @@ export default function ProductQuickView({ product, onClose, onPickTag }) {
                   <p className="text-sm text-gray-700 whitespace-pre-wrap">{product.desc || product.description}</p>
                 </div>
               ) : null}
+
+              {!!relatedProducts.length && (
+                <div className="mt-6 lg:flex-1 lg:min-h-0 lg:flex lg:flex-col">
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <div className="text-sm font-medium">Mẫu liên quan</div>
+                    <div className="text-[11px] text-gray-400">
+                      {visibleRelatedProducts.length}/{relatedProducts.length}
+                    </div>
+                  </div>
+                  <div
+                    ref={relatedScrollRef}
+                    className="max-h-[min(46vh,520px)] lg:max-h-none overflow-y-auto overscroll-contain pr-1"
+                    style={{
+                      scrollbarGutter: "stable",
+                      height: relatedScrollHeight ? `${relatedScrollHeight}px` : undefined,
+                    }}
+                  >
+                    <div className="grid grid-cols-2 gap-2">
+                      {visibleRelatedProducts.map((item) => {
+                        const img = getImageUrls(item)[0] || "";
+                        return (
+                          <button
+                            key={pidOf(item)}
+                            type="button"
+                            onClick={() => onRelatedPick?.(item)}
+                            className="group rounded-xl border bg-white overflow-hidden text-left hover:border-rose-200"
+                          >
+                            <div className="relative aspect-square bg-gray-50">
+                              {img ? (
+                                <img
+                                  src={cdnThumb(img, 180, 180, 65)}
+                                  alt=""
+                                  className="absolute inset-0 w-full h-full object-cover"
+                                  loading="lazy"
+                                  decoding="async"
+                                />
+                              ) : null}
+                            </div>
+                            <div className="px-2 py-1.5 text-xs font-medium text-gray-700 truncate group-hover:text-rose-600">
+                              {item.name}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {hasMoreRelated ? (
+                      <div ref={relatedSentinelRef} className="flex justify-center py-3">
+                        <div className="h-4 w-4 rounded-full border-2 border-rose-300 border-t-transparent animate-spin" />
+                      </div>
+                    ) : (
+                      <div ref={relatedSentinelRef} className="h-2" />
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

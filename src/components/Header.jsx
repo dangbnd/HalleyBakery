@@ -268,14 +268,14 @@ export default function Header({
                     />
                   ) : (
                     <div className="h-8 w-8 rounded bg-gray-100 grid place-items-center text-xs text-gray-500 flex-none">
-                      {s.type === "category" ? "DM" : "SP"}
+                      {s.type === "category" ? "DM" : s.type === "tag" ? "#" : s.type === "query" ? "TK" : "SP"}
                     </div>
                   )}
 
                   <div className="min-w-0">
                     <div className="text-sm truncate">{s.label}</div>
                     <div className="text-[11px] text-gray-500">
-                      {s.type === "category" ? "danh mục" : "sản phẩm"}
+                      {s.type === "category" ? "danh mục" : s.type === "tag" ? "tag" : s.type === "query" ? "từ khóa" : "sản phẩm"}
                     </div>
                   </div>
                 </button>

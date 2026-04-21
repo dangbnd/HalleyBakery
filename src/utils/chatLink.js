@@ -1,5 +1,6 @@
 ﻿import { DATA } from "../data.js";
 import { getConfig } from "./config.js";
+import { pidOf } from "./pid.js";
 
 const FALLBACK_ZALO = String(DATA?.footer?.socials?.zalo || "").trim();
 const FALLBACK_FACEBOOK = String(DATA?.footer?.socials?.facebook || "").trim();
@@ -40,8 +41,7 @@ const extractImageId = (rawUrl = "") => {
   return String(m?.[1] || "").trim();
 };
 
-const productPidForLink = (product = {}) =>
-  String(product.uid || product.code || product.slug || product.id || "").trim();
+const productPidForLink = (product = {}) => String(pidOf(product) || "").trim();
 
 const resolvePublicOrigin = () => {
   const envUrl = toHttpUrl(ENV_PUBLIC_SITE_URL);
@@ -49,17 +49,17 @@ const resolvePublicOrigin = () => {
 
   if (typeof window !== "undefined" && window.location?.origin) {
     const origin = String(window.location.origin || "");
-    if (!/(localhost|127\.0\.0\.1|0\.0\.0\.0)/i.test(origin)) return origin.replace(/\/+$/, "");
+    if (origin) return origin.replace(/\/+$/, "");
   }
 
   return "https://halleybakery.io.vn";
 };
 
-const buildProductLink = (product = {}) => {
+export const buildProductLink = (product = {}) => {
   const pid = productPidForLink(product);
   if (!pid) return "";
   const origin = resolvePublicOrigin();
-  return `${origin}/?pid=${encodeURIComponent(pid)}`;
+  return `${origin}/p/${encodeURIComponent(pid)}`;
 };
 
 const withParams = (baseUrl, params = {}) => {
@@ -146,15 +146,19 @@ function buildMetaPayload({ code, sizeLabel, intent, imageId }) {
   return `HB_ORDER|code=${cleanToken(code)}|size=${sizeToken}|intent=${cleanToken(intent)}|img=${imgToken}|source=web`;
 }
 
-function buildHumanMessage({ productName, intent, productLink }) {
+function buildHumanMessage({ productName, intent, productLink, sizeLabel, extraLines = [] }) {
   const intro =
     intent === "order_same"
       ? "Xin ch\u00E0o, m\u00ECnh mu\u1ED1n \u0111\u1EB7t l\u00E0m y h\u00ECnh m\u1EABu n\u00E0y."
+      : intent === "consult"
+        ? "Xin ch\u00E0o, m\u00ECnh mu\u1ED1n \u0111\u01B0\u1EE3c t\u01B0 v\u1EA5n m\u1EABu b\u00E1nh n\u00E0y."
       : "Xin ch\u00E0o, m\u00ECnh mu\u1ED1n h\u1ECFi th\u00F4ng tin gi\u00E1 m\u1EABu n\u00E0y.";
 
   const lines = [
     intro,
     `T\u00EAn m\u1EABu: ${String(productName || "").trim() || "Ch\u01B0a r\u00F5"}`,
+    sizeLabel ? `Size: ${sizeLabel}` : "",
+    ...extraLines.map((line) => String(line || "").trim()).filter(Boolean),
     productLink ? `\u1EA2nh m\u1EABu: ${productLink}` : "",
   ].filter(Boolean);
 
@@ -207,6 +211,7 @@ export function buildProductChatLink({
   sizeLabel,
   intent = "ask_price",
   preferred = "messenger",
+  extraLines = [],
 }) {
   const { messenger, zalo } = resolveChatTargets();
   const channel =
@@ -242,6 +247,7 @@ export function buildProductChatLink({
     sizeLabel: normalizedSize,
     intent,
     productLink,
+    extraLines,
   });
 
   if (channel === "zalo") {
