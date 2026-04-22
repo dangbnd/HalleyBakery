@@ -735,91 +735,90 @@ export default function AITagsPanel({ canEdit = true }) {
                     </Section>
                 )}
 
-                {/* ── Row 2: danh mục + filter chips (full width stretch) ── */}
+                {/* ── Filter/action bar ── */}
                 {(() => {
                     const base = catFilter ? products.filter(p => p.category === catFilter) : products;
                     const missingCount = base.filter(p => !s(p.tags).trim()).length;
+                    const pendingCount = paged.filter((p) => firstImg(p) && !Object.prototype.hasOwnProperty.call(suggestions, p.id)).length;
+                    const suggestedCount = paged.filter((p) => Object.prototype.hasOwnProperty.call(suggestions, p.id)).length;
                     return (
-                        <div className="flex items-center gap-1">
-                            {/* Danh mục dropdown - flex-1 */}
-                            <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
-                                className={`flex-1 min-w-0 h-7 px-2 pr-5 text-[10px] font-medium rounded-full border appearance-none bg-no-repeat cursor-pointer focus:outline-none ${catFilter ? "bg-purple-50 text-purple-700 border-purple-200" : "border-gray-200 text-gray-500 bg-white"}`}
-                                style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")", backgroundPosition: "right 5px center" }}>
-                                <option value="">📁 Danh mục</option>
-                                {categories.map(c => <option key={c} value={c}>{catLabel(c)}</option>)}
-                            </select>
-                            {/* Thiếu tag - flex-1 */}
-                            <button onClick={() => setFilter("missing")}
-                                className={`flex-1 h-7 px-1 text-[10px] font-medium rounded-full border transition text-center ${filter === "missing" ? "bg-orange-50 text-orange-700 border-orange-200" : "border-gray-200 text-gray-500 hover:bg-gray-50"}`}>
-                                Thiếu&nbsp;({missingCount})
-                            </button>
-                            {/* Tất cả - flex-1 */}
-                            <button onClick={() => setFilter("all")}
-                                className={`flex-1 h-7 px-1 text-[10px] font-medium rounded-full border transition text-center ${filter === "all" ? "bg-blue-50 text-blue-700 border-blue-200" : "border-gray-200 text-gray-500 hover:bg-gray-50"}`}>
-                                Tất&nbsp;cả&nbsp;({base.length})
-                            </button>
+                        <div className="rounded-xl border border-slate-800 bg-slate-950/75 px-2.5 py-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
+                                    className="h-8 min-w-[160px] max-w-[240px] rounded-lg border border-slate-800 bg-slate-900 px-2.5 text-xs font-medium text-slate-200 outline-none transition focus:border-blue-500/60">
+                                    <option value="">Danh mục</option>
+                                    {categories.map(c => <option key={c} value={c}>{catLabel(c)}</option>)}
+                                </select>
+
+                                <div className="inline-flex h-8 overflow-hidden rounded-lg border border-slate-800 bg-slate-900">
+                                    <button onClick={() => setFilter("missing")}
+                                        className={`px-3 text-xs font-semibold transition ${filter === "missing" ? "bg-amber-500/18 text-amber-200" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}>
+                                        Thiếu {missingCount}
+                                    </button>
+                                    <button onClick={() => setFilter("all")}
+                                        className={`border-l border-slate-800 px-3 text-xs font-semibold transition ${filter === "all" ? "bg-blue-500/18 text-blue-200" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}>
+                                        Tất cả {base.length}
+                                    </button>
+                                </div>
+
+                                <div className="flex items-center gap-1.5">
+                                    {batchRunning ? (
+                                        <div className="flex items-center gap-1.5">
+                                            <svg className="h-3.5 w-3.5 animate-spin text-violet-300" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                            <span className="text-[10px] text-violet-300">{batchProgress.done}/{batchProgress.total}</span>
+                                            <button onClick={stopBatch} className="h-7 rounded-lg border border-red-500/30 px-2 text-[10px] font-medium text-red-300 hover:bg-red-500/10">Dừng</button>
+                                        </div>
+                                    ) : (
+                                        <button onClick={runBatch} disabled={!canEdit || applyAllRunning || !pendingCount}
+                                            className="h-8 rounded-lg bg-violet-600 px-3 text-xs font-semibold text-white transition hover:bg-violet-500 disabled:opacity-40">
+                                            AI {pendingCount}
+                                        </button>
+                                    )}
+                                    {applyAllRunning ? (
+                                        <div className="flex items-center gap-1.5">
+                                            <svg className="h-3.5 w-3.5 animate-spin text-emerald-300" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                            <span className="text-[10px] text-emerald-300">{applyAllProgress.done}/{applyAllProgress.total}</span>
+                                            <button onClick={stopApplyAll} className="h-7 rounded-lg border border-red-500/30 px-2 text-[10px] font-medium text-red-300 hover:bg-red-500/10">Dừng</button>
+                                        </div>
+                                    ) : (
+                                        <button onClick={runApplyAll}
+                                            disabled={!canEdit || !hasAdminToken || batchRunning || !suggestedCount}
+                                            className="h-8 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-40">
+                                            Áp dụng {suggestedCount}
+                                        </button>
+                                    )}
+                                </div>
+
+                                {totalPages > 1 && (() => {
+                                    const pages = [];
+                                    const add = n => { if (n >= 1 && n <= totalPages && !pages.includes(n)) pages.push(n); };
+                                    add(1); add(safePage - 1); add(safePage); add(safePage + 1); add(totalPages);
+                                    pages.sort((a, b) => a - b);
+                                    return (
+                                        <div className="ml-auto flex items-center gap-1">
+                                            <PgBtn onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1}>
+                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m15 18-6-6 6-6"/></svg>
+                                            </PgBtn>
+                                            {pages.map((pg, idx) => {
+                                                const prev = pages[idx - 1];
+                                                return (
+                                                    <span key={pg} className="flex items-center gap-1">
+                                                        {prev && pg - prev > 1 && <span className="text-[10px] text-slate-600">…</span>}
+                                                        <button onClick={() => setPage(pg)}
+                                                            className={`h-7 min-w-[26px] rounded-lg border px-1.5 text-[11px] transition ${pg === safePage ? "border-violet-500 bg-violet-600 text-white font-bold" : "border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}>{pg}</button>
+                                                    </span>
+                                                );
+                                            })}
+                                            <PgBtn onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}>
+                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m9 18 6-6-6-6"/></svg>
+                                            </PgBtn>
+                                        </div>
+                                    );
+                                })()}
+                            </div>
                         </div>
                     );
                 })()}
-
-                {/* ── Row 3: auto-tag left · pagination right ── */}
-                <div className="flex items-center justify-between">
-                    {/* Auto-tag button - left */}
-                    <div className="flex items-center gap-1.5">
-                    {batchRunning ? (
-                        <div className="flex items-center gap-1.5">
-                            <svg className="w-3.5 h-3.5 animate-spin text-purple-600" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                            <span className="text-[10px] text-purple-600">{batchProgress.done}/{batchProgress.total}</span>
-                            <button onClick={stopBatch} className="h-6 px-2 text-[10px] font-medium text-red-600 border border-red-200 rounded-full hover:bg-red-50 transition">Dừng</button>
-                        </div>
-                    ) : (
-                        <button onClick={runBatch} disabled={!canEdit || applyAllRunning || !paged.some((p) => firstImg(p) && !Object.prototype.hasOwnProperty.call(suggestions, p.id))}
-                            className="h-7 px-3 text-[10px] font-semibold text-white bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 rounded-full shadow-sm transition disabled:opacity-40">
-                            ✨ ({paged.filter((p) => firstImg(p) && !Object.prototype.hasOwnProperty.call(suggestions, p.id)).length})
-                        </button>
-                    )}
-                    {applyAllRunning ? (
-                        <div className="flex items-center gap-1.5">
-                            <svg className="w-3.5 h-3.5 animate-spin text-emerald-600" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                            <span className="text-[10px] text-emerald-600">{applyAllProgress.done}/{applyAllProgress.total}</span>
-                            <button onClick={stopApplyAll} className="h-6 px-2 text-[10px] font-medium text-red-600 border border-red-200 rounded-full hover:bg-red-50 transition">Dung</button>
-                        </div>
-                    ) : (
-                        <button onClick={runApplyAll}
-                            disabled={!canEdit || !hasAdminToken || batchRunning || !paged.some((p) => Object.prototype.hasOwnProperty.call(suggestions, p.id))}
-                            className="h-7 px-3 text-[10px] font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-full shadow-sm transition disabled:opacity-40">
-                            Ap dung tat ca ({paged.filter((p) => Object.prototype.hasOwnProperty.call(suggestions, p.id)).length})
-                        </button>
-                    )}
-                    </div>
-                    {/* Pagination - right */}
-                    {totalPages > 1 && (() => {
-                        const pages = [];
-                        const add = n => { if (n >= 1 && n <= totalPages && !pages.includes(n)) pages.push(n); };
-                        add(1); add(safePage - 1); add(safePage); add(safePage + 1); add(totalPages);
-                        pages.sort((a, b) => a - b);
-                        return (
-                            <div className="flex items-center gap-0.5">
-                                <PgBtn onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1}>
-                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m15 18-6-6 6-6"/></svg>
-                                </PgBtn>
-                                {pages.map((pg, idx) => {
-                                    const prev = pages[idx - 1];
-                                    return (
-                                        <span key={pg} className="flex items-center gap-0.5">
-                                            {prev && pg - prev > 1 && <span className="text-[10px] text-gray-300">…</span>}
-                                            <button onClick={() => setPage(pg)}
-                                                className={`min-w-[22px] h-6 px-0.5 text-[10px] rounded-md border transition ${pg === safePage ? "bg-purple-600 text-white border-purple-600 font-bold" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>{pg}</button>
-                                        </span>
-                                    );
-                                })}
-                                <PgBtn onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}>
-                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m9 18 6-6-6-6"/></svg>
-                                </PgBtn>
-                            </div>
-                        );
-                    })()}
-                </div>
             </div>
 
             {/* Mobile Card View - tag-focused */}
