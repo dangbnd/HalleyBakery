@@ -4,6 +4,7 @@ import { LS, audit, readLS } from "../../../utils.js";
 import { buildUnifiedApiUrl } from "../../../services/sheets.multi.js";
 import { DEFAULT_SUPER_ADMIN_EMAIL } from "../shared/superAdmin.js";
 import { saveRuntimeConfigToSheet } from "../shared/sheets.js";
+import { Badge, Button, Callout, MetricItem, MetricStrip, PageHeader, Section } from "../ui/primitives.jsx";
 
 const MANUAL_FIELDS = [
   {
@@ -390,34 +391,38 @@ function unifiedParamsFromValues(values = {}) {
 
 function ConfigSection({ icon, title, badge, children }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 bg-gray-50/80">
-        <span className="text-sm">{icon}</span>
-        <span className="text-xs font-semibold text-gray-700 flex-1">{title}</span>
-        {badge}
-      </div>
-      <div className="p-3 space-y-2">{children}</div>
-    </div>
+    <Section
+      compact
+      title={
+        <span className="inline-flex items-center gap-2">
+          <span>{icon}</span>
+          <span>{title}</span>
+        </span>
+      }
+      actions={badge}
+    >
+      <div className="space-y-2">{children}</div>
+    </Section>
   );
 }
 
 function Field({ field, value, onChange, disabled = false }) {
   const id = `cfg-${field.key}`;
   const isDisabled = field.readOnly || disabled;
-  const inputClassName = `w-full border rounded-lg px-3 h-9 text-xs
-                   focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400
+  const inputClassName = `w-full rounded-xl border px-3 h-10 text-xs
+                   focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/60
                    outline-none transition-all duration-200
                     ${isDisabled
-            ? "bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed"
-            : "bg-white border-gray-200 hover:border-gray-300 text-gray-800"
+            ? "bg-slate-900 border-slate-800 text-slate-500 cursor-not-allowed"
+            : "bg-slate-950 border-slate-800 hover:border-slate-700 text-slate-100"
           }`;
   return (
     <div className={field.span || ""}>
-      <label htmlFor={id} className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-600 mb-1">
-        <span className="text-xs">{field.icon}</span>
+      <label htmlFor={id} className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-slate-300">
+        <span className="text-xs opacity-80">{field.icon}</span>
         {field.label}
       </label>
-      {field.desc && <p className="text-[10px] text-gray-400 mb-1 leading-4">{field.desc}</p>}
+      {field.desc && <p className="mb-1 text-[10px] leading-4 text-slate-500">{field.desc}</p>}
       {field.type === "textarea" ? (
         <textarea
           id={id}
@@ -439,6 +444,35 @@ function Field({ field, value, onChange, disabled = false }) {
           disabled={isDisabled}
         />
       )}
+    </div>
+  );
+}
+
+function StatusCell({ ok, label }) {
+  return <Badge variant={ok ? "success" : "warning"}>{label}</Badge>;
+}
+
+function DenseInfoTable({ rows }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-slate-800 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+            <th className="py-2.5 pr-3">Mục</th>
+            <th className="py-2.5 pr-3">Trạng thái</th>
+            <th className="py-2.5">Chi tiết</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key} className="border-b border-slate-800/80 last:border-b-0">
+              <td className="py-3 pr-3 font-medium text-slate-200">{row.name}</td>
+              <td className="py-3 pr-3">{row.status}</td>
+              <td className="py-3 text-slate-400">{row.detail}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -514,6 +548,61 @@ export default function SettingsPanel({ canEdit = true }) {
   const lastSyncAt = String(values[KEYS.LAST_SYNC_AT] || "").trim();
   const unifiedApiUrl = buildUnifiedApiUrl({ ...unifiedParamsFromValues(values), forceLocal: true });
   const canSyncNow = !!unifiedApiUrl;
+  const manualReady = MANUAL_FIELDS.filter((field) => field.readOnly || String(values[field.key] || "").trim()).length;
+  const autoReady = AUTO_FIELDS.filter((field) => String(values[field.key] || "").trim()).length;
+  const criticalReady = [KEYS.SHEET_ID, KEYS.GS_WEBAPP_URL, KEYS.GS_WEBAPP_TOKEN, KEYS.DRIVE_FOLDER_ID].filter((key) =>
+    String(values[key] || "").trim()
+  ).length;
+  const systemRows = [
+    {
+      key: "sheet",
+      name: "Google Sheet",
+      status: <StatusCell ok={!!sheetValue} label={sheetValue ? "Đã nối" : "Thiếu"} />,
+      detail: sheetValue ? "Nguồn dữ liệu chính đã khai báo." : "Thiếu Sheet ID nên nhiều panel phải fallback.",
+    },
+    {
+      key: "drive",
+      name: "Google Drive",
+      status: <StatusCell ok={!!driveValue} label={driveValue ? "Sẵn sàng" : "Thiếu"} />,
+      detail: driveValue ? "Đã có thư mục gốc cho media." : "Chưa có thư mục gốc cho upload.",
+    },
+    {
+      key: "webapp",
+      name: "GS WebApp",
+      status: <StatusCell ok={!!values[KEYS.GS_WEBAPP_URL] && !!values[KEYS.GS_WEBAPP_TOKEN]} label={values[KEYS.GS_WEBAPP_URL] && values[KEYS.GS_WEBAPP_TOKEN] ? "Đủ URL + token" : "Thiếu cấu hình"} />,
+      detail:
+        values[KEYS.GS_WEBAPP_URL] && values[KEYS.GS_WEBAPP_TOKEN]
+          ? "Có thể ghi dữ liệu admin lên Sheet."
+          : "Chưa đủ điều kiện cho thao tác ghi từ admin.",
+    },
+    {
+      key: "oauth",
+      name: "Google OAuth",
+      status: <StatusCell ok={!!values[KEYS.GOOGLE_OAUTH_CLIENT_ID]} label={values[KEYS.GOOGLE_OAUTH_CLIENT_ID] ? "Đã có client ID" : "Thiếu"} />,
+      detail: values[KEYS.GOOGLE_OAUTH_CLIENT_ID] ? "Drive direct upload có thể hoạt động." : "Thiếu client ID cho direct upload.",
+    },
+  ];
+
+  const runtimeRows = [
+    {
+      key: "gemini",
+      name: "Gemini keys",
+      status: <StatusCell ok={getGeminiKeys().length > 0} label={getGeminiKeys().length > 0 ? `${getGeminiKeys().length} key` : "Chưa có"} />,
+      detail: getGeminiKeys().length > 0 ? "Nguồn AI đã được khai báo trong tab AI Tags." : "Chưa có key AI hoạt động.",
+    },
+    {
+      key: "tracking",
+      name: "Visitor tracking",
+      status: <StatusCell ok={String(values[KEYS.ENABLE_VISITOR_TRACKING] || "").toLowerCase() === "true"} label={String(values[KEYS.ENABLE_VISITOR_TRACKING] || "").toLowerCase() === "true" ? "Đang bật" : "Đang tắt"} />,
+      detail: "Điều khiển ghi log local từ frontend.",
+    },
+    {
+      key: "sync",
+      name: "Sync gần nhất",
+      status: <StatusCell ok={!!lastSyncAt} label={lastSyncAt ? "Đã sync" : "Chưa sync"} />,
+      detail: lastSyncAt ? formatSyncTime(lastSyncAt) : "Chưa có mốc đồng bộ.",
+    },
+  ];
 
   useEffect(() => {
     if (!canEdit) { setAutoBusy(false); setAutoMsg(""); return; }
@@ -679,30 +768,69 @@ export default function SettingsPanel({ canEdit = true }) {
   };
 
   return (
-    <div className="flex flex-col" style={{ height: "calc(100vh - 7rem)" }}>
-      {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto space-y-2.5 pb-3">
-        {!canEdit && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            Tài khoản này chỉ có quyền xem cấu hình. Các thao tác lưu, reset và sync đã bị khóa.
+    <div className="space-y-4">
+      <PageHeader
+        title="Cấu hình"
+        description="Nguồn dữ liệu, tích hợp và runtime của toàn bộ admin."
+        compact
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" size="sm" onClick={syncNow} disabled={!canEdit || !canSyncNow || syncBusy || saveBusy}>
+              {syncBusy ? "Đang sync..." : "Đồng bộ ngay"}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={save} disabled={!canEdit || !hasChanges || saveBusy}>
+              {saveBusy ? "Đang lưu..." : "Lưu"}
+            </Button>
+            <Button size="sm" onClick={reload} disabled={!canEdit || !hasChanges || saveBusy}>
+              Lưu & tải lại
+            </Button>
           </div>
-        )}
+        }
+        chips={
+          <>
+            <Badge variant={hasChanges ? "warning" : "success"}>{hasChanges ? "Có thay đổi chưa lưu" : "Đã đồng bộ local"}</Badge>
+            <Badge variant={lastSyncAt ? "info" : "warning"}>{lastSyncAt ? `Sync: ${formatSyncTime(lastSyncAt)}` : "Chưa có mốc sync"}</Badge>
+          </>
+        }
+      />
 
-        <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 flex flex-wrap items-center gap-2 text-[11px]">
-          <span className={`px-2 py-0.5 rounded-full border ${hasChanges ? "border-amber-300 bg-amber-50 text-amber-700" : "border-emerald-300 bg-emerald-50 text-emerald-700"}`}>
-            {hasChanges ? "Chưa lưu thay đổi" : "Cấu hình đã đồng bộ"}
-          </span>
-          {lastSyncAt && (
-            <span className="text-gray-500">Sync gần nhất: {formatSyncTime(lastSyncAt)}</span>
-          )}
-          {!lastSyncAt && (
-            <span className="text-gray-500">Chưa có mốc sync.</span>
-          )}
-        </div>
+      <MetricStrip columnsClassName="xl:grid-cols-4">
+        <MetricItem label="Nhập tay" value={`${manualReady}/${MANUAL_FIELDS.length}`} meta="Các trường vận hành chính" tone="blue" />
+        <MetricItem label="Tự nhận" value={`${autoReady}/${AUTO_FIELDS.length}`} meta="Tab/GID và API đã suy ra" tone="violet" />
+        <MetricItem label="Điểm trọng yếu" value={`${criticalReady}/4`} meta="Sheet, Drive, WebApp URL, token" tone="amber" />
+        <MetricItem label="Quyền chỉnh sửa" value={canEdit ? "Bật" : "Chỉ xem"} meta="Ghi cấu hình và sync" tone="emerald" />
+      </MetricStrip>
+
+      {!canEdit && (
+        <Callout tone="warning" title="Chế độ chỉ xem">
+          Tài khoản này chỉ có quyền xem cấu hình. Các thao tác lưu, reset và sync đã bị khóa.
+        </Callout>
+      )}
+
+      {syncMsg ? (
+        <Callout tone={String(syncMsg).startsWith("⚠") ? "warning" : "success"} title="Trạng thái đồng bộ">
+          {syncMsg}
+        </Callout>
+      ) : null}
+
+      <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+        <Section title="Ma trận tích hợp" compact>
+          <DenseInfoTable rows={systemRows} />
+        </Section>
+
+        <Section title="Runtime & chẩn đoán" compact>
+          <DenseInfoTable rows={runtimeRows} />
+        </Section>
+      </div>
+
+      <div className="space-y-4">
+        {!canEdit && (
+          <div className="hidden" />
+        )}
 
         {/* ── Section 1: Manual ── */}
         <ConfigSection icon="📝" title="Thông tin nhập tay">
-          <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2 text-[11px] text-blue-700 leading-4">
+          <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-[11px] leading-4 text-blue-300">
             <b>HB_ADMIN_TOKEN</b> là tên key ở Apps Script (<span className="font-medium">Project settings &gt; Script properties</span>). Ô
             <b> GS WebApp Admin Token</b> cần dán <b>value</b> của key đó.
           </div>
@@ -720,18 +848,17 @@ export default function SettingsPanel({ canEdit = true }) {
           badge={
             <div className="flex items-center gap-1.5">
               {autoBusy
-                ? <span className="flex items-center gap-1 text-[10px] text-indigo-500 font-medium"><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Đang nhận...</span>
-                : lastSyncAt ? <span className="text-[9px] text-gray-500">{formatSyncTime(lastSyncAt).slice(0,16)}</span> : null
+                ? <span className="flex items-center gap-1 text-[10px] font-medium text-blue-300"><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Đang nhận...</span>
+                : lastSyncAt ? <span className="text-[10px] text-slate-500">{formatSyncTime(lastSyncAt).slice(0,16)}</span> : null
               }
-              <button onClick={syncNow} disabled={!canEdit || !canSyncNow || syncBusy || saveBusy}
-                className="h-6 px-2 text-[10px] font-medium rounded-md border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-40 transition">
-                {syncBusy ? "Syncing..." : "⚡ Sync"}
-              </button>
+              <Button variant="ghost" size="sm" onClick={syncNow} disabled={!canEdit || !canSyncNow || syncBusy || saveBusy}>
+                {syncBusy ? "Syncing..." : "Sync"}
+              </Button>
             </div>
           }
         >
           {(autoMsg || syncMsg) && (
-            <div className={`text-[10px] rounded-lg px-3 py-1.5 ${syncMsg ? (String(syncMsg).startsWith("⚠") ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-600") : "bg-blue-50 text-blue-600"}`}>
+            <div className={`rounded-xl px-3 py-1.5 text-[10px] ${syncMsg ? (String(syncMsg).startsWith("⚠") ? "bg-amber-500/10 text-amber-300" : "bg-emerald-500/10 text-emerald-300") : "bg-blue-500/10 text-blue-300"}`}>
               {syncMsg || autoMsg}
             </div>
           )}
@@ -741,15 +868,13 @@ export default function SettingsPanel({ canEdit = true }) {
             ))}
           </div>
         </ConfigSection>
-      </div>
 
-      {/* ── Sticky action bar ── */}
-      <div className="shrink-0 pt-2">
-        <div className="bg-white/90 backdrop-blur-md border border-gray-200 rounded-xl px-3 py-2 flex flex-wrap items-center gap-2 shadow-sm">
-          <span className="text-[11px] text-gray-500 mr-auto">
-            {hasChanges ? "Có thay đổi chưa lưu" : "Không có thay đổi"}
-          </span>
-          <button onClick={async () => {
+        <Section title="Hành động hệ thống" compact>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="mr-auto text-[11px] text-slate-500">
+              {hasChanges ? "Có thay đổi chưa lưu" : "Không có thay đổi đang chờ"}
+            </span>
+            <Button variant="ghost" size="sm" onClick={async () => {
               if (!confirm("Tải cấu hình mới nhất từ Sheet? Mọi thay đổi chưa lưu sẽ bị ghi đè.")) return;
               setSaveBusy(true);
               try {
@@ -761,33 +886,21 @@ export default function SettingsPanel({ canEdit = true }) {
               } finally {
                 setSaveBusy(false);
               }
-            }} 
-            disabled={!canEdit || saveBusy}
-            className="h-8 px-3 border border-indigo-200 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-medium hover:bg-indigo-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shrink-0">
-            {saveBusy ? "Đang tải..." : "Tải từ Sheet"}
-          </button>
-          <button onClick={save} disabled={!canEdit || !hasChanges || saveBusy}
-            className="h-8 px-3 border border-gray-200 rounded-lg text-xs font-medium text-gray-600
-                       hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200">
-            {saveBusy ? "Đang lưu..." : "Lưu"}
-          </button>
-          <button onClick={reload} disabled={!canEdit || !hasChanges || saveBusy}
-            className="h-8 px-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg text-xs font-semibold
-                       hover:from-indigo-700 hover:to-purple-700 disabled:opacity-40 disabled:cursor-not-allowed
-                       shadow-sm transition-all duration-200">
-            {saveBusy ? "Đang lưu..." : "Lưu & Tải lại"}
-          </button>
-          <button onClick={reset} disabled={!canEdit || saveBusy}
-            className="h-8 px-3 text-red-500 border border-red-100 rounded-lg text-xs font-medium
-                       hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shrink-0">
-            Reset
-          </button>
-          {saved && (
-            <span className="text-[10px] font-medium bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full shrink-0">
-              ✓ Đã lưu
-            </span>
-          )}
-        </div>
+            }} disabled={!canEdit || saveBusy}>
+              {saveBusy ? "Đang tải..." : "Tải từ Sheet"}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={save} disabled={!canEdit || !hasChanges || saveBusy}>
+              {saveBusy ? "Đang lưu..." : "Lưu"}
+            </Button>
+            <Button size="sm" onClick={reload} disabled={!canEdit || !hasChanges || saveBusy}>
+              {saveBusy ? "Đang lưu..." : "Lưu & tải lại"}
+            </Button>
+            <Button variant="danger" size="sm" onClick={reset} disabled={!canEdit || saveBusy}>
+              Reset
+            </Button>
+            {saved && <Badge variant="success">Đã lưu</Badge>}
+          </div>
+        </Section>
       </div>
     </div>
   );

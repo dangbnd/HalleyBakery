@@ -1,31 +1,75 @@
-// src/components/Admin/panels/ProductsPanel.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { LS, audit, parseBooleanLike, readLS, writeLS } from "../../../utils.js";
-import {
-  listConfiguredProductSheet,
-  updateConfiguredProductRow,
-  deleteConfiguredProductRow,
-} from "../shared/sheets.js";
 import { getConfig } from "../../../utils/config.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
+import {
+  deleteConfiguredProductRow,
+  listConfiguredProductSheet,
+  updateConfiguredProductRow,
+} from "../shared/sheets.js";
+import { Table } from "../ui/table.jsx";
+import { Modal } from "../ui/modal.jsx";
+import {
+  Badge,
+  Button,
+  Callout,
+  Empty,
+  Field,
+  Input,
+  MetricItem,
+  MetricStrip,
+  PageHeader,
+  Section,
+  Select,
+  Textarea,
+  Toolbar,
+} from "../ui/primitives.jsx";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 40;
+const SORT_OPTIONS = [
+  { value: "name", label: "Tên sản phẩm" },
+  { value: "category", label: "Danh mục" },
+  { value: "status", label: "Trạng thái" },
+];
 
-/* helpers */
-const safe = (x) => (Array.isArray(x) ? x.filter((v) => v && typeof v === "object") : []);
-const s = (v) => (v == null ? "" : String(v));
-const parseMaybeJSON = (v) => {
-  if (typeof v !== "string") return v;
-  const t = v.trim();
-  if (!t) return t;
-  if ((t.startsWith("{") && t.endsWith("}")) || (t.startsWith("[") && t.endsWith("]"))) {
-    try { return JSON.parse(t); } catch { return v; }
+const safe = (value) => (Array.isArray(value) ? value.filter((item) => item && typeof item === "object") : []);
+const s = (value) => (value == null ? "" : String(value));
+
+const parseMaybeJSON = (value) => {
+  if (typeof value !== "string") return value;
+  const text = value.trim();
+  if (!text) return text;
+  if ((text.startsWith("{") && text.endsWith("}")) || (text.startsWith("[") && text.endsWith("]"))) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return value;
+    }
   }
-  return v;
+  return value;
 };
-const normImages = (v) => Array.isArray(v) ? v : s(v).split(/[\n,|]\s*/).filter(Boolean);
-const firstImg = (p) => Array.isArray(p?.images) ? (p.images[0] || "") : s(p?.image) || "";
-const tagsArr = (v) => Array.isArray(v) ? v.map(t => String(t).trim()).filter(Boolean) : s(v).split(",").map(t => t.trim()).filter(Boolean);
+
+const normImages = (value) => {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  return s(value)
+    .split(/[\n,|]\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
+const firstImage = (product) => {
+  if (Array.isArray(product?.images)) return product.images[0] || "";
+  return s(product?.image);
+};
+
+const tagsArr = (value) => {
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+  return s(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
 const stableRowId = (row) => {
   const explicit = s(row.id ?? row.ID ?? row.key ?? row.sku ?? row.code).trim();
   if (explicit) return explicit;
@@ -33,16 +77,19 @@ const stableRowId = (row) => {
   const category = s(row.category ?? row.danh_muc ?? row.type).trim().toLowerCase();
   const image = Array.isArray(row.images)
     ? s(row.images[0]).trim().toLowerCase()
-    : s(row.images ?? row.image).split(/[\n,|]\s*/)[0]?.trim().toLowerCase();
+    : s(row.images ?? row.image)
+        .split(/[\n,|]\s*/)[0]
+        ?.trim()
+        .toLowerCase();
   return [name, category, image].filter(Boolean).join("|");
 };
 
 const fixThumbUrl = (url, size = 96) => {
   if (!url) return "";
-  const u = String(url);
-  const m = u.match(/[?&]id=([a-zA-Z0-9_-]+)/) || u.match(/\/d\/([a-zA-Z0-9_-]+)/);
-  if (m) return `https://lh3.googleusercontent.com/d/${m[1]}=w${size}`;
-  return u.replace(/sz=w\d+/, `sz=w${size}`);
+  const input = String(url);
+  const match = input.match(/[?&]id=([a-zA-Z0-9_-]+)/) || input.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (match) return `https://lh3.googleusercontent.com/d/${match[1]}=w${size}`;
+  return input.replace(/sz=w\d+/, `sz=w${size}`);
 };
 
 const normProduct = (row) => ({
@@ -56,397 +103,585 @@ const normProduct = (row) => ({
   createdAt: row.createdAt || new Date().toISOString(),
 });
 
-/* ====================== MAIN ====================== */
+function statusVariant(active) {
+  return active ? "success" : "warning";
+}
+
+function statusLabel(active) {
+  return active ? "Đang hiển thị" : "Đang ẩn";
+}
+
+function ProductForm({ draft, setDraft, categories, catLabel }) {
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Tên sản phẩm">
+          <Input
+            value={draft.name}
+            onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
+            placeholder="Baby (1)"
+          />
+        </Field>
+        <Field label="Danh mục">
+          <Select value={draft.category} onChange={(e) => setDraft((prev) => ({ ...prev, category: e.target.value }))}>
+            <option value="">Chọn danh mục</option>
+            {categories.map((item) => (
+              <option key={item} value={item}>
+                {catLabel(item)}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+
+      <Field label="Tags" hint="Ngăn cách bằng dấu phẩy">
+        <Input
+          value={Array.isArray(draft.tags) ? draft.tags.join(", ") : draft.tags || ""}
+          onChange={(e) => setDraft((prev) => ({ ...prev, tags: e.target.value }))}
+          placeholder="hoa baby, xanh dương, tối giản"
+        />
+      </Field>
+
+      <Field label="Mô tả">
+        <Textarea
+          rows={4}
+          value={draft.description || ""}
+          onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))}
+          placeholder="Mô tả ngắn để admin rà soát nhanh."
+        />
+      </Field>
+
+      <Field label="Danh sách ảnh" hint="Mỗi dòng hoặc mỗi dấu phẩy là một ảnh">
+        <Textarea
+          rows={5}
+          value={Array.isArray(draft.images) ? draft.images.join("\n") : draft.images || ""}
+          onChange={(e) => setDraft((prev) => ({ ...prev, images: e.target.value }))}
+          placeholder="https://..."
+        />
+      </Field>
+
+      <label className="inline-flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-sm text-slate-200">
+        <input
+          type="checkbox"
+          checked={!!draft.active}
+          onChange={(e) => setDraft((prev) => ({ ...prev, active: e.target.checked }))}
+          className="h-4 w-4 accent-blue-500"
+        />
+        <span>Sản phẩm này đang hiển thị ngoài frontend</span>
+      </label>
+    </div>
+  );
+}
+
 export default function ProductsPanel({ canEdit = true, canDelete = true }) {
   const [products, setProducts] = useState(() => safe(readLS("products") || []));
   const [loading, setLoading] = useState(true);
-  const [q, setQ] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [source, setSource] = useState("local");
+  const [notice, setNotice] = useState(null);
+  const [query, setQuery] = useState("");
   const [catFilter, setCatFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState("asc");
   const [page, setPage] = useState(1);
-  const verP = useRef("");
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const a = await listConfiguredProductSheet().catch(() => null);
-        if (a?.ok) {
-          verP.current = a.version;
-          const rows = safe(a.rows).map(normProduct).filter((p) => !!s(p.name).trim());
-          if (alive) { setProducts(rows); writeLS("products", rows); }
-        } else {
-          const sheetId = getConfig("sheet_id");
-          const gid = getConfig("sheet_gid_products");
-          if (sheetId) {
-            const rows = await fetchTabAsObjects({ sheetId, gid: (gid || "0") });
-            const pRows = rows.map(normProduct).filter((p) => !!s(p.name).trim());
-            if (alive) { setProducts(pRows); writeLS("products", pRows); }
-          }
-        }
-      } catch { }
-      if (alive) setLoading(false);
-    })();
-    return () => { alive = false; };
-  }, []);
-
+  const [catMap, setCatMap] = useState(new Map());
   const [editId, setEditId] = useState(null);
   const [draft, setDraft] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [previewImage, setPreviewImage] = useState(null);
 
-    /* Category label map from Menu sheet */
-  const [catMap, setCatMap] = useState(new Map());
+  const currentUser = readLS(LS.AUTH, {});
+  const catLabel = (slug) => catMap.get(slug) || slug || "Chưa phân loại";
+
+  const applyLocal = (rows) => {
+    setProducts(rows);
+    writeLS("products", rows);
+  };
+
+  const refreshProducts = async () => {
+    setLoading(true);
+    try {
+      const result = await listConfiguredProductSheet().catch(() => null);
+      if (result?.ok) {
+        const rows = safe(result.rows).map(normProduct).filter((item) => !!s(item.name).trim());
+        applyLocal(rows);
+        setSource("sheet");
+        setNotice(null);
+      } else {
+        const sheetId = getConfig("sheet_id");
+        const gid = getConfig("sheet_gid_products");
+        if (!sheetId) throw new Error("Chưa cấu hình Google Sheet cho tab sản phẩm.");
+        const rows = await fetchTabAsObjects({ sheetId, gid: gid || "0" });
+        const normalized = rows.map(normProduct).filter((item) => !!s(item.name).trim());
+        applyLocal(normalized);
+        setSource("sheet-fallback");
+        setNotice({
+          tone: "warning",
+          title: "Đang dùng đường đọc fallback",
+          text: "Panel sản phẩm đang đọc trực tiếp tab products vì chưa resolve được cấu hình tối ưu hơn.",
+        });
+      }
+    } catch (error) {
+      setSource("local");
+      setNotice({
+        tone: "warning",
+        title: "Không tải được catalog mới nhất",
+        text: error?.message || "Panel đang dùng dữ liệu cục bộ gần nhất trên trình duyệt này.",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshProducts();
+  }, []);
+
   useEffect(() => {
     const sheetId = getConfig("sheet_id");
     const gid = getConfig("sheet_gid_menu") || getConfig("sheet_gid_categories");
     if (!sheetId || !gid) return;
     let alive = true;
+
     (async () => {
       try {
         const rows = await fetchTabAsObjects({ sheetId, gid });
-        const m = new Map();
-        for (const r of rows) {
-          const slug = s(r.slug ?? r.code ?? r.value ?? r.path ?? r.key).trim();
-          const name = s(r.name ?? r.title ?? r.label ?? r.ten ?? r["t�n"]).trim();
-          if (slug && name) m.set(slug, name);
-        }
-        if (alive) setCatMap(m);
-      } catch { }
+        const map = new Map();
+        rows.forEach((row) => {
+          const slug = s(row.slug ?? row.code ?? row.value ?? row.path ?? row.key).trim();
+          const name = s(row.name ?? row.title ?? row.label ?? row.ten).trim();
+          if (slug && name) map.set(slug, name);
+        });
+        if (alive) setCatMap(map);
+      } catch {
+        // giữ im lặng, fallback về slug
+      }
     })();
-    return () => { alive = false; };
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  const catLabel = (slug) => catMap.get(slug) || slug;
-
   const categories = useMemo(() => {
-    const set = new Set();
-    products.forEach(p => { if (p.category) set.add(p.category); });
-    return [...set].sort();
-  }, [products]);
+    return [...new Set(products.map((item) => item.category).filter(Boolean))].sort((a, b) =>
+      catLabel(a).localeCompare(catLabel(b), "vi", { sensitivity: "base" })
+    );
+  }, [products, catMap]);
 
-  /* Sort */
-  const [sortKey, setSortKey] = useState("name");
-  const [sortDir, setSortDir] = useState("asc");
-  const [imgModal, setImgModal] = useState(null);
-  const toggleSort = (key) => {
-    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortKey(key); setSortDir("asc"); }
-  };
-
-  const view = useMemo(() => {
-    let arr = products.filter((p) => {
-      const hay = (p.name + " " + p.category + " " + s(p.tags) + " " + p.id).toLowerCase();
-      if (q && !hay.includes(q.toLowerCase())) return false;
-      if (catFilter && p.category !== catFilter) return false;
+  const filteredProducts = useMemo(() => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    const list = products.filter((item) => {
+      const hay = `${item.name} ${item.category} ${item.tags} ${item.id}`.toLowerCase();
+      if (query && !hay.includes(query.toLowerCase())) return false;
+      if (catFilter && item.category !== catFilter) return false;
+      if (statusFilter === "active" && item.active === false) return false;
+      if (statusFilter === "hidden" && item.active !== false) return false;
       return true;
     });
-    const dir = sortDir === "asc" ? 1 : -1;
-    arr = [...arr].sort((a, b) => {
-      let va, vb;
-      if (sortKey === "name") { va = a.name; vb = b.name; }
-      else if (sortKey === "category") { va = catLabel(a.category); vb = catLabel(b.category); }
-      else if (sortKey === "status") { va = a.active ? 0 : 1; vb = b.active ? 0 : 1; return (va - vb) * dir; }
-      else if (sortKey === "id") { va = parseInt(a.id) || 0; vb = parseInt(b.id) || 0; return (va - vb) * dir; }
-      else { va = s(a[sortKey]); vb = s(b[sortKey]); }
-      return String(va).localeCompare(String(vb), "vi", { numeric: true }) * dir;
+
+    return list.sort((a, b) => {
+      if (sortKey === "status") return ((a.active ? 0 : 1) - (b.active ? 0 : 1)) * dir;
+      const left = sortKey === "category" ? catLabel(a.category) : s(a[sortKey]);
+      const right = sortKey === "category" ? catLabel(b.category) : s(b[sortKey]);
+      return String(left).localeCompare(String(right), "vi", { numeric: true }) * dir;
     });
-    return arr;
-  }, [products, q, catFilter, sortKey, sortDir, catMap]);
+  }, [products, query, catFilter, statusFilter, sortKey, sortDir, catMap]);
 
-  useEffect(() => { setPage(1); }, [q, catFilter, sortKey, sortDir]);
+  useEffect(() => {
+    setPage(1);
+  }, [query, catFilter, statusFilter, sortKey, sortDir]);
 
-  const totalPages = Math.max(1, Math.ceil(view.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
-  const paged = view.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const pagedProducts = filteredProducts.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  function startEdit(row) {
+  const stats = useMemo(() => {
+    const active = products.filter((item) => item.active !== false).length;
+    const hidden = products.filter((item) => item.active === false).length;
+    const tagged = products.filter((item) => tagsArr(item.tags).length > 0).length;
+    return {
+      total: products.length,
+      active,
+      hidden,
+      categories: categories.length,
+      tagged,
+    };
+  }, [products, categories.length]);
+
+  const openEdit = (product) => {
     if (!canEdit) return;
-    setEditId(row.id);
-    setDraft({ ...row, images: [...(row.images || [])] });
-  }
-  function cancelEdit() { setEditId(null); setDraft(null); }
-  async function saveEdit() {
-    if (!canEdit) return;
-    const clean = normProduct({ ...draft, images: normImages(draft.image || draft.images) });
-    try {
-      await updateConfiguredProductRow(clean);
-      const next = products.map((p) => (p.id === editId ? clean : p));
-      setProducts(next);
-      writeLS("products", next);
-      audit("product.update", { id: clean.id, name: clean.name, user: (readLS(LS.AUTH) || {}).username || "?" });
-      cancelEdit();
-    } catch (e) {
-      console.error("update Products failed:", e);
-      alert("Không cập nhật được sản phẩm.");
-    }
-  }
-  async function removeRow(row) {
-    if (!canDelete) return;
-    try {
-      await deleteConfiguredProductRow(row.id);
-      const next = products.filter((p) => p.id !== row.id);
-      setProducts(next);
-      writeLS("products", next);
-      audit("product.delete", { id: row.id, name: row.name, user: (readLS(LS.AUTH) || {}).username || "?" });
-    } catch (e) {
-      console.error("delete Products failed:", e);
-      alert("Không xoá được sản phẩm.");
-    }
-  }
-
-  /* Pagination */
-  const Pagination = () => {
-    if (totalPages <= 1) return null;
-    // Smart pages: show first, last, current±1, with ellipsis
-    const pages = [];
-    const addPage = (n) => { if (n >= 1 && n <= totalPages && !pages.includes(n)) pages.push(n); };
-    addPage(1);
-    addPage(safePage - 1);
-    addPage(safePage);
-    addPage(safePage + 1);
-    addPage(totalPages);
-    pages.sort((a, b) => a - b);
-
-    return (
-      <div className="flex items-center justify-between py-1.5 px-0.5">
-        <span className="text-[11px] text-gray-400">
-          {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, view.length)} / {view.length}
-        </span>
-        <div className="flex items-center gap-0.5">
-          <PgBtn onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m15 18-6-6 6-6"/></svg>
-          </PgBtn>
-          {pages.map((p, idx) => {
-            const prev = pages[idx - 1];
-            const showDot = prev && p - prev > 1;
-            return (
-              <span key={p} className="flex items-center gap-0.5">
-                {showDot && <span className="px-1 text-xs text-gray-300">…</span>}
-                <button onClick={() => setPage(p)}
-                  className={`min-w-[28px] h-7 px-1.5 text-xs rounded-md border transition ${
-                    p === safePage ? 'bg-blue-600 text-white border-blue-600 font-semibold' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                  }`}>{p}</button>
-              </span>
-            );
-          })}
-          <PgBtn onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m9 18 6-6-6-6"/></svg>
-          </PgBtn>
-        </div>
-      </div>
-    );
+    setEditId(product.id);
+    setDraft({ ...product, images: [...(product.images || [])] });
   };
-  const PgBtn = ({ children, ...p }) => <button {...p} className="w-7 h-7 flex items-center justify-center text-xs rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 transition">{children}</button>;
 
-  /* Sort header */
-  const SortTh = ({ label, field, className = "" }) => (
-    <th className={`text-left py-2.5 px-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider bg-gray-50 cursor-pointer select-none hover:text-gray-700 transition ${className}`}
-      onClick={() => toggleSort(field)}>
-      <span className="inline-flex items-center gap-1">
-        {label}
-        <span className="text-[9px] opacity-40">{sortKey === field ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}</span>
-      </span>
-    </th>
-  );
+  const saveEdit = async () => {
+    if (!draft || !canEdit) return;
 
-  return (<>
-    <div className="flex flex-col" style={{ height: 'calc(100vh - 7rem)' }}>
-      {/* Header */}
-      <div className="shrink-0 space-y-2 mb-2">
-        {(!canEdit || !canDelete) && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-            {canEdit
-              ? "Tài khoản này chỉ được sửa sản phẩm, không được xoá."
-              : "Tài khoản này chỉ có quyền xem sản phẩm."}
-          </div>
-        )}
-        <div className="flex flex-wrap items-center gap-2">
-          <select className={`h-8 px-2 pr-6 text-[11px] font-medium rounded-full border appearance-none bg-no-repeat transition cursor-pointer focus:outline-none flex-1 min-w-0 sm:flex-none ${catFilter ? "bg-purple-50 text-purple-700 border-purple-200" : "border-gray-200 text-gray-500 hover:bg-gray-50 bg-white"}`}
-            style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")", backgroundPosition: "right 6px center" }}
-            value={catFilter} onChange={(e) => setCatFilter(e.target.value)}>
-            <option value="">📁 Tất cả ({products.length})</option>
-            {categories.map((c) => (
-              <option key={c} value={c}>{catLabel(c)} ({products.filter(p => p.category === c).length})</option>
-            ))}
-          </select>
-          <div className="relative flex-1 min-w-0">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
-            <input className="h-8 pl-8 pr-3 w-full border border-gray-200 rounded-lg bg-white text-xs placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition"
-              placeholder="Tìm theo tên, ID, tag..." value={q} onChange={(e) => setQ(e.target.value)} />
-          </div>
-        </div>
-        <Pagination />
-      </div>
+    const clean = normProduct({
+      ...draft,
+      images: normImages(draft.images),
+    });
 
-      {/* Mobile Card View - compact */}
-      <div className="flex-1 overflow-y-auto md:hidden space-y-1.5">
-        {paged.map((row) => (
-          <div key={row.id} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-            {editId === row.id ? (
-              /* Edit mode */
-              <div className="p-3 space-y-1.5">
-                <input className="w-full px-2 py-1 border rounded-lg text-sm" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-                <select className="w-full px-2 py-1 border rounded-lg text-xs" value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })}>
-                  <option value="">— Danh mục —</option>{categories.map((c) => <option key={c} value={c}>{catLabel(c)}</option>)}
-                </select>
-                <input className="w-full px-2 py-1 border rounded-lg text-xs" value={Array.isArray(draft.tags) ? draft.tags.join(", ") : (draft.tags || "")} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder="tag1, tag2" />
-                <div className="flex items-center justify-between">
-                  <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer"><input type="checkbox" checked={!!draft.active} onChange={(e) => setDraft({ ...draft, active: e.target.checked })} /> Active</label>
-                  <div className="flex gap-1.5">
-                    <button onClick={saveEdit} className="px-3 py-1 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition">✓ Lưu</button>
-                    <button onClick={cancelEdit} className="px-3 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded-lg transition">Huỷ</button>
+    try {
+      setSaving(true);
+      await updateConfiguredProductRow(clean);
+      applyLocal(products.map((item) => (item.id === editId ? clean : item)));
+      audit("product.update", {
+        id: clean.id,
+        name: clean.name,
+        user: currentUser?.username || "?",
+      });
+      setNotice({ tone: "success", title: "Đã lưu sản phẩm", text: `${clean.name} đã được cập nhật.` });
+      setEditId(null);
+      setDraft(null);
+      await refreshProducts();
+    } catch (error) {
+      setNotice({
+        tone: "danger",
+        title: "Không cập nhật được sản phẩm",
+        text: error?.message || "Lỗi khi đồng bộ sản phẩm.",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget || !canDelete) return;
+    try {
+      setSaving(true);
+      await deleteConfiguredProductRow(deleteTarget.id);
+      applyLocal(products.filter((item) => item.id !== deleteTarget.id));
+      audit("product.delete", {
+        id: deleteTarget.id,
+        name: deleteTarget.name,
+        user: currentUser?.username || "?",
+      });
+      setNotice({ tone: "success", title: "Đã xóa sản phẩm", text: `${deleteTarget.name} đã được gỡ khỏi catalog.` });
+      setDeleteTarget(null);
+      await refreshProducts();
+    } catch (error) {
+      setNotice({
+        tone: "danger",
+        title: "Không xóa được sản phẩm",
+        text: error?.message || "Lỗi khi xóa sản phẩm.",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const pageLabel = `${filteredProducts.length ? (safePage - 1) * PAGE_SIZE + 1 : 0}-${Math.min(
+    safePage * PAGE_SIZE,
+    filteredProducts.length
+  )} / ${filteredProducts.length}`;
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        title="Sản phẩm"
+        description="Bảng catalog."
+        compact
+        actions={
+          <Button variant="ghost" loading={loading} onClick={refreshProducts}>
+            Làm mới
+          </Button>
+        }
+        chips={
+          <>
+            <Badge variant="info">
+              Nguồn dữ liệu: {source === "sheet" ? "Sheet chính" : source === "sheet-fallback" ? "Sheet fallback" : "Bản cục bộ"}
+            </Badge>
+            {!canEdit || !canDelete ? (
+              <Badge variant="warning">{!canEdit ? "Chỉ có quyền xem" : "Không có quyền xóa"}</Badge>
+            ) : null}
+          </>
+        }
+      />
+
+      {notice ? (
+        <Callout tone={notice.tone} title={notice.title}>
+          {notice.text}
+        </Callout>
+      ) : null}
+
+      <MetricStrip columnsClassName="xl:grid-cols-5">
+        <MetricItem label="Tổng sản phẩm" value={stats.total} meta="Toàn bộ catalog đang đọc được" tone="blue" />
+        <MetricItem label="Đang hiển thị" value={stats.active} meta="Frontend đang dùng" tone="emerald" />
+        <MetricItem label="Đang ẩn" value={stats.hidden} meta="Cần rà soát trước khi bật lại" tone="amber" />
+        <MetricItem label="Danh mục" value={stats.categories} meta="Số nhóm đang có hàng" tone="violet" />
+        <MetricItem label="Có tags" value={stats.tagged} meta="Đủ dữ liệu cho search và related" tone="rose" />
+      </MetricStrip>
+
+      <Section
+        title="Bảng catalog"
+        compact
+      >
+        <div className="space-y-3">
+          <Toolbar className="grid grid-cols-1 gap-2 xl:grid-cols-[minmax(320px,1.6fr)_repeat(4,minmax(0,1fr))]">
+            <Input
+              className="min-w-0"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Tìm tên, ID, tag..."
+            />
+            <Select value={catFilter} onChange={(e) => setCatFilter(e.target.value)} className="min-w-0">
+              <option value="">Tất cả danh mục</option>
+              {categories.map((item) => (
+                <option key={item} value={item}>
+                  {catLabel(item)}
+                </option>
+              ))}
+            </Select>
+            <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="min-w-0">
+              <option value="all">Mọi trạng thái</option>
+              <option value="active">Đang hiển thị</option>
+              <option value="hidden">Đang ẩn</option>
+            </Select>
+            <Select value={sortKey} onChange={(e) => setSortKey(e.target.value)} className="min-w-0">
+              {SORT_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  Theo {item.label.toLowerCase()}
+                </option>
+              ))}
+            </Select>
+            <Select value={sortDir} onChange={(e) => setSortDir(e.target.value)} className="min-w-0">
+              <option value="asc">Tăng dần</option>
+              <option value="desc">Giảm dần</option>
+            </Select>
+          </Toolbar>
+
+        {!filteredProducts.length ? (
+          <Empty
+            icon="📦"
+            title="Không có sản phẩm khớp bộ lọc"
+            hint="Hãy nới lỏng bộ lọc hoặc đồng bộ lại catalog từ Google Sheet."
+          />
+        ) : (
+          <div className="space-y-3">
+            <div className="hidden lg:block">
+              <Table
+                columns={[
+                  { title: "Ảnh", dataIndex: "thumb", thClass: "w-[84px]" },
+                  { title: "Sản phẩm", dataIndex: "name", thClass: "w-[28%]" },
+                  { title: "Danh mục", dataIndex: "category", thClass: "w-[16%]" },
+                  { title: "Trạng thái", dataIndex: "status", thClass: "w-[14%]" },
+                  { title: "Tags", dataIndex: "tags" },
+                  { title: "", dataIndex: "actions", thClass: "w-[14%]" },
+                ]}
+                data={pagedProducts}
+                rowRender={(row) => (
+                  <tr key={row.id} className="align-top transition hover:bg-slate-900/55">
+                    <td className="px-3 py-3">
+                      <button
+                        type="button"
+                        className="h-14 w-14 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900"
+                        onClick={() => {
+                          const raw = firstImage(row);
+                          if (raw) setPreviewImage(raw);
+                        }}
+                      >
+                        {firstImage(row) ? (
+                          <img src={fixThumbUrl(firstImage(row), 112)} alt="" className="h-full w-full object-cover" loading="lazy" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-xs text-slate-600">Không có</div>
+                        )}
+                      </button>
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="text-sm font-semibold text-white">{row.name}</div>
+                      <div className="mt-1 text-xs text-slate-500">ID: {row.id}</div>
+                      {row.description ? <div className="mt-2 line-clamp-2 text-sm text-slate-400">{row.description}</div> : null}
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="text-sm text-slate-300">{catLabel(row.category)}</div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <Badge variant={statusVariant(row.active)}>{statusLabel(row.active)}</Badge>
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="flex flex-wrap gap-2">
+                        {tagsArr(row.tags).length ? (
+                          tagsArr(row.tags).slice(0, 6).map((tag) => (
+                            <Badge key={`${row.id}-${tag}`} variant="neutral">
+                              {tag}
+                            </Badge>
+                          ))
+                        ) : (
+                          <span className="text-sm text-slate-500">Chưa có tag</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="flex justify-end gap-2">
+                        {canEdit ? (
+                          <Button variant="ghost" size="sm" onClick={() => openEdit(row)}>
+                            Sửa
+                          </Button>
+                        ) : null}
+                        {canDelete ? (
+                          <Button variant="danger" size="sm" onClick={() => setDeleteTarget(row)}>
+                            Xóa
+                          </Button>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              />
+            </div>
+
+            <div className="grid gap-3 lg:hidden">
+              {pagedProducts.map((row) => (
+                <div key={row.id} className="rounded-3xl border border-slate-800 bg-slate-950/70 p-4">
+                  <div className="flex items-start gap-3">
+                    <button
+                      type="button"
+                      className="h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900"
+                      onClick={() => {
+                        const raw = firstImage(row);
+                        if (raw) setPreviewImage(raw);
+                      }}
+                    >
+                      {firstImage(row) ? (
+                        <img src={fixThumbUrl(firstImage(row), 112)} alt="" className="h-full w-full object-cover" loading="lazy" />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-xs text-slate-600">Không có</div>
+                      )}
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold text-white">{row.name}</div>
+                      <div className="mt-1 text-xs text-slate-500">{catLabel(row.category)}</div>
+                      <div className="mt-2">
+                        <Badge variant={statusVariant(row.active)}>{statusLabel(row.active)}</Badge>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            ) : (
-              /* View mode - compact single row */
-              <div className="flex items-center gap-2 px-2.5 py-2">
-                <div className="h-10 w-10 rounded-lg bg-gray-100 overflow-hidden border border-gray-100 shrink-0 cursor-pointer" onClick={() => { const raw = firstImg(row); raw && setImgModal(raw); }}>
-                  {firstImg(row) ? <img src={fixThumbUrl(firstImg(row), 80)} alt="" className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : null}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-medium text-gray-900 text-xs truncate">{row.name}</span>
-                    <span className={`shrink-0 inline-flex items-center text-[9px] font-medium px-1 py-px rounded-full ${
-                      row.active ? "bg-emerald-50 text-emerald-600" : "bg-gray-100 text-gray-400"
-                    }`}>{row.active ? "●" : "○"}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                    <span className="text-[10px] text-gray-400 truncate max-w-[100px]">{catLabel(row.category) || "—"}</span>
-                    {tagsArr(row.tags).length > 0 && (
-                      <span className="text-[9px] text-gray-400">· {tagsArr(row.tags).slice(0,2).join(", ")}{tagsArr(row.tags).length > 2 ? ` +${tagsArr(row.tags).length - 2}` : ""}</span>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {tagsArr(row.tags).length ? (
+                      tagsArr(row.tags).slice(0, 5).map((tag) => (
+                        <Badge key={`${row.id}-${tag}`} variant="neutral">
+                          {tag}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className="text-sm text-slate-500">Chưa có tag</span>
                     )}
                   </div>
-                </div>
-                 {(canEdit || canDelete) && (
-                   <div className="flex gap-0.5 shrink-0">
-                     {canEdit && (
-                       <button onClick={() => startEdit(row)} className="p-1.5 text-gray-300 hover:text-blue-500 rounded-lg transition">
-                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
-                       </button>
-                     )}
-                     {canDelete && (
-                       <button onClick={() => removeRow(row)} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg transition">
-                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
-                       </button>
-                     )}
-                   </div>
-                 )}
-              </div>
-            )}
-          </div>
-        ))}
-        {view.length === 0 && <div className="py-12 text-center text-gray-400 text-sm">Chưa có sản phẩm.</div>}
-      </div>
 
-      {/* Desktop Table View */}
-      <div className="hidden md:block flex-1 overflow-y-auto bg-white rounded-xl border border-gray-200/80 shadow-sm">
-        <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
-          <colgroup>
-            <col style={{ width: "3.5rem" }} />
-            <col />
-            <col style={{ width: "9rem" }} />
-            <col style={{ width: "5.5rem" }} />
-            <col />
-            <col />
-            <col style={{ width: "3.5rem" }} />
-          </colgroup>
-          <thead className="sticky top-0 z-10">
-            <tr className="border-b border-gray-200">
-              <th className="py-2.5 px-3 bg-gray-50" />
-              <SortTh label="Tên SP" field="name" />
-              <SortTh label="Danh mục" field="category" />
-              <SortTh label="TT" field="status" />
-              <th className="text-left py-2.5 px-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Mô tả</th>
-              <th className="text-left py-2.5 px-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Tags</th>
-              <th className="py-2.5 px-3 bg-gray-50" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50">
-            {paged.map((row) => (
-              <tr key={row.id} className="group hover:bg-blue-50/40 transition-colors">
-                <td className="py-2 px-3">
-                  <div className="h-10 w-10 rounded-lg bg-gray-100 overflow-hidden border border-gray-200/60 cursor-pointer hover:ring-2 hover:ring-blue-400 transition"
-                    onClick={() => { const raw = firstImg(row); raw && setImgModal(raw); }}>
-                    {firstImg(row) ? <img src={fixThumbUrl(firstImg(row), 96)} alt="" className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : null}
+                  <div className="mt-4 flex justify-end gap-2">
+                    {canEdit ? (
+                      <Button variant="ghost" size="sm" onClick={() => openEdit(row)}>
+                        Sửa
+                      </Button>
+                    ) : null}
+                    {canDelete ? (
+                      <Button variant="danger" size="sm" onClick={() => setDeleteTarget(row)}>
+                        Xóa
+                      </Button>
+                    ) : null}
                   </div>
-                </td>
-                <td className="py-2 px-3">
-                  {editId === row.id
-                    ? <input className="w-full px-2 py-1 border rounded-lg text-sm" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-                    : <div><div className="font-medium text-gray-900 truncate">{row.name}</div><div className="text-[10px] text-gray-400">ID: {row.id}</div></div>}
-                </td>
-                <td className="py-2 px-3">
-                  {editId === row.id
-                    ? <select className="w-full px-2 py-1 border rounded-lg text-sm" value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })}><option value="">—</option>{categories.map((c) => <option key={c} value={c}>{catLabel(c)}</option>)}</select>
-                    : <span className="text-gray-600 text-xs">{catLabel(row.category) || "—"}</span>}
-                </td>
-                <td className="py-2 px-3">
-                  {editId === row.id
-                    ? <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer"><input type="checkbox" checked={!!draft.active} onChange={(e) => setDraft({ ...draft, active: e.target.checked })} /> Active</label>
-                    : <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full ${row.active ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-gray-100 text-gray-500 border border-gray-200"}`}><span className={`w-1.5 h-1.5 rounded-full ${row.active ? "bg-emerald-500" : "bg-gray-400"}`} />{row.active ? "Active" : "Hidden"}</span>}
-                </td>
-                <td className="py-2 px-3">
-                  {editId === row.id
-                    ? <textarea className="w-full px-2 py-1 border rounded-lg text-sm min-h-[2rem]" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="Mô tả…" />
-                    : <span className="text-xs text-gray-500 line-clamp-2">{row.description || "—"}</span>}
-                </td>
-                <td className="py-2 px-3">
-                  {editId === row.id
-                    ? <input className="w-full px-2 py-1 border rounded-lg text-sm" value={Array.isArray(draft.tags) ? draft.tags.join(", ") : (draft.tags || "")} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder="tag1, tag2" />
-                    : <div className="flex flex-wrap gap-0.5">{tagsArr(row.tags).map((t, i) => <span key={i} className="inline-block px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px] border border-gray-200/60">{t}</span>)}{!tagsArr(row.tags).length && <span className="text-gray-300 text-xs">—</span>}</div>}
-                </td>
-                <td className="py-2 px-3 text-right">
-                  {editId === row.id ? (
-                    <div className="flex flex-col gap-1">
-                      <button onClick={saveEdit} className="px-2 py-1 text-[10px] font-medium text-white bg-blue-600 hover:bg-blue-700 rounded transition">Save</button>
-                      <button onClick={cancelEdit} className="px-2 py-1 text-[10px] text-gray-500 hover:bg-gray-100 rounded transition">✕</button>
-                    </div>
-                  ) : (
-                     (canEdit || canDelete) && (
-                       <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                         {canEdit && (
-                           <button onClick={() => startEdit(row)} className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Sửa">
-                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
-                           </button>
-                         )}
-                         {canDelete && (
-                           <button onClick={() => removeRow(row)} className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition" title="Xoá">
-                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
-                           </button>
-                         )}
-                       </div>
-                     )
-                   )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {view.length === 0 && <div className="py-12 text-center text-gray-400 text-sm">Chưa có sản phẩm.</div>}
-      </div>
-    </div>
+                </div>
+              ))}
+            </div>
 
-      {/* Image Lightbox Modal */}
-      {imgModal && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 backdrop-blur-sm"
-          onClick={() => setImgModal(null)}>
-          <div className="relative" onClick={e => e.stopPropagation()}>
-            <img src={imgModal} alt=""
-              className="block rounded-2xl shadow-2xl object-contain"
-              style={{ width: 320, height: 320 }}
-              onError={e => {
-                const m = imgModal.match(/[?&]id=([a-zA-Z0-9_-]+)/) || imgModal.match(/\/d\/([a-zA-Z0-9_-]+)/);
-                if (m && !e.currentTarget.src.includes('lh3')) {
-                  e.currentTarget.src = `https://lh3.googleusercontent.com/d/${m[1]}=w400`;
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-sm text-slate-400">{pageLabel}</div>
+              {totalPages > 1 ? (
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" disabled={safePage === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>
+                    Trước
+                  </Button>
+                  <Badge variant="neutral">
+                    Trang {safePage}/{totalPages}
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={safePage === totalPages}
+                    onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                  >
+                    Sau
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        )}
+        </div>
+      </Section>
+
+      <Modal
+        open={!!editId}
+        onClose={() => {
+          setEditId(null);
+          setDraft(null);
+        }}
+        title="Sửa sản phẩm"
+        description="Cập nhật metadata catalog."
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setEditId(null);
+                setDraft(null);
+              }}
+            >
+              Hủy
+            </Button>
+            <Button variant="secondary" loading={saving} onClick={saveEdit}>
+              Lưu thay đổi
+            </Button>
+          </div>
+        }
+      >
+        {draft ? <ProductForm draft={draft} setDraft={setDraft} categories={categories} catLabel={catLabel} /> : null}
+      </Modal>
+
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Xóa sản phẩm"
+        description="Gỡ sản phẩm khỏi catalog admin."
+        widthClass="max-w-xl"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" onClick={() => setDeleteTarget(null)}>
+              Hủy
+            </Button>
+            <Button variant="danger" loading={saving} onClick={confirmDelete}>
+              Xóa sản phẩm
+            </Button>
+          </div>
+        }
+      >
+        <div className="text-sm leading-6 text-slate-300">
+          Bạn sắp xóa <span className="font-semibold text-white">{deleteTarget?.name}</span>. Hãy chắc rằng sản phẩm này không còn cần cho catalog hoặc pipeline media.
+        </div>
+      </Modal>
+
+      <Modal open={!!previewImage} onClose={() => setPreviewImage(null)} title="Xem ảnh sản phẩm" widthClass="max-w-2xl">
+        {previewImage ? (
+          <div className="flex justify-center">
+            <img
+              src={previewImage}
+              alt=""
+              className="max-h-[70vh] rounded-2xl border border-slate-800 object-contain shadow-[0_24px_60px_rgba(2,6,23,0.45)]"
+              onError={(event) => {
+                const match =
+                  previewImage.match(/[?&]id=([a-zA-Z0-9_-]+)/) || previewImage.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                if (match && !event.currentTarget.src.includes("lh3")) {
+                  event.currentTarget.src = `https://lh3.googleusercontent.com/d/${match[1]}=w1200`;
                 }
               }}
             />
-            <button onClick={() => setImgModal(null)}
-              className="absolute -top-3 -right-3 w-8 h-8 rounded-full bg-white shadow-lg flex items-center justify-center text-gray-500 hover:text-gray-900 transition">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            </button>
           </div>
-        </div>
-      )}
-    </>
+        ) : null}
+      </Modal>
+    </div>
   );
 }

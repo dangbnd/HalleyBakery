@@ -4,6 +4,7 @@ import { LS, audit, parseBooleanLike, readLS, writeLS } from "../../../utils.js"
 import { KEYS, getConfig, getGeminiKeys, setGeminiKeys, setConfig, pushConfigKeyToSheet } from "../../../utils/config.js";
 import { listConfiguredProductSheet, updateConfiguredProductRow, saveAITagsConfigToSheet } from "../shared/sheets.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
+import { Badge, Callout, MetricItem, MetricStrip, PageHeader, Section } from "../ui/primitives.jsx";
 
 /* ===== Helpers ===== */
 const s = (v) => (v == null ? "" : String(v));
@@ -590,116 +591,148 @@ export default function AITagsPanel({ canEdit = true }) {
     /* ===== RENDER ===== */
     if (!keys.length) {
         return (
-            <div className="flex flex-col items-center justify-center py-24">
-                <span className="text-5xl mb-4">✨</span>
-                <h2 className="text-lg font-semibold text-gray-800 mb-2">AI Magic Tags</h2>
-                <p className="text-sm text-gray-500 mb-4">Thêm ít nhất 1 Gemini API Key để bắt đầu</p>
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 max-w-md text-sm text-blue-700 space-y-2">
-                    <p>1. Truy cập <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="underline font-medium">aistudio.google.com/apikey</a></p>
-                    <p>2. Tạo nhiều API key (mỗi key = 15 req/phút riêng)</p>
-                    <p>3. Thêm key vào đây:</p>
-                </div>
-                <div className="flex gap-2 mt-4">
-                    <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full max-w-xs sm:w-80 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                        value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="AIzaSy..." onKeyDown={e => e.key === "Enter" && addKey()} />
-                    <button disabled={!canEdit || syncBusy} onClick={addKey} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition disabled:opacity-50">Thêm</button>
-                </div>
-                {syncMsg && <p className={`mt-2 text-xs ${syncMsg.startsWith("⚠") ? "text-amber-600" : "text-emerald-600"}`}>{syncMsg}</p>}
+            <div className="space-y-4">
+                <PageHeader
+                    title="Gắn tag AI"
+                    description="Gợi ý tag hàng loạt từ ảnh sản phẩm."
+                    compact
+                    chips={<Badge variant="warning">Chưa có Gemini API key</Badge>}
+                />
+                <Section title="Khởi tạo nguồn AI" compact>
+                    <div className="space-y-3">
+                        <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-sm leading-6 text-blue-300">
+                            <div>1. Truy cập <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="underline font-medium">aistudio.google.com/apikey</a></div>
+                            <div>2. Tạo nhiều API key để xoay vòng quota</div>
+                            <div>3. Dán key vào ô dưới để bắt đầu</div>
+                        </div>
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                            <input className="h-10 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 text-sm text-slate-100 outline-none transition focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/20 sm:w-80"
+                                value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="AIzaSy..." onKeyDown={e => e.key === "Enter" && addKey()} />
+                            <button disabled={!canEdit || syncBusy} onClick={addKey} className="h-10 rounded-xl bg-blue-600 px-4 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50">Thêm key</button>
+                        </div>
+                        {syncMsg && <p className={`text-xs ${syncMsg.startsWith("⚠") ? "text-amber-300" : "text-emerald-300"}`}>{syncMsg}</p>}
+                    </div>
+                </Section>
             </div>
         );
     }
 
-    return (<>
-        <div className="flex flex-col" style={{ height: "calc(100vh - 7rem)" }}>
-            <div className="shrink-0 space-y-1.5">
+    const missingProducts = products.filter((p) => !s(p.tags).trim()).length;
+    const suggestionCount = Object.keys(suggestions).length;
+    const pendingOnPage = paged.filter((p) => firstImg(p) && !Object.prototype.hasOwnProperty.call(suggestions, p.id)).length;
 
-                {/* ── Row 1: title + settings buttons ── */}
+    return (<>
+        <div className="space-y-4">
+            <PageHeader
+                title="Gắn tag AI"
+                description="Bảng gợi ý và áp dụng tag từ ảnh sản phẩm."
+                compact
+                chips={
+                    <>
+                        <Badge variant="info">{keys.length} key</Badge>
+                        <Badge variant="violet">{activeModels.length} model</Badge>
+                        <Badge variant={hasAdminToken ? "success" : "warning"}>
+                            {hasAdminToken ? "Có quyền ghi Sheet" : "Chưa có token ghi Sheet"}
+                        </Badge>
+                    </>
+                }
+            />
+
+            <MetricStrip columnsClassName="xl:grid-cols-4">
+                <MetricItem label="Tổng sản phẩm" value={products.length} meta="Dữ liệu đang nạp trong panel" tone="blue" />
+                <MetricItem label="Thiếu tag" value={missingProducts} meta="Đang cần AI hoặc chỉnh tay" tone="amber" />
+                <MetricItem label="Đã gợi ý" value={suggestionCount} meta="Gợi ý đang chờ áp dụng" tone="violet" />
+                <MetricItem label="Hàng chờ trang này" value={pendingOnPage} meta="Có ảnh và chưa có gợi ý" tone="emerald" />
+            </MetricStrip>
+
+            {!canEdit && (
+                <Callout tone="warning" title="Chế độ chỉ xem">
+                    Tài khoản này chỉ được xem tag hiện tại. Chạy AI và áp dụng tag đã bị khóa.
+                </Callout>
+            )}
+            {canEdit && !hasAdminToken && (
+                <Callout tone="warning" title="Chưa có token ghi Sheet">
+                    Có thể chạy AI gợi ý nhưng chưa lưu được lên Sheet.
+                </Callout>
+            )}
+
+            <div className="space-y-1.5">
+
                 <div className="flex items-center gap-2">
-                    <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white text-xs shadow shrink-0">✨</span>
-                    <span className="font-semibold text-gray-800 text-sm">AI Magic Tags</span>
-                    <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">{keys.length}k · {activeModels.length}m</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Điều khiển AI</span>
                     <div className="flex items-center gap-1 ml-auto">
                         <button onClick={() => setShowConfig(!showConfig)}
-                            className={`h-7 px-2 text-[11px] font-medium rounded-lg border transition ${showConfig ? "bg-blue-50 text-blue-700 border-blue-200" : "border-gray-200 text-gray-500 hover:bg-gray-50"}`}>
-                            ⚙️
+                            className={`h-8 px-3 text-[11px] font-medium rounded-xl border transition ${showConfig ? "bg-blue-500/12 text-blue-300 border-blue-500/30" : "border-slate-800 text-slate-400 hover:bg-slate-900"}`}>
+                            Cấu hình
                         </button>
                         <button onClick={() => setShowPrompt(!showPrompt)}
-                            className={`h-7 px-2 text-[11px] font-medium rounded-lg border transition ${showPrompt ? "bg-purple-50 text-purple-700 border-purple-200" : "border-gray-200 text-gray-500 hover:bg-gray-50"}`}>
-                            📝
+                            className={`h-8 px-3 text-[11px] font-medium rounded-xl border transition ${showPrompt ? "bg-violet-500/12 text-violet-300 border-violet-500/30" : "border-slate-800 text-slate-400 hover:bg-slate-900"}`}>
+                            Prompt
                         </button>
                     </div>
                 </div>
 
                 {/* ── Config panel (collapsible) ── */}
                 {showConfig && (
-                    <div className="p-3 bg-white border border-gray-200 rounded-xl shadow-sm space-y-3">
+                    <Section title="Cấu hình AI" compact className="!shadow-none">
+                    <div className="space-y-3">
                         {/* Keys - compact badges */}
                         <div>
-                            <div className="text-[11px] font-semibold text-gray-600 mb-1.5">🔑 API Keys ({keys.length})</div>
+                            <div className="mb-1.5 text-[11px] font-semibold text-slate-300">API Keys ({keys.length})</div>
                             <div className="flex flex-wrap gap-1 mb-2">
                                 {keys.map((k, i) => (
-                                    <span key={i} className="inline-flex items-center gap-1 text-[10px] bg-gray-50 rounded-md px-2 py-0.5 border border-gray-200">
-                                        <span className="font-mono text-gray-500">{k.slice(0, 6)}…{k.slice(-3)}</span>
+                                    <span key={i} className="inline-flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-[10px]">
+                                        <span className="font-mono text-slate-400">{k.slice(0, 6)}…{k.slice(-3)}</span>
                                         <button onClick={() => removeKey(i)} className="text-red-400 hover:text-red-600 leading-none">✕</button>
                                     </span>
                                 ))}
                             </div>
                             <div className="flex gap-1 items-center">
-                                <input className="flex-1 border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
+                                <input className="flex-1 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-300"
                                     value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="Dán API key mới..." onKeyDown={e => e.key === "Enter" && addKey()} />
-                                <button disabled={!canEdit || syncBusy} onClick={addKey} className="px-2.5 py-1 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition shrink-0 disabled:opacity-50">+ Thêm</button>
+                                <button disabled={!canEdit || syncBusy} onClick={addKey} className="h-9 shrink-0 rounded-xl bg-blue-600 px-3 text-xs text-white transition hover:bg-blue-500 disabled:opacity-50">+ Thêm</button>
                             </div>
-                            {syncMsg && <p className={`mt-1 text-[10px] ${syncMsg.startsWith("⚠") ? "text-amber-600" : "text-emerald-600"}`}>{syncMsg}</p>}
+                            {syncMsg && <p className={`mt-1 text-[10px] ${syncMsg.startsWith("⚠") ? "text-amber-300" : "text-emerald-300"}`}>{syncMsg}</p>}
                         </div>
                         {/* Models */}
                         <div>
-                            <div className="text-[11px] font-semibold text-gray-600 mb-1.5">🤖 Model <span className="font-normal text-gray-400">(tick bật · kéo thả sắp thứ tự)</span></div>
+                            <div className="mb-1.5 text-[11px] font-semibold text-slate-300">Model <span className="font-normal text-slate-500">(tick bật · kéo thả)</span></div>
                             <div className="grid grid-cols-2 lg:grid-cols-3 gap-1">
                                 {enabledModels.map(id => ALL_MODELS.find(m => m.id === id)).filter(Boolean).map(m => {
                                     const idx = enabledModels.indexOf(m.id);
                                     return (
                                         <div key={m.id} draggable onDragStart={e => onDragStart(e, m.id)} onDragOver={e => onDragOver(e, m.id)} onDragEnd={onDragEnd}
-                                            className={`flex items-center gap-1 text-xs rounded-lg px-2 py-1.5 border select-none ${dragId === m.id ? "opacity-40 border-purple-400 bg-purple-100" : "bg-purple-50/60 border-purple-200 cursor-grab"}`}>
-                                            <span className="text-gray-300 text-[9px]">⠿</span>
+                                            className={`flex items-center gap-1 rounded-xl border px-2 py-1.5 text-xs select-none ${dragId === m.id ? "opacity-40 border-violet-400 bg-violet-500/12" : "border-violet-500/25 bg-violet-500/8 cursor-grab"}`}>
+                                            <span className="text-slate-500 text-[9px]">⠿</span>
                                             <input type="checkbox" checked onChange={() => toggleModel(m.id)} className="accent-purple-600 shrink-0 w-3 h-3" />
-                                            <span className="flex-1 min-w-0 truncate text-[10px] font-medium text-gray-700">{m.name}</span>
-                                            <span className="text-[9px] text-purple-500 font-bold">#{idx + 1}</span>
+                                            <span className="flex-1 min-w-0 truncate text-[10px] font-medium text-slate-200">{m.name}</span>
+                                            <span className="text-[9px] font-bold text-violet-300">#{idx + 1}</span>
                                         </div>
                                     );
                                 })}
                                 {ALL_MODELS.filter(m => !enabledModels.includes(m.id)).map(m => (
-                                    <div key={m.id} className="flex items-center gap-1 text-xs rounded-lg px-2 py-1.5 border border-gray-100 bg-gray-50 opacity-50">
+                                    <div key={m.id} className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs opacity-60">
                                         <input type="checkbox" checked={false} onChange={() => toggleModel(m.id)} className="accent-purple-600 shrink-0 w-3 h-3" />
-                                        <span className="flex-1 min-w-0 truncate text-[10px] font-medium text-gray-700">{m.name}</span>
+                                        <span className="flex-1 min-w-0 truncate text-[10px] font-medium text-slate-400">{m.name}</span>
                                     </div>
                                 ))}
                             </div>
                         </div>
                     </div>
-                )}
-
-                {!canEdit && (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                        Tài khoản này chỉ có quyền xem tag hiện tại. Chạy AI và áp dụng tag đã bị khoá.
-                    </div>
-                )}
-                {canEdit && !hasAdminToken && (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                        Chưa có GS WebApp Admin Token: có thể chạy AI gợi ý nhưng chưa lưu được lên Sheet.
-                    </div>
+                    </Section>
                 )}
 
                 {/* Prompt editor */}
                 {showPrompt && (
-                    <div className="p-3 bg-purple-50/50 border border-purple-200 rounded-xl">
+                    <Section title="Prompt" compact className="!shadow-none">
                         <div className="flex items-center justify-between mb-1.5">
-                            <span className="text-[11px] font-semibold text-purple-700">Prompt Template</span>
-                            <button onClick={() => setPrompt(DEFAULT_PROMPT)} className="text-[10px] text-purple-500 hover:text-purple-700">Reset</button>
+                            <span className="text-[11px] font-semibold text-violet-300">Prompt Template</span>
+                            <button onClick={() => setPrompt(DEFAULT_PROMPT)} className="text-[10px] text-violet-400 hover:text-violet-300">Reset</button>
                         </div>
-                        <textarea className="w-full border border-purple-200 rounded-lg px-2 py-1.5 text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+                        <textarea className="w-full rounded-xl border border-violet-500/30 bg-slate-950 px-3 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-300/20"
                             style={{ minHeight: "6rem", height: "auto", fieldSizing: "content" }}
                             value={prompt} onChange={e => setPrompt(e.target.value)} />
-                    </div>
+                    </Section>
                 )}
 
                 {/* ── Row 2: danh mục + filter chips (full width stretch) ── */}

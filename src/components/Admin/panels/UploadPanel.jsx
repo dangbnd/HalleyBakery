@@ -4,6 +4,7 @@ import { KEYS, getConfig, getGeminiKeys, setConfig, pushConfigKeyToSheet } from 
 import { fetchTabAsObjects } from "../../../services/sheets.js";
 import { listDriveFileHashes, listDriveLeafFolders, uploadDriveFile } from "../shared/sheets.js";
 import { isTokenExpired, requestGoogleDriveToken, uploadFileDirectToDrive, saveHashesToSheet, loadHashesFromSheet } from "../shared/driveDirect.js";
+import { Badge, Button, Callout, MetricItem, MetricStrip, PageHeader, Section, Toolbar } from "../ui/primitives.jsx";
 
 const AI_MODEL = "gemini-2.0-flash";
 const OAUTH_CACHE_KEY = "admin.upload.oauth.v1";
@@ -698,77 +699,105 @@ export default function UploadPanel({ canEdit = true }) {
   
   const totalSelected = items.filter(x => x.selected).length;
   const duplicateCount = items.filter(x => validationMap[x.id]?.isDuplicate).length;
+  const readyCount = items.filter((x) => validationMap[x.id]?.canUpload).length;
+  const doneCount = items.filter((x) => x.done).length;
+  const issueCount = items.filter((x) => (validationMap[x.id]?.issues || []).length || x.error).length;
+  const hasItems = items.length > 0;
 
   return (
     <div className="space-y-4">
-      {/* Header Area */}
-      <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">Upload Ảnh</h2>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 font-medium">
-              <span className="flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full ${cfg.sheetId ? "bg-emerald-400" : "bg-red-400"}`}></span>
-                <span className="hidden sm:inline">{cfg.sheetId ? "Đã kết nối Sheet" : "Chưa kết nối Sheet"}</span>
-                <span className="sm:hidden">{cfg.sheetId ? "Sheet ✓" : "Sheet ✗"}</span>
-              </span>
-              <span>•</span>
-              <span className="flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full ${directReady ? "bg-emerald-400" : "bg-amber-400"}`}></span>
-                <span className="hidden sm:inline">{directReady ? "Direct Upload (Nhanh)" : "Proxy Upload (Chậm)"}</span>
-                <span className="sm:hidden">{directReady ? "Drive ✓" : "Proxy"}</span>
-              </span>
+      <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+
+      {!hasItems && (
+        <>
+          <PageHeader
+            title="Upload ảnh"
+            description="Hàng chờ media, tự phân loại và đẩy ảnh lên Drive."
+            compact
+            chips={
+              <>
+                <Badge variant={cfg.sheetId ? "success" : "warning"}>{cfg.sheetId ? "Sheet: đã nối" : "Sheet: thiếu"}</Badge>
+                <Badge variant={directReady ? "success" : "warning"}>{directReady ? "Drive direct" : "Proxy upload"}</Badge>
+                <Badge variant={hashStatus.total > 0 ? "success" : "neutral"}>{hashStatus.total || 0} hash Drive</Badge>
+              </>
+            }
+          />
+
+          <MetricStrip columnsClassName="xl:grid-cols-6">
+            <MetricItem label="Hàng chờ" value={items.length} meta={`${totalSelected} đang chọn`} tone="blue" />
+            <MetricItem label="Sẵn sàng" value={readyCount} meta="Có danh mục và thư mục" tone="emerald" />
+            <MetricItem label="Cảnh báo" value={issueCount} meta={`${duplicateCount} ảnh trùng`} tone="amber" />
+            <MetricItem label="Đã upload" value={doneCount} meta="Hoàn tất trong phiên này" tone="violet" />
+            <MetricItem label="Danh mục" value={categories.length} meta="Đọc từ Sheet/cache" tone="blue" />
+            <MetricItem label="Thư mục" value={folders.length} meta="Thư mục Drive cấp cuối" tone="rose" />
+          </MetricStrip>
+        </>
+      )}
+
+      {!canEdit && (
+        <Callout tone="warning" title="Chế độ chỉ xem">
+          Tài khoản này không có quyền thêm ảnh, chạy AI, upload hoặc cập nhật cấu hình.
+        </Callout>
+      )}
+
+      {hasItems ? (
+        <div className="rounded-xl border border-slate-800 bg-slate-950/75 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="mr-auto flex flex-wrap items-center gap-2 text-xs">
+              <Badge variant="info">{items.length} ảnh</Badge>
+              <Badge variant={totalSelected ? "success" : "neutral"}>{totalSelected} chọn</Badge>
+              <Badge variant={readyCount ? "success" : "warning"}>{readyCount} sẵn sàng</Badge>
+              <Badge variant={issueCount ? "warning" : "neutral"}>{issueCount} cảnh báo</Badge>
+              {doneCount ? <Badge variant="violet">{doneCount} đã upload</Badge> : null}
             </div>
-          </div>
-          {/* Right-side primary actions */}
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            {hasDirectConfig && !directReady && (
-              <button onClick={connectDriveAuth} disabled={oauthBusy || !canEdit}
-                className="h-9 px-2.5 sm:px-3.5 rounded-xl border border-sky-200 text-sky-700 bg-sky-50 hover:bg-sky-100 font-semibold transition shadow-sm text-xs sm:text-sm flex items-center gap-1.5">
-                {oauthBusy ? "Đang kết nối..." : <><span>🔌</span><span className="hidden sm:inline">Kết nối Drive</span></>}
-              </button>
-            )}
-            {hasDirectConfig && directReady && (
-              <button onClick={clearDriveAuth} disabled={!canEdit}
-                className="h-9 px-2.5 sm:px-3.5 rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-red-500 transition shadow-sm text-xs sm:text-sm flex items-center gap-1.5">
-                <span className="hidden sm:inline">Ngắt kết nối</span><span className="sm:hidden">⏻</span>
-              </button>
-            )}
-            <button onClick={() => setShowSettings(!showSettings)}
-              className="h-9 px-2.5 sm:px-3.5 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition shadow-sm text-xs sm:text-sm flex items-center gap-1.5" title="Cài đặt hệ thống">
-              ⚙️<span className="hidden lg:inline"> Cấu hình / Thông số</span>
-            </button>
-            <button onClick={refreshMeta} disabled={!canEdit || metaLoading}
-              className="h-9 px-2.5 sm:px-3.5 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition shadow-sm text-xs sm:text-sm flex items-center gap-1.5 disabled:opacity-50" title="Tải lại danh mục">
-              <span className={metaLoading ? "animate-spin" : ""}>&#8635;</span><span className="hidden lg:inline"> Tải Sheet</span>
-            </button>
+            <Button variant="ghost" size="sm" onClick={() => canEdit && fileInputRef.current?.click()} disabled={!canEdit}>
+              Thêm ảnh
+            </Button>
+            <Button variant={showSettings ? "secondary" : "ghost"} size="sm" onClick={() => setShowSettings(!showSettings)}>
+              Cấu hình
+            </Button>
+            <Button variant="ghost" size="sm" onClick={refreshMeta} disabled={!canEdit || metaLoading}>
+              {metaLoading ? "Đang tải..." : "Tải Sheet"}
+            </Button>
+            <Button variant="secondary" size="sm" onClick={runAiSelected} disabled={!canEdit || bulkAiRunning || items.length === 0}>
+              {bulkAiRunning ? "AI..." : "AI gợi ý"}
+            </Button>
+            <Button variant="success" size="sm" onClick={uploadSelected} disabled={!canEdit || bulkUploading || readyCount === 0}>
+              {bulkUploading ? "Upload..." : `Upload ${readyCount}`}
+            </Button>
           </div>
         </div>
-        {!canEdit && (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Tài khoản này chỉ có quyền xem. Mọi thao tác thêm ảnh, AI, upload và cập nhật cấu hình đã bị khóa.
-          </div>
-        )}
-        {/* Secondary action row: Chọn ảnh + AI + Upload */}
-        <div className="flex gap-2">
-          {/* File input (hidden) - reused by both button and dropzone */}
-          <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
-          {/* Chọn ảnh button - chỉ hiện trên mobile */}
-          <button onClick={() => canEdit && fileInputRef.current?.click()} disabled={!canEdit}
-            className="sm:hidden flex-1 h-9 px-3 rounded-xl border-2 border-dashed border-indigo-300 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 font-semibold transition text-xs flex items-center justify-center gap-1.5">
-            📷 Chọn ảnh
-          </button>
-          <button onClick={runAiSelected}
-            disabled={!canEdit || bulkAiRunning || items.length === 0}
-            className="flex-1 sm:flex-none h-9 sm:h-10 px-3 sm:px-5 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 font-semibold transition text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-40">
-            ✨ <span className="hidden sm:inline">AI Gợi ý Tất cả</span><span className="sm:hidden">AI full</span>
-          </button>
-          <button onClick={uploadSelected} disabled={!canEdit || bulkUploading || items.length === 0}
-            className="flex-1 sm:flex-none h-9 sm:h-10 px-3 sm:px-5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-semibold shadow-md shadow-emerald-500/20 text-xs sm:text-sm transition disabled:opacity-40">
-            {bulkUploading ? "Đang đẩy..." : <><span className="hidden sm:inline">Upload Hợp Lệ</span><span className="sm:hidden">Upload</span></>}
-          </button>
-        </div>
-      </div>
+      ) : (
+        <Section title="Điều khiển upload" compact>
+          <Toolbar>
+          <Button variant="ghost" size="sm" onClick={() => canEdit && fileInputRef.current?.click()} disabled={!canEdit}>
+            Chọn ảnh
+          </Button>
+          {hasDirectConfig && !directReady && (
+            <Button variant="ghost" size="sm" onClick={connectDriveAuth} disabled={oauthBusy || !canEdit}>
+              {oauthBusy ? "Đang kết nối..." : "Kết nối Drive"}
+            </Button>
+          )}
+          {hasDirectConfig && directReady && (
+            <Button variant="ghost" size="sm" onClick={clearDriveAuth} disabled={!canEdit}>
+              Ngắt Drive
+            </Button>
+          )}
+          <Button variant={showSettings ? "secondary" : "ghost"} size="sm" onClick={() => setShowSettings(!showSettings)}>
+            Cấu hình nhanh
+          </Button>
+          <Button variant="ghost" size="sm" onClick={refreshMeta} disabled={!canEdit || metaLoading}>
+            {metaLoading ? "Đang tải..." : "Tải Sheet"}
+          </Button>
+          <Button variant="secondary" size="sm" onClick={runAiSelected} disabled={!canEdit || bulkAiRunning || items.length === 0}>
+            {bulkAiRunning ? "AI đang chạy..." : "AI gợi ý"}
+          </Button>
+          <Button variant="success" size="sm" onClick={uploadSelected} disabled={!canEdit || bulkUploading || readyCount === 0}>
+            {bulkUploading ? "Đang upload..." : `Upload ${readyCount}`}
+          </Button>
+          </Toolbar>
+        </Section>
+      )}
 
       {showSettings && (
         <div className="rounded-2xl border border-gray-100 bg-white shadow-md p-4 animate-fade-in my-4 space-y-4">
@@ -859,7 +888,7 @@ export default function UploadPanel({ canEdit = true }) {
       )}
 
       {/* Dropzone - ẩn trên mobile (sm), hiện trên desktop */}
-      <div className={`hidden sm:block relative group rounded-3xl border-2 border-dashed border-indigo-200 bg-indigo-50/30 transition-all duration-300 p-8 text-center shadow-sm ${canEdit ? "cursor-pointer hover:bg-indigo-50 hover:border-indigo-400" : "cursor-not-allowed opacity-70"}`}
+      {!hasItems && <div className={`hidden sm:block relative group rounded-3xl border-2 border-dashed border-indigo-200 bg-indigo-50/30 transition-all duration-300 p-8 text-center shadow-sm ${canEdit ? "cursor-pointer hover:bg-indigo-50 hover:border-indigo-400" : "cursor-not-allowed opacity-70"}`}
            onDragOver={(e) => { if (!canEdit) return; e.preventDefault(); e.currentTarget.classList.add('bg-indigo-100', 'border-indigo-500'); }}
            onDragLeave={(e) => { if (!canEdit) return; e.currentTarget.classList.remove('bg-indigo-100', 'border-indigo-500'); }}
            onDrop={(e) => { if (!canEdit) return; e.preventDefault(); e.currentTarget.classList.remove('bg-indigo-100', 'border-indigo-500'); addFiles(e.dataTransfer.files); }}
@@ -869,7 +898,7 @@ export default function UploadPanel({ canEdit = true }) {
         </div>
         <h3 className="text-lg font-bold text-gray-800">Kéo thả ảnh hoặc Bấm để chọn</h3>
         <p className="text-sm text-gray-500 mt-2">Hệ thống sẽ tự nhận diện danh mục và gán Tag thư mục cho bạn.</p>
-      </div>
+      </div>}
 
       {/* Image Grid - vertical card layout */}
       {items.length > 0 && (
@@ -887,12 +916,12 @@ export default function UploadPanel({ canEdit = true }) {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 2xl:grid-cols-10">
             {items.map(item => {
               const check = validationMap[item.id] || { issues: [] };
               const isError = !!item.error;
               return (
-                <div key={item.id} className={`group flex flex-col rounded-2xl border overflow-hidden shadow-sm hover:shadow-md transition-all bg-white ${item.done ? 'border-emerald-200' : isError ? 'border-red-200' : 'border-gray-100'}`}>
+                <div key={item.id} className={`group flex flex-col rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-all bg-white ${item.done ? 'border-emerald-200' : isError ? 'border-red-200' : 'border-gray-100'}`}>
                   
                   {/* Image Area */}
                   <div className="relative aspect-square w-full bg-gray-100 overflow-hidden">
@@ -903,11 +932,11 @@ export default function UploadPanel({ canEdit = true }) {
                     
                     {/* Checkbox top-left */}
                     <input type="checkbox" checked={item.selected} onChange={() => updateItem(item.id, { selected: !item.selected })} disabled={!canEdit}
-                      className="absolute top-2 left-2 w-4 h-4 cursor-pointer accent-indigo-500 z-10" />
+                      className="absolute top-1.5 left-1.5 w-3.5 h-3.5 cursor-pointer accent-indigo-500 z-10" />
                     
                     {/* Delete btn top-right */}
                     <button onClick={() => canEdit && setItems(prev => prev.filter(x => x.id !== item.id))} disabled={!canEdit}
-                      className="absolute top-2 right-2 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-black/30 hover:bg-red-500 text-white transition opacity-0 group-hover:opacity-100">
+                      className="absolute top-1.5 right-1.5 z-10 w-5 h-5 flex items-center justify-center rounded-full bg-black/30 hover:bg-red-500 text-white transition opacity-0 group-hover:opacity-100">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
                         <path d="M5.28 4.22a.75.75 0 0 0-1.06 1.06L6.94 8l-2.72 2.72a.75.75 0 1 0 1.06 1.06L8 9.06l2.72 2.72a.75.75 0 1 0 1.06-1.06L9.06 8l2.72-2.72a.75.75 0 0 0-1.06-1.06L8 6.94 5.28 4.22Z"/>
                       </svg>
@@ -918,7 +947,7 @@ export default function UploadPanel({ canEdit = true }) {
                       <a href={item.uploadUrl} target="_blank" rel="noopener"
                         className="absolute inset-0 flex flex-col items-center justify-center bg-emerald-500/75 hover:bg-emerald-600/80 transition z-10">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8 text-white"><path fillRule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12Zm13.36-1.814a.75.75 0 1 0-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 0 0-1.06 1.06l2.25 2.25a.75.75 0 0 0 1.14-.094l3.75-5.25Z" clipRule="evenodd"/></svg>
-                        <span className="text-white text-[11px] mt-1 font-semibold">Đã upload</span>
+                        <span className="text-white text-[10px] mt-1 font-semibold">Đã upload</span>
                       </a>
                     )}
 
@@ -931,29 +960,29 @@ export default function UploadPanel({ canEdit = true }) {
                   </div>
 
                   {/* Card body */}
-                  <div className="p-2.5 flex flex-col gap-1.5 flex-1">
+                  <div className="p-2 flex flex-col gap-1 flex-1">
                     
                     {/* Filename row: truncated name + AI + Upload buttons */}
-                    <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="flex items-center gap-1 min-w-0">
                       <div className="flex-1 min-w-0">
-                        <div className="text-[11px] font-semibold text-gray-800 truncate">{item.name}</div>
-                        <div className="text-[10px] text-gray-400">{fmtBytes(item.size)}</div>
+                        <div className="text-[10px] font-semibold text-gray-800 truncate">{item.name}</div>
+                        <div className="text-[9px] text-gray-400">{fmtBytes(item.size)}</div>
                       </div>
                       <div className="flex gap-1 shrink-0">
                         {/* AI button */}
                         <button onClick={() => runAiOne(item.id)} disabled={!canEdit || item.aiLoading}
-                          className="w-6 h-6 flex items-center justify-center rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-500 disabled:opacity-40 transition"
+                          className="w-5 h-5 flex items-center justify-center rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-500 disabled:opacity-40 transition"
                           title="AI gợi ý category + tag">
                           {item.aiLoading
-                            ? <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
-                            : <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5"><path d="M15.98 1.804a1 1 0 0 0-1.96 0l-.24 1.192a1 1 0 0 1-.784.785l-1.192.239a1 1 0 0 0 0 1.962l1.192.24a1 1 0 0 1 .784.784l.24 1.192a1 1 0 0 0 1.962 0l.24-1.192a1 1 0 0 1 .784-.784l1.192-.24a1 1 0 0 0 0-1.962l-1.192-.24a1 1 0 0 1-.784-.784l-.24-1.192ZM6.949 5.684a1 1 0 0 0-1.898 0l-.683 2.051a1 1 0 0 1-.633.633l-2.051.683a1 1 0 0 0 0 1.898l2.051.684a1 1 0 0 1 .633.632l.683 2.051a1 1 0 0 0 1.898 0l.683-2.051a1 1 0 0 1 .633-.633l2.051-.683a1 1 0 0 0 0-1.898l-2.051-.683a1 1 0 0 1-.633-.633L6.95 5.684ZM13.949 13.684a1 1 0 0 0-1.898 0l-.184.551a1 1 0 0 1-.633.633l-.551.184a1 1 0 0 0 0 1.898l.551.183a1 1 0 0 1 .633.634l.184.551a1 1 0 0 0 1.898 0l.184-.551a1 1 0 0 1 .633-.634l.551-.183a1 1 0 0 0 0-1.898l-.551-.184a1 1 0 0 1-.633-.633l-.184-.551Z"/></svg>
+                            ? <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
+                            : <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M15.98 1.804a1 1 0 0 0-1.96 0l-.24 1.192a1 1 0 0 1-.784.785l-1.192.239a1 1 0 0 0 0 1.962l1.192.24a1 1 0 0 1 .784.784l.24 1.192a1 1 0 0 0 1.962 0l.24-1.192a1 1 0 0 1 .784-.784l1.192-.24a1 1 0 0 0 0-1.962l-1.192-.24a1 1 0 0 1-.784-.784l-.24-1.192ZM6.949 5.684a1 1 0 0 0-1.898 0l-.683 2.051a1 1 0 0 1-.633.633l-2.051.683a1 1 0 0 0 0 1.898l2.051.684a1 1 0 0 1 .633.632l.683 2.051a1 1 0 0 0 1.898 0l.683-2.051a1 1 0 0 1 .633-.633l2.051-.683a1 1 0 0 0 0-1.898l-2.051-.683a1 1 0 0 1-.633-.633L6.95 5.684ZM13.949 13.684a1 1 0 0 0-1.898 0l-.184.551a1 1 0 0 1-.633.633l-.551.184a1 1 0 0 0 0 1.898l.551.183a1 1 0 0 1 .633.634l.184.551a1 1 0 0 0 1.898 0l.184-.551a1 1 0 0 1 .633-.634l.551-.183a1 1 0 0 0 0-1.898l-.551-.184a1 1 0 0 1-.633-.633l-.184-.551Z"/></svg>
                           }
                         </button>
                         {/* Upload button */}
                         <button onClick={() => uploadOne(item.id)} disabled={!check.canUpload}
-                          className="w-6 h-6 flex items-center justify-center rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600 disabled:opacity-30 transition"
+                          className="w-5 h-5 flex items-center justify-center rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-600 disabled:opacity-30 transition"
                           title="Upload ảnh này lên Drive">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" d="M10 17a.75.75 0 0 1-.75-.75V5.612L5.29 9.77a.75.75 0 0 1-1.08-1.04l5.25-5.5a.75.75 0 0 1 1.08 0l5.25 5.5a.75.75 0 1 1-1.08 1.04l-3.96-4.158V16.25A.75.75 0 0 1 10 17Z" clipRule="evenodd"/></svg>
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path fillRule="evenodd" d="M10 17a.75.75 0 0 1-.75-.75V5.612L5.29 9.77a.75.75 0 0 1-1.08-1.04l5.25-5.5a.75.75 0 0 1 1.08 0l5.25 5.5a.75.75 0 1 1-1.08 1.04l-3.96-4.158V16.25A.75.75 0 0 1 10 17Z" clipRule="evenodd"/></svg>
                         </button>
                       </div>
                     </div>
@@ -962,20 +991,20 @@ export default function UploadPanel({ canEdit = true }) {
                     <select value={item.categoryKey} onChange={e => {
                       const it = applyCategoryAutoFolder(item, e.target.value, categories, folders);
                       updateItem(item.id, { categoryKey: it.categoryKey, folderId: it.folderId, folderHint: it.folderHint });
-                    }} disabled={!canEdit} className="w-full h-7 px-2 text-[11px] bg-gray-50 border border-gray-200 rounded-lg focus:border-indigo-400 outline-none cursor-pointer text-gray-700 disabled:opacity-60">
+                    }} disabled={!canEdit} className="w-full h-6 px-1.5 text-[10px] bg-gray-50 border border-gray-200 rounded-md focus:border-indigo-400 outline-none cursor-pointer text-gray-700 disabled:opacity-60">
                       <option value="">📁 Chọn danh mục...</option>
                       {categories.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
                     </select>
 
                     <select value={item.folderId} onChange={e => updateItem(item.id, { folderId: e.target.value, folderManual: true })} disabled={!canEdit}
-                      className="w-full h-7 px-2 text-[11px] bg-gray-50 border border-gray-200 rounded-lg focus:border-indigo-400 outline-none cursor-pointer text-gray-700 disabled:opacity-60">
+                      className="w-full h-6 px-1.5 text-[10px] bg-gray-50 border border-gray-200 rounded-md focus:border-indigo-400 outline-none cursor-pointer text-gray-700 disabled:opacity-60">
                       <option value="">📂 Thư mục...</option>
                       {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                     </select>
 
                     <input value={item.tagsText} onChange={e => updateItem(item.id, { tagsText: e.target.value })} disabled={!canEdit}
                       placeholder="🏷 Tags..."
-                      className="w-full h-7 px-2 text-[11px] bg-gray-50 border border-gray-200 rounded-lg focus:border-indigo-400 outline-none text-gray-700 disabled:opacity-60" />
+                      className="w-full h-6 px-1.5 text-[10px] bg-gray-50 border border-gray-200 rounded-md focus:border-indigo-400 outline-none text-gray-700 disabled:opacity-60" />
 
                     {/* Errors */}
                     {(check.issues[0] || item.error) && (

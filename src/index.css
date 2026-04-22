@@ -73,3 +73,73 @@
 @media (prefers-reduced-motion: reduce) {
   .skeleton { animation: none; }
 }
+
+/* ----- Dark bridge cho các panel admin legacy chưa refactor sâu ----- */
+.legacy-admin-dark {
+  color: #e2e8f0;
+}
+
+.legacy-admin-dark [class*="bg-white"],
+.legacy-admin-dark [class*="bg-gray-50"],
+.legacy-admin-dark [class*="bg-gray-100"] {
+  background-color: rgba(15, 23, 42, 0.88) !important;
+}
+
+.legacy-admin-dark [class*="border-gray-100"],
+.legacy-admin-dark [class*="border-gray-200"],
+.legacy-admin-dark [class*="border-indigo-200"],
+.legacy-admin-dark [class*="border-sky-200"],
+.legacy-admin-dark [class*="border-purple-200"],
+.legacy-admin-dark [class*="border-emerald-200"],
+.legacy-admin-dark [class*="border-amber-200"],
+.legacy-admin-dark [class*="border-orange-200"] {
+  border-color: rgba(51, 65, 85, 0.95) !important;
+}
+
+.legacy-admin-dark [class*="text-gray-900"],
+.legacy-admin-dark [class*="text-gray-800"],
+.legacy-admin-dark [class*="text-gray-700"] {
+  color: #f8fafc !important;
+}
+
+.legacy-admin-dark [class*="text-gray-600"],
+.legacy-admin-dark [class*="text-gray-500"] {
+  color: #cbd5e1 !important;
+}
+
+.legacy-admin-dark [class*="text-gray-400"],
+.legacy-admin-dark [class*="text-gray-300"] {
+  color: #94a3b8 !important;
+}
+
+.legacy-admin-dark input,
+.legacy-admin-dark select,
+.legacy-admin-dark textarea {
+  background: #020617 !important;
+  border-color: #334155 !important;
+  color: #f8fafc !important;
+}
+
+.legacy-admin-dark input::placeholder,
+.legacy-admin-dark textarea::placeholder {
+  color: #64748b !important;
+}
+
+.legacy-admin-dark table thead tr,
+.legacy-admin-dark [class*="bg-gray-50/80"] {
+  background: rgba(15, 23, 42, 0.96) !important;
+}
+
+.legacy-admin-dark table td {
+  color: #cbd5e1 !important;
+}
+
+.legacy-admin-dark table th {
+  color: #94a3b8 !important;
+}
+
+.legacy-admin-dark [class*="shadow-sm"],
+.legacy-admin-dark [class*="shadow-md"],
+.legacy-admin-dark [class*="shadow-xl"] {
+  box-shadow: 0 20px 40px rgba(2, 6, 23, 0.32) !important;
+}

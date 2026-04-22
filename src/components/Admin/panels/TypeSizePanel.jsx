@@ -1,6 +1,6 @@
 // src/components/Admin/panels/TypeSizePanel.jsx
 import React, { useEffect, useRef, useState } from "react";
-import { Button, Input, Section, Toolbar, Badge } from "../ui/primitives.jsx";
+import { Button, Input, Section, Toolbar, Badge, MetricItem, MetricStrip, PageHeader } from "../ui/primitives.jsx";
 import { Table } from "../ui/table.jsx";
 import { Tabs } from "../ui/tabs.jsx";
 import { readLS, writeLS } from "../../../utils.js";
@@ -120,54 +120,71 @@ export default function TypeSizePanel() {
     writeLS("typeSize", mirror);
   }, [types, sizes]);
 
+  const linkedPairs = types.reduce((total, type) => total + (type.sizeCodes || []).length, 0);
+
   return (
-    <Section title="Loại bánh & Size" actions={<Toolbar />}>
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        items={[
-          {
-            key: "types",
-            label: "Loại bánh",
-            children: (
-              <div className="space-y-3">
-                <Toolbar>
-                  <Input placeholder="Tìm loại..." value={qType} onChange={(e)=>setQType(e.target.value)} />
-                </Toolbar>
-                <TypesTable
-                  data={safe(types).filter(x => (x.code + x.name).toLowerCase().includes(qType.toLowerCase()))}
-                  allSizes={sizes}
-                  onLocalChange={(rows)=>{ setTypes(rows); writeLS("types", rows); }}
-                />
-              </div>
-            ),
-          },
-          {
-            key: "sizes",
-            label: "Size",
-            children: (
-              <div className="space-y-3">
-                <Toolbar>
-                  <Input placeholder="Tìm size..." value={qSize} onChange={(e)=>setQSize(e.target.value)} />
-                </Toolbar>
-                <SizesTable
-                  data={safe(sizes).filter(x => (x.code + x.label).toLowerCase().includes(qSize.toLowerCase()))}
-                  onLocalChange={(rows)=>{
-                    setSizes(rows); writeLS("sizes", rows);
-                    // loại tham chiếu size đã xóa dựa theo KEY
-                    const exists = new Set(rows.map(sizeKey));
-                    const nextTypes = safe(types).map(t => ({
-                      ...t, sizeCodes: (t.sizeCodes||[]).filter(k => exists.has(k))
-                    }));
-                    setTypes(nextTypes); writeLS("types", nextTypes);
-                  }}
-                />
-              </div>
-            ),
-          },
-        ]}
+    <div className="space-y-4">
+      <PageHeader
+        title="Loại & size"
+        description="Ma trận loại bánh và kích thước đang dùng cho catalog."
+        compact
       />
-    </Section>
+
+      <MetricStrip columnsClassName="xl:grid-cols-4">
+        <MetricItem label="Loại bánh" value={types.length} meta="Nhóm sản phẩm có thể chọn" tone="blue" />
+        <MetricItem label="Kích thước" value={sizes.length} meta="Các size đang khai báo" tone="violet" />
+        <MetricItem label="Liên kết" value={linkedPairs} meta="Cặp loại-size đang được map" tone="emerald" />
+        <MetricItem label="Tab hiện tại" value={tab === "types" ? "Loại bánh" : "Size"} meta="Chỉnh sửa trực tiếp trong bảng" tone="amber" />
+      </MetricStrip>
+
+      <Section title="Ma trận loại & size" compact>
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          items={[
+            {
+              key: "types",
+              label: "Loại bánh",
+              children: (
+                <div className="space-y-3">
+                  <Toolbar>
+                    <Input placeholder="Tìm loại..." value={qType} onChange={(e)=>setQType(e.target.value)} />
+                  </Toolbar>
+                  <TypesTable
+                    data={safe(types).filter(x => (x.code + x.name).toLowerCase().includes(qType.toLowerCase()))}
+                    allSizes={sizes}
+                    onLocalChange={(rows)=>{ setTypes(rows); writeLS("types", rows); }}
+                  />
+                </div>
+              ),
+            },
+            {
+              key: "sizes",
+              label: "Size",
+              children: (
+                <div className="space-y-3">
+                  <Toolbar>
+                    <Input placeholder="Tìm size..." value={qSize} onChange={(e)=>setQSize(e.target.value)} />
+                  </Toolbar>
+                  <SizesTable
+                    data={safe(sizes).filter(x => (x.code + x.label).toLowerCase().includes(qSize.toLowerCase()))}
+                    onLocalChange={(rows)=>{
+                      setSizes(rows); writeLS("sizes", rows);
+                      // loại tham chiếu size đã xóa dựa theo KEY
+                      const exists = new Set(rows.map(sizeKey));
+                      const nextTypes = safe(types).map(t => ({
+                        ...t, sizeCodes: (t.sizeCodes||[]).filter(k => exists.has(k))
+                      }));
+                      setTypes(nextTypes); writeLS("types", nextTypes);
+                    }}
+                  />
+                </div>
+              ),
+            },
+          ]}
+        />
+      </Section>
+    </div>
   );
 }
 

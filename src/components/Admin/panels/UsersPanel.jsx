@@ -1,584 +1,867 @@
-// src/components/Admin/panels/UsersPanel.jsx
-import React, { useEffect, useState } from "react";
-import { LS, readLS, writeLS, audit } from "../../../utils.js";
-import { SUPER_ADMIN_NAME, SUPER_ADMIN_USERNAME } from "../shared/superAdmin.js";
+import React, { useEffect, useMemo, useState } from "react";
+import { LS, audit, readLS, writeLS } from "../../../utils.js";
 import { deleteAdminUserFromSheet, listUsersFromSheet, upsertAdminUserToSheet } from "../shared/sheets.js";
+import { SUPER_ADMIN_NAME, SUPER_ADMIN_USERNAME } from "../shared/superAdmin.js";
+import { Modal } from "../ui/modal.jsx";
+import { Table } from "../ui/table.jsx";
+import {
+  Badge,
+  Button,
+  Callout,
+  Empty,
+  Field,
+  Input,
+  MetricItem,
+  MetricStrip,
+  PageHeader,
+  Section,
+  Select,
+  Toolbar,
+} from "../ui/primitives.jsx";
 
-/* ===== DANH SÁCH QUYỀN ===== */
-const PERMISSIONS = [
-    { key: "products.view", label: "Xem sản phẩm", group: "Sản phẩm", icon: "🛍️" },
-    { key: "products.edit", label: "Thêm / sửa sản phẩm", group: "Sản phẩm", icon: "🛍️" },
-    { key: "products.delete", label: "Xoá sản phẩm", group: "Sản phẩm", icon: "🛍️" },
-    { key: "upload.view", label: "Xem tab upload", group: "Upload", icon: "📤" },
-    { key: "upload.edit", label: "Upload ảnh lên Drive", group: "Upload", icon: "📤" },
-    { key: "aitags.view", label: "Xem AI Tags", group: "AI Tags", icon: "✨" },
-    { key: "aitags.edit", label: "Chạy / áp dụng AI Tags", group: "AI Tags", icon: "✨" },
-    { key: "categories.view", label: "Xem danh mục", group: "Danh mục", icon: "🏷️" },
-    { key: "categories.edit", label: "Sửa danh mục", group: "Danh mục", icon: "🏷️" },
-    { key: "typesize.view", label: "Xem loại & size", group: "Loại & Size", icon: "📐" },
-    { key: "typesize.edit", label: "Sửa loại & size", group: "Loại & Size", icon: "📐" },
-    { key: "pages.view", label: "Xem trang nội dung", group: "Trang", icon: "📄" },
-    { key: "pages.edit", label: "Sửa trang nội dung", group: "Trang", icon: "📄" },
-    { key: "audit.view", label: "Xem nhật ký", group: "Hệ thống", icon: "📋" },
-    { key: "users.manage", label: "Quản lý người dùng", group: "Hệ thống", icon: "👥" },
-    { key: "settings.view", label: "Xem cấu hình", group: "Hệ thống", icon: "⚙️" },
-    { key: "settings.edit", label: "Sửa cấu hình", group: "Hệ thống", icon: "⚙️" },
+const PERMISSION_GROUPS = [
+  {
+    key: "catalog",
+    label: "Catalog",
+    hint: "Sản phẩm, loại bánh, size và taxonomy.",
+    items: [
+      { key: "products.view", label: "Xem sản phẩm" },
+      { key: "products.edit", label: "Thêm / sửa sản phẩm" },
+      { key: "products.delete", label: "Xóa sản phẩm" },
+      { key: "typesize.view", label: "Xem loại & size" },
+      { key: "typesize.edit", label: "Sửa loại & size" },
+    ],
+  },
+  {
+    key: "media",
+    label: "Media & AI",
+    hint: "Upload, AI tags và pipeline xử lý ảnh.",
+    items: [
+      { key: "upload.view", label: "Xem upload" },
+      { key: "upload.edit", label: "Upload lên Drive" },
+      { key: "aitags.view", label: "Xem AI tags" },
+      { key: "aitags.edit", label: "Chạy / áp dụng AI tags" },
+    ],
+  },
+  {
+    key: "operations",
+    label: "Vận hành",
+    hint: "Dashboard, nhật ký và quản lý người dùng.",
+    items: [
+      { key: "analytics.view", label: "Xem phân tích" },
+      { key: "audit.view", label: "Xem nhật ký" },
+      { key: "users.manage", label: "Quản lý người dùng" },
+    ],
+  },
+  {
+    key: "system",
+    label: "Hệ thống",
+    hint: "Cấu hình kỹ thuật và tích hợp.",
+    items: [
+      { key: "settings.view", label: "Xem cấu hình" },
+      { key: "settings.edit", label: "Sửa cấu hình" },
+    ],
+  },
 ];
 
-const GROUPS = [...new Set(PERMISSIONS.map(p => p.group))];
-
-/* Preset templates for quick assignment */
 const PRESETS = {
-    "Quản lý": PERMISSIONS.map(p => p.key),
-    "Biên tập": PERMISSIONS.filter(p => !p.key.includes("delete") && !p.key.includes("settings.edit")).map(p => p.key),
-    "Chỉ xem": PERMISSIONS.filter(p => p.key.includes(".view")).map(p => p.key),
+  viewer: ["products.view"],
+  operator: ["products.view", "upload.view", "aitags.view", "analytics.view", "audit.view"],
+  editor: [
+    "products.view",
+    "products.edit",
+    "upload.view",
+    "upload.edit",
+    "aitags.view",
+    "aitags.edit",
+    "typesize.view",
+    "typesize.edit",
+    "analytics.view",
+    "audit.view",
+    "settings.view",
+  ],
+  manager: [
+    "products.view",
+    "products.edit",
+    "products.delete",
+    "upload.view",
+    "upload.edit",
+    "aitags.view",
+    "aitags.edit",
+    "typesize.view",
+    "typesize.edit",
+    "analytics.view",
+    "audit.view",
+    "settings.view",
+    "settings.edit",
+    "users.manage",
+  ],
 };
-const ROLES = [
-    { value: "viewer", label: "Viewer" },
-    { value: "staff", label: "Staff" },
-    { value: "editor", label: "Editor" },
-    { value: "manager", label: "Manager" },
-    { value: "owner", label: "Owner" },
-];
-const HAS_SUPER_ADMIN = true;
 
-function genId() { return "u_" + Math.random().toString(36).slice(2, 8) + Date.now().toString(36); }
-function hasManageUsersPermission(user) {
-    if (!user || typeof user !== "object") return false;
-    if (user.isSuper === true) return true;
-    if (user.role === "owner") return true;
-    return Array.isArray(user.permissions) && user.permissions.includes("users.manage");
+const ROLE_OPTIONS = [
+  { value: "viewer", label: "Chỉ xem" },
+  { value: "staff", label: "Nhân viên" },
+  { value: "editor", label: "Biên tập" },
+  { value: "manager", label: "Quản lý" },
+  { value: "owner", label: "Chủ hệ thống" },
+];
+
+const ROLE_LABELS = Object.fromEntries(ROLE_OPTIONS.map((item) => [item.value, item.label]));
+
+function genId() {
+  return `u_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36)}`;
 }
 
-/* ====================== MAIN ====================== */
-export default function UsersPanel() {
-    const currentUser = readLS(LS.AUTH, {});
-    const permsSet = new Set(Array.isArray(currentUser.permissions) ? currentUser.permissions : []);
-    const canManageUsers = currentUser.isSuper === true || currentUser.role === "owner" || permsSet.has("users.manage");
+function isManagerLike(user) {
+  if (!user || typeof user !== "object") return false;
+  if (user.isSuper === true || user.role === "owner") return true;
+  return Array.isArray(user.permissions) && user.permissions.includes("users.manage");
+}
 
-    const [users, setUsers] = useState(() => readLS(LS.USERS, []));
-    const [loading, setLoading] = useState(false);
-    const [saving, setSaving] = useState(false);
-    const [showForm, setShowForm] = useState(false);
-    const [editId, setEditId] = useState(null);
-    const [form, setForm] = useState({ username: "", password: "", name: "", role: "staff", permissions: [] });
-    const [msg, setMsg] = useState("");
-    const currentUsername = String(currentUser.username || "").trim().toLowerCase();
+function normalizeUsername(value = "") {
+  return String(value || "").trim().toLowerCase();
+}
 
-    const applyLocal = (list) => { setUsers(list); writeLS(LS.USERS, list); };
-    const loadUsers = async () => {
-        setLoading(true);
-        try {
-            // Timeout 8s — nếu Sheet chưa hỗ trợ action "list" thì không block mãi
-            const result = await Promise.race([
-                listUsersFromSheet({ includeInactive: true }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 8000)),
-            ]);
-            applyLocal(result);
-            setMsg("");
-        } catch (e) {
-            // Không block UI — vẫn cho thao tác
-            const errMsg = e?.message || "";
-            if (errMsg !== "Timeout") setMsg(errMsg || "Không tải được user từ Sheet");
-        } finally {
-            setLoading(false);
-        }
+function roleBadge(role = "staff") {
+  const map = {
+    owner: "warning",
+    manager: "violet",
+    editor: "info",
+    staff: "neutral",
+    viewer: "neutral",
+  };
+  return map[role] || "neutral";
+}
+
+function summarizeAccess(user) {
+  const permissions = Array.isArray(user?.permissions) ? user.permissions : [];
+  const set = new Set(permissions);
+  return PERMISSION_GROUPS.map((group) => {
+    const granted = group.items.filter((item) => set.has(item.key)).length;
+    if (!granted) return null;
+    return {
+      label: group.label,
+      granted,
+      total: group.items.length,
     };
+  }).filter(Boolean);
+}
 
-    useEffect(() => {
-        // Không tự động tải user — chỉ tải khi bấm nút "Đồng bộ"
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+function defaultForm() {
+  return {
+    username: "",
+    password: "",
+    name: "",
+    role: "staff",
+    permissions: [...PRESETS.operator],
+  };
+}
 
+function formatDate(value) {
+  if (!value) return "—";
+  try {
+    return new Date(value).toLocaleDateString("vi-VN");
+  } catch {
+    return "—";
+  }
+}
 
-    const countActiveManagers = (list) => list.filter(u => u.active !== false && hasManageUsersPermission(u)).length;
+function UserForm({ form, setForm, message = "" }) {
+  const permissionSet = new Set(form.permissions || []);
 
-    const openAdd = () => {
-        setEditId(null);
-        setForm({ username: "", password: "", name: "", role: "staff", permissions: [...PRESETS["Chỉ xem"]] });
-        setShowForm(true);
-        setMsg("");
-    };
+  const togglePermission = (key) => {
+    setForm((prev) => ({
+      ...prev,
+      permissions: permissionSet.has(key)
+        ? prev.permissions.filter((item) => item !== key)
+        : [...prev.permissions, key],
+    }));
+  };
 
-    const openEdit = (u) => {
-        setEditId(u.id);
-        setForm({
-            username: u.username,
-            password: "",
-            name: u.name || "",
-            role: u.role || "staff",
-            permissions: [...(u.permissions || [])],
-        });
-        setShowForm(true);
-        setMsg("");
-    };
+  const applyPreset = (presetKey) => {
+    setForm((prev) => ({ ...prev, permissions: [...(PRESETS[presetKey] || [])] }));
+  };
 
-    const togglePerm = (key) => {
-        setForm(f => ({
-            ...f,
-            permissions: f.permissions.includes(key)
-                ? f.permissions.filter(k => k !== key)
-                : [...f.permissions, key],
-        }));
-    };
+  const toggleGroup = (group) => {
+    const keys = group.items.map((item) => item.key);
+    const allGranted = keys.every((key) => permissionSet.has(key));
+    setForm((prev) => ({
+      ...prev,
+      permissions: allGranted
+        ? prev.permissions.filter((key) => !keys.includes(key))
+        : [...new Set([...prev.permissions, ...keys])],
+    }));
+  };
 
-    const applyPreset = (presetName) => {
-        setForm(f => ({ ...f, permissions: [...PRESETS[presetName]] }));
-    };
+  return (
+    <div className="space-y-5">
+      {message ? (
+        <Callout tone="danger" title="Không thể lưu">
+          {message}
+        </Callout>
+      ) : null}
 
-    const toggleGroup = (group) => {
-        const groupKeys = PERMISSIONS.filter(p => p.group === group).map(p => p.key);
-        const allChecked = groupKeys.every(k => form.permissions.includes(k));
-        setForm(f => ({
-            ...f,
-            permissions: allChecked
-                ? f.permissions.filter(k => !groupKeys.includes(k))
-                : [...new Set([...f.permissions, ...groupKeys])],
-        }));
-    };
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Tên đăng nhập" hint="Dùng để đăng nhập">
+          <Input
+            value={form.username}
+            onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
+            placeholder="editor01"
+            autoComplete="off"
+          />
+        </Field>
+        <Field label="Mật khẩu" hint="Bỏ trống nếu không đổi">
+          <Input
+            type="password"
+            value={form.password}
+            onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
+            placeholder="••••••••"
+            autoComplete="new-password"
+          />
+        </Field>
+        <Field label="Tên hiển thị">
+          <Input
+            value={form.name}
+            onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+            placeholder="Nguyễn Văn A"
+          />
+        </Field>
+        <Field label="Vai trò">
+          <Select value={form.role} onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value }))}>
+            {ROLE_OPTIONS.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </div>
 
-    const submitForm = async (e) => {
-        e.preventDefault();
-        if (saving) return;
-        setMsg("");
-        const username = form.username.trim();
-        const usernameLower = username.toLowerCase();
+      <Field label="Mẫu quyền nhanh" hint={`${form.permissions.length} quyền đã chọn`}>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="ghost" size="sm" onClick={() => applyPreset("viewer")}>
+            Chỉ xem
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => applyPreset("operator")}>
+            Vận hành
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => applyPreset("editor")}>
+            Biên tập
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => applyPreset("manager")}>
+            Quản lý
+          </Button>
+          <Button
+            type="button"
+            variant="subtle"
+            size="sm"
+            onClick={() => setForm((prev) => ({ ...prev, permissions: [] }))}
+          >
+            Bỏ hết
+          </Button>
+        </div>
+      </Field>
 
-        if (!username) { setMsg("Ten dang nhap khong duoc trong"); return; }
-        if (HAS_SUPER_ADMIN && usernameLower === SUPER_ADMIN_USERNAME.toLowerCase()) { setMsg("Khong the dung ten nay"); return; }
+      <div className="grid gap-4 xl:grid-cols-2">
+        {PERMISSION_GROUPS.map((group) => {
+          const keys = group.items.map((item) => item.key);
+          const granted = keys.filter((key) => permissionSet.has(key)).length;
+          const allGranted = granted === keys.length;
 
-        try {
-            setSaving(true);
-            if (editId) {
-                const next = users.map(u => {
-                    if (u.id !== editId) return u;
-                    const updated = {
-                        ...u,
-                        username,
-                        email: username,
-                        name: form.name.trim(),
-                        role: form.role || "staff",
-                        permissions: form.permissions,
-                    };
-                    if (form.password) updated.password = form.password;
-                    return updated;
-                });
-                if (next.filter(u => String(u.username || "").trim().toLowerCase() === usernameLower).length > 1) {
-                    setMsg("Ten dang nhap da ton tai");
-                    return;
-                }
-                if (!HAS_SUPER_ADMIN && countActiveManagers(next) === 0) {
-                    setMsg("Phai con it nhat 1 tai khoan owner/users.manage dang hoat dong");
-                    return;
-                }
-                const updatedUser = next.find((u) => u.id === editId);
-                await upsertAdminUserToSheet({ ...updatedUser, updatedBy: currentUser.username });
-                audit("user.update", { targetUser: username, user: currentUser.username });
-            } else {
-                if (!form.password) { setMsg("Mat khau khong duoc trong"); return; }
-                if (users.some(u => String(u.username || "").trim().toLowerCase() === usernameLower)) {
-                    setMsg("Ten dang nhap da ton tai");
-                    return;
-                }
-                const newUser = {
-                    id: genId(),
-                    username,
-                    email: username,
-                    password: form.password,
-                    name: form.name.trim() || username,
-                    role: form.role || "staff",
-                    permissions: form.permissions,
-                    active: true,
-                    isSuper: false,
-                    createdAt: Date.now(),
-                    createdBy: currentUser.username,
-                };
-                await upsertAdminUserToSheet(newUser);
-                audit("user.create", { targetUser: newUser.username, user: currentUser.username });
-            }
-            await loadUsers();
-            setShowForm(false);
-            setEditId(null);
-        } catch (e2) {
-            setMsg(e2?.message || "Khong dong bo duoc user len Sheet");
-        } finally {
-            setSaving(false);
-        }
-    };
-    const toggleActive = async (u) => {
-        if (saving) return;
-        const isSelf = String(u.username || "").trim().toLowerCase() === currentUsername;
-        const deactivating = u.active !== false;
-        if (isSelf && deactivating) {
-            setMsg("Khong the tu khoa tai khoan dang dang nhap");
-            return;
-        }
-        if (!HAS_SUPER_ADMIN && deactivating && hasManageUsersPermission(u) && countActiveManagers(users) <= 1) {
-            setMsg("Phai con it nhat 1 tai khoan owner/users.manage dang hoat dong");
-            return;
-        }
-        try {
-            setSaving(true);
-            await upsertAdminUserToSheet({
-                ...u,
-                active: u.active === false ? true : false,
-                updatedBy: currentUser.username,
-            });
-            await loadUsers();
-            audit(deactivating ? "user.deactivate" : "user.activate", { targetUser: u.username, user: currentUser.username });
-        } catch (e2) {
-            setMsg(e2?.message || "Khong cap nhat duoc trang thai user");
-        } finally {
-            setSaving(false);
-        }
-    };
-    const deleteUser = async (u) => {
-        if (saving) return;
-        const isSelf = String(u.username || "").trim().toLowerCase() === currentUsername;
-        if (isSelf) {
-            setMsg("Khong the xoa tai khoan dang dang nhap");
-            return;
-        }
-        if (!HAS_SUPER_ADMIN && hasManageUsersPermission(u)) {
-            const remain = users.filter(x => x.id !== u.id);
-            if (countActiveManagers(remain) === 0) {
-                setMsg("Phai con it nhat 1 tai khoan owner/users.manage dang hoat dong");
-                return;
-            }
-        }
-        if (!confirm(`Xoa tai khoan "${u.username}"?`)) return;
-        try {
-            setSaving(true);
-            await deleteAdminUserFromSheet(u);
-            await loadUsers();
-            audit("user.delete", { targetUser: u.username, user: currentUser.username });
-        } catch (e2) {
-            setMsg(e2?.message || "Khong xoa duoc user tren Sheet");
-        } finally {
-            setSaving(false);
-        }
-    };
-    if (!currentUser || typeof currentUser !== "object") return null;
-
-    if (!canManageUsers) {
-        return (
-            <div className="flex flex-col items-center justify-center p-12 text-center h-[60vh]">
-                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 text-gray-400">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+          return (
+            <div key={group.key} className="rounded-3xl border border-slate-800 bg-slate-950/70 p-4">
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-white">{group.label}</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-500">
+                    {group.hint} • {granted}/{keys.length} quyền
+                  </div>
                 </div>
-                <p className="text-lg font-medium text-gray-500">Không đủ quyền</p>
-                <p className="text-sm mt-1">Cần quyền quản lý người dùng (owner/users.manage)</p>
+                <Button type="button" variant="ghost" size="sm" onClick={() => toggleGroup(group)}>
+                  {allGranted ? "Bỏ nhóm" : "Chọn nhóm"}
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {group.items.map((item) => (
+                  <label
+                    key={item.key}
+                    className="flex cursor-pointer items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 px-3 py-2.5 text-sm text-slate-200 transition hover:border-slate-700 hover:bg-slate-900"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={permissionSet.has(item.key)}
+                      onChange={() => togglePermission(item.key)}
+                      className="h-4 w-4 accent-blue-500"
+                    />
+                    <span>{item.label}</span>
+                  </label>
+                ))}
+              </div>
             </div>
-        );
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export default function UsersPanel() {
+  const currentUser = readLS(LS.AUTH, {});
+  const currentUsername = normalizeUsername(currentUser?.username);
+  const canManageUsers =
+    currentUser?.isSuper === true ||
+    currentUser?.role === "owner" ||
+    (currentUser?.permissions || []).includes("users.manage");
+
+  const [users, setUsers] = useState(() => readLS(LS.USERS, []));
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [source, setSource] = useState("local");
+  const [notice, setNotice] = useState(null);
+  const [query, setQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [showForm, setShowForm] = useState(false);
+  const [formMessage, setFormMessage] = useState("");
+  const [editId, setEditId] = useState(null);
+  const [form, setForm] = useState(defaultForm());
+  const [deleteTarget, setDeleteTarget] = useState(null);
+
+  const applyLocal = (list) => {
+    setUsers(list);
+    writeLS(LS.USERS, list);
+  };
+
+  const loadUsers = async ({ quiet = false } = {}) => {
+    if (!quiet) setLoading(true);
+    try {
+      const result = await Promise.race([
+        listUsersFromSheet({ includeInactive: true }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 8000)),
+      ]);
+      const list = Array.isArray(result) ? result : [];
+      applyLocal(list);
+      setSource("sheet");
+      setNotice(null);
+    } catch (error) {
+      setSource("local");
+      setNotice({
+        tone: "warning",
+        title: "Đang dùng dữ liệu cục bộ",
+        text:
+          error?.message === "Timeout"
+            ? "Google Sheet phản hồi chậm. Admin vẫn hiển thị bản cục bộ để bạn tiếp tục thao tác."
+            : error?.message || "Không tải được danh sách người dùng từ Google Sheet.",
+      });
+    } finally {
+      if (!quiet) setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  const stats = useMemo(() => {
+    const active = users.filter((item) => item?.active !== false).length;
+    const locked = users.filter((item) => item?.active === false).length;
+    const managers = users.filter((item) => item?.active !== false && isManagerLike(item)).length;
+    return {
+      total: users.length + 1,
+      active: active + 1,
+      locked,
+      managers: managers + 1,
+    };
+  }, [users]);
+
+  const filteredUsers = useMemo(() => {
+    return users.filter((item) => {
+      const hay = `${item.username || ""} ${item.name || ""} ${(item.permissions || []).join(" ")} ${item.role || ""}`.toLowerCase();
+      if (query && !hay.includes(query.toLowerCase())) return false;
+      if (roleFilter && (item.role || "staff") !== roleFilter) return false;
+      if (statusFilter === "active" && item.active === false) return false;
+      if (statusFilter === "locked" && item.active !== false) return false;
+      return true;
+    });
+  }, [users, query, roleFilter, statusFilter]);
+
+  const openCreate = () => {
+    setEditId(null);
+    setForm(defaultForm());
+    setFormMessage("");
+    setShowForm(true);
+  };
+
+  const openEdit = (user) => {
+    setEditId(user.id);
+    setForm({
+      username: user.username || "",
+      password: "",
+      name: user.name || "",
+      role: user.role || "staff",
+      permissions: [...(user.permissions || [])],
+    });
+    setFormMessage("");
+    setShowForm(true);
+  };
+
+  const countActiveManagers = (list) => list.filter((item) => item?.active !== false && isManagerLike(item)).length + 1;
+
+  const submitForm = async (event) => {
+    event?.preventDefault?.();
+    if (saving) return;
+
+    const username = String(form.username || "").trim();
+    const usernameLower = normalizeUsername(username);
+    setFormMessage("");
+
+    if (!username) {
+      setFormMessage("Tên đăng nhập không được để trống.");
+      return;
     }
 
+    if (usernameLower === normalizeUsername(SUPER_ADMIN_USERNAME)) {
+      setFormMessage("Tên đăng nhập này đã dành riêng cho super admin.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      if (editId) {
+        const nextList = users.map((item) => {
+          if (item.id !== editId) return item;
+          const updated = {
+            ...item,
+            username,
+            email: username,
+            name: String(form.name || "").trim(),
+            role: form.role || "staff",
+            permissions: [...(form.permissions || [])],
+          };
+          if (form.password) updated.password = form.password;
+          return updated;
+        });
+
+        if (nextList.filter((item) => normalizeUsername(item.username) === usernameLower).length > 1) {
+          setFormMessage("Tên đăng nhập đã tồn tại.");
+          return;
+        }
+
+        const updatedUser = nextList.find((item) => item.id === editId);
+        await upsertAdminUserToSheet({ ...updatedUser, updatedBy: currentUser.username });
+        applyLocal(nextList);
+        audit("user.update", { targetUser: username, user: currentUser.username });
+        setNotice({ tone: "success", title: "Đã cập nhật tài khoản", text: `Tài khoản ${username} đã được lưu.` });
+      } else {
+        if (!form.password) {
+          setFormMessage("Mật khẩu không được để trống khi tạo tài khoản.");
+          return;
+        }
+        if (users.some((item) => normalizeUsername(item.username) === usernameLower)) {
+          setFormMessage("Tên đăng nhập đã tồn tại.");
+          return;
+        }
+
+        const newUser = {
+          id: genId(),
+          username,
+          email: username,
+          password: form.password,
+          name: String(form.name || "").trim() || username,
+          role: form.role || "staff",
+          permissions: [...(form.permissions || [])],
+          active: true,
+          isSuper: false,
+          createdAt: Date.now(),
+          createdBy: currentUser.username,
+        };
+
+        await upsertAdminUserToSheet(newUser);
+        applyLocal([newUser, ...users]);
+        audit("user.create", { targetUser: newUser.username, user: currentUser.username });
+        setNotice({ tone: "success", title: "Đã tạo tài khoản", text: `Tài khoản ${username} đã được thêm.` });
+      }
+
+      setShowForm(false);
+      setEditId(null);
+      await loadUsers({ quiet: true });
+    } catch (error) {
+      setFormMessage(error?.message || "Không thể đồng bộ người dùng lên Google Sheet.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleActive = async (user) => {
+    if (saving) return;
+    const isSelf = normalizeUsername(user.username) === currentUsername;
+    const deactivating = user.active !== false;
+
+    if (isSelf && deactivating) {
+      setNotice({ tone: "danger", title: "Không thể tự khóa", text: "Tài khoản đang đăng nhập không thể tự khóa." });
+      return;
+    }
+
+    if (deactivating && isManagerLike(user) && countActiveManagers(users.filter((item) => item.id !== user.id)) === 0) {
+      setNotice({
+        tone: "danger",
+        title: "Cần giữ ít nhất một quản trị",
+        text: "Không thể khóa tài khoản cuối cùng có quyền quản lý người dùng.",
+      });
+      return;
+    }
+
+    try {
+      setSaving(true);
+      const payload = { ...user, active: user.active === false, updatedBy: currentUser.username };
+      await upsertAdminUserToSheet(payload);
+      applyLocal(users.map((item) => (item.id === user.id ? payload : item)));
+      await loadUsers({ quiet: true });
+      audit(user.active === false ? "user.activate" : "user.deactivate", { targetUser: user.username, user: currentUser.username });
+    } catch (error) {
+      setNotice({
+        tone: "danger",
+        title: "Không cập nhật được trạng thái",
+        text: error?.message || "Lỗi khi đồng bộ trạng thái người dùng.",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget || saving) return;
+
+    const isSelf = normalizeUsername(deleteTarget.username) === currentUsername;
+    if (isSelf) {
+      setNotice({ tone: "danger", title: "Không thể tự xóa", text: "Tài khoản đang đăng nhập không thể tự xóa." });
+      setDeleteTarget(null);
+      return;
+    }
+
+    if (isManagerLike(deleteTarget) && countActiveManagers(users.filter((item) => item.id !== deleteTarget.id)) === 0) {
+      setNotice({
+        tone: "danger",
+        title: "Không thể xóa",
+        text: "Cần giữ lại ít nhất một tài khoản quản trị còn hoạt động.",
+      });
+      setDeleteTarget(null);
+      return;
+    }
+
+    try {
+      setSaving(true);
+      await deleteAdminUserFromSheet(deleteTarget);
+      applyLocal(users.filter((item) => item.id !== deleteTarget.id));
+      await loadUsers({ quiet: true });
+      audit("user.delete", { targetUser: deleteTarget.username, user: currentUser.username });
+      setNotice({ tone: "success", title: "Đã xóa tài khoản", text: `${deleteTarget.username} đã được gỡ khỏi hệ thống.` });
+    } catch (error) {
+      setNotice({
+        tone: "danger",
+        title: "Không xóa được tài khoản",
+        text: error?.message || "Lỗi khi xóa người dùng trên Google Sheet.",
+      });
+    } finally {
+      setSaving(false);
+      setDeleteTarget(null);
+    }
+  };
+
+  if (!canManageUsers) {
     return (
-        <div className="flex flex-col" style={{ height: "calc(100vh - 7rem)" }}>
-            <div className="shrink-0">
-                <div className="flex items-center justify-between mb-4">
-                    <div>
-                        <h2 className="text-lg font-semibold text-gray-800">Quản lý người dùng</h2>
-                        <p className="text-xs text-gray-400 mt-0.5">Tạo tài khoản và cấp quyền tuỳ chỉnh</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <button onClick={loadUsers} disabled={loading || saving}
-                            className="h-9 px-4 text-sm font-medium text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 rounded-lg transition-all shadow-sm active:scale-[0.98] flex items-center gap-1.5 disabled:opacity-50">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 11-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /></svg>
-                            Đồng bộ
-                        </button>
-                        <button onClick={openAdd} disabled={loading || saving}
-                            className="h-9 px-4 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-all shadow-sm active:scale-[0.98] flex items-center gap-1.5 disabled:opacity-50">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
-                            Thêm tài khoản
-                        </button>
-                    </div>
-                </div>
-                {(loading || saving) && (
-                    <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-600">
-                        {loading ? "Đang tải user từ Sheet..." : "Đang đồng bộ user lên Sheet..."}
-                    </div>
-                )}
-            </div>
-
-            {/* ===== Permission Form Modal ===== */}
-            {showForm && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowForm(false)}>
-                    <form onClick={(e) => e.stopPropagation()} onSubmit={submitForm}
-                        className="w-full max-w-2xl bg-white rounded-none sm:rounded-2xl shadow-2xl overflow-hidden h-full sm:h-auto sm:max-h-[90vh] flex flex-col">
-                        <div className="px-6 py-4 border-b border-gray-100 shrink-0">
-                            <h3 className="text-base font-semibold text-gray-800">{editId ? "Sửa tài khoản" : "Thêm tài khoản mới"}</h3>
-                        </div>
-
-                        <div className="p-6 overflow-y-auto flex-1 space-y-5">
-                            {msg && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{msg}</div>}
-
-                            {/* Basic info - 2 rows: username+pw | name+role */}
-                            <div className="space-y-2.5">
-                              {/* Row 1: username + password */}
-                              <div className="grid grid-cols-2 gap-2.5">
-                                <div>
-                                  <label className="text-xs font-medium text-gray-600 mb-1 block">Tên đăng nhập</label>
-                                  <input className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition"
-                                    value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="vd: editor01" autoFocus disabled={saving} />
-                                </div>
-                                <div>
-                                  <label className="text-xs font-medium text-gray-600 mb-1 block">
-                                    {editId ? "Mật khẩu mới" : "Mật khẩu"}
-                                  </label>
-                                  <input type="password" className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition"
-                                    value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="••••••" disabled={saving} />
-                                </div>
-                              </div>
-                              {/* Row 2: display name + role */}
-                              <div className="grid grid-cols-2 gap-2.5">
-                                <div>
-                                  <label className="text-xs font-medium text-gray-600 mb-1 block">Tên hiển thị</label>
-                                  <input className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition"
-                                    value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Nguyễn Văn A" disabled={saving} />
-                                </div>
-                                <div>
-                                  <label className="text-xs font-medium text-gray-600 mb-1 block">Vai trò</label>
-                                  <select className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition bg-white"
-                                    value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} disabled={saving}>
-                                    {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                                  </select>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Permission presets */}
-                            <div>
-                                <div className="flex items-center gap-1.5 mb-3 flex-wrap">
-                                    <span className="text-xs font-semibold text-gray-700 shrink-0">Cấp quyền nhanh:</span>
-                                    <div className="flex items-center gap-1 flex-nowrap">
-                                      {Object.keys(PRESETS).map(name => (
-                                          <button key={name} type="button" onClick={() => applyPreset(name)}
-                                              className="px-2.5 py-1 text-[11px] font-medium border border-gray-200 rounded-full hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600 transition whitespace-nowrap">
-                                              {name}
-                                          </button>
-                                      ))}
-                                      <button type="button" onClick={() => setForm(f => ({ ...f, permissions: [] }))}
-                                          className="px-2.5 py-1 text-[11px] font-medium text-red-500 border border-red-200 rounded-full hover:bg-red-50 transition whitespace-nowrap">
-                                          Bỏ hết
-                                      </button>
-                                    </div>
-                                </div>
-
-                                {/* Permission groups with checkboxes */}
-                                <div className="space-y-3">
-                                    {GROUPS.map(group => {
-                                        const perms = PERMISSIONS.filter(p => p.group === group);
-                                        const allChecked = perms.every(p => form.permissions.includes(p.key));
-                                        const someChecked = perms.some(p => form.permissions.includes(p.key));
-                                        return (
-                                            <div key={group} className="border border-gray-200 rounded-xl overflow-hidden">
-                                                {/* Group header */}
-                                                <div className="flex items-center gap-2.5 px-4 py-2.5 bg-gray-50 border-b border-gray-100 cursor-pointer hover:bg-gray-100 transition"
-                                                    onClick={() => toggleGroup(group)}>
-                                                    <input type="checkbox" checked={allChecked} ref={(el) => { if (el) el.indeterminate = someChecked && !allChecked; }}
-                                                        onChange={() => toggleGroup(group)} className="accent-blue-600 w-4 h-4 rounded" onClick={e => e.stopPropagation()} />
-                                                    <span className="text-sm font-semibold text-gray-700">{perms[0]?.icon} {group}</span>
-                                                    <span className="text-[10px] text-gray-400 ml-auto">{perms.filter(p => form.permissions.includes(p.key)).length}/{perms.length}</span>
-                                                </div>
-                                                {/* Individual permissions */}
-                                                <div className="divide-y divide-gray-50">
-                                                    {perms.map(p => (
-                                                        <label key={p.key}
-                                                            className={`flex items-center gap-3 px-4 py-2 cursor-pointer transition-colors ${form.permissions.includes(p.key) ? "bg-blue-50/40" : "hover:bg-gray-50"
-                                                                }`}>
-                                                            <input type="checkbox" checked={form.permissions.includes(p.key)}
-                                                                onChange={() => togglePerm(p.key)} className="accent-blue-600 w-3.5 h-3.5 rounded" />
-                                                            <span className="text-sm text-gray-700">{p.label}</span>
-                                                        </label>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Footer */}
-                        <div className="px-6 py-4 border-t border-gray-100 shrink-0 flex items-center gap-2 bg-gray-50/50">
-                            <span className="text-xs text-gray-400 mr-auto">{form.permissions.length}/{PERMISSIONS.length} quyền được chọn</span>
-                            <button type="button" onClick={() => setShowForm(false)} disabled={saving}
-                                className="px-5 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition disabled:opacity-50 disabled:cursor-not-allowed">Huỷ</button>
-                            <button type="submit" disabled={saving}
-                                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                                {saving ? "Dang luu..." : (editId ? "Cập nhật" : "Tạo tài khoản")}
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            )}
-
-            {/* ===== User list - Mobile card view ===== */}
-            <div className="flex-1 overflow-y-auto sm:hidden space-y-2">
-                {HAS_SUPER_ADMIN && (
-                    <div className="bg-amber-50/60 rounded-xl border border-amber-200/60 px-3 py-2.5 flex items-center gap-2.5">
-                        <span className="text-base shrink-0">👑</span>
-                        <div className="flex-1 min-w-0">
-                            <div className="font-mono text-xs font-bold text-amber-800">{SUPER_ADMIN_USERNAME}</div>
-                            <div className="text-[10px] text-amber-600">{SUPER_ADMIN_NAME} · Toàn quyền</div>
-                        </div>
-                        <span className="text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">Active</span>
-                    </div>
-                )}
-                {users.map(u => {
-                    const perms = u.permissions || [];
-                    return (
-                        <div key={u.id} className="bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2.5 flex items-center gap-2.5">
-                            <span className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white text-[11px] font-bold flex items-center justify-center shrink-0">
-                                {(u.username?.[0] || "?").toUpperCase()}
-                            </span>
-                            <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="font-mono text-xs font-semibold text-gray-800">{u.username}</span>
-                                    <span className="px-1.5 py-px text-[9px] rounded bg-slate-100 text-slate-600 border border-slate-200">{u.role || "staff"}</span>
-                                    <button onClick={() => toggleActive(u)} disabled={saving}
-                                        className={`text-[9px] font-medium px-1.5 py-px rounded-full border transition disabled:opacity-50 disabled:cursor-not-allowed ${
-                                            u.active !== false ? "bg-emerald-50 text-emerald-600 border-emerald-200" : "bg-red-50 text-red-500 border-red-200"
-                                        }`}>
-                                        {u.active !== false ? "Active" : "Khoá"}
-                                    </button>
-                                </div>
-                                <div className="text-[10px] text-gray-400 mt-0.5">{u.name || "—"}</div>
-                            </div>
-                            <div className="flex gap-0.5 shrink-0">
-                                <button onClick={() => openEdit(u)} disabled={saving} className="p-1.5 text-gray-300 hover:text-blue-500 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
-                                </button>
-                                <button onClick={() => deleteUser(u)} disabled={saving} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
-                                </button>
-                            </div>
-                        </div>
-                    );
-                })}
-                {users.length === 0 && (
-                    <div className="py-12 text-center">
-                        <div className="text-3xl mb-2 opacity-30">👥</div>
-                        <div className="text-sm text-gray-400">Chưa có tài khoản nào khác</div>
-                    </div>
-                )}
-            </div>
-
-            {/* ===== User list - Desktop table ===== */}
-            <div className="flex-1 overflow-auto hidden sm:block bg-white rounded-xl border border-gray-200/80 shadow-sm">
-                <table className="w-full text-sm min-w-[600px]" style={{ tableLayout: "fixed" }}>
-                    <colgroup>
-                        <col style={{ width: "2.5rem" }} />
-                        <col style={{ width: "9rem" }} />
-                        <col style={{ width: "8rem" }} />
-                        <col />
-                        <col style={{ width: "5rem" }} />
-                        <col style={{ width: "6rem" }} />
-                        <col style={{ width: "5rem" }} />
-                    </colgroup>
-                    <thead className="sticky top-0 z-10">
-                        <tr className="border-b border-gray-200">
-                            <th className="py-2.5 px-3 bg-gray-50" />
-                            <th className="text-left py-2.5 px-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Tài khoản</th>
-                            <th className="text-left py-2.5 px-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Tên</th>
-                            <th className="text-left py-2.5 px-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Quyền hạn</th>
-                            <th className="text-left py-2.5 px-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Trạng thái</th>
-                            <th className="text-left py-2.5 px-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Ngày tạo</th>
-                            <th className="py-2.5 px-3 bg-gray-50" />
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                        {/* Built-in Super Admin */}
-                        {HAS_SUPER_ADMIN && (
-                            <tr className="bg-amber-50/30">
-                                <td className="py-3 px-3 text-center"><span className="text-base">👑</span></td>
-                                <td className="py-3 px-3"><span className="font-mono text-xs font-bold text-amber-800">{SUPER_ADMIN_USERNAME}</span></td>
-                                <td className="py-3 px-3 text-sm text-gray-700 font-medium">{SUPER_ADMIN_NAME}</td>
-                                <td className="py-3 px-3">
-                                    <span className="inline-block px-2 py-0.5 text-[10px] rounded-full bg-amber-100 text-amber-700 border border-amber-200 font-bold">Toàn quyền</span>
-                                </td>
-                                <td className="py-3 px-3">
-                                    <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Active
-                                    </span>
-                                </td>
-                                <td className="py-3 px-3 text-[10px] text-gray-400">Built-in</td>
-                                <td className="py-3 px-3 text-center text-[10px] text-gray-300">—</td>
-                            </tr>
-                        )}
-
-                        {/* Dynamic users */}
-                        {users.map(u => {
-                            const perms = u.permissions || [];
-                            const permCount = perms.length;
-                            return (
-                                <tr key={u.id} className="group hover:bg-blue-50/30 transition-colors">
-                                    <td className="py-3 px-3 text-center">
-                                        <span className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white text-[10px] font-bold flex items-center justify-center">
-                                            {(u.username?.[0] || "?").toUpperCase()}
-                                        </span>
-                                    </td>
-                                    <td className="py-3 px-3">
-                                        <span className="font-mono text-xs font-medium text-gray-800">{u.username}</span>
-                                    </td>
-                                    <td className="py-3 px-3 text-sm text-gray-700">{u.name || "—"}</td>
-                                    <td className="py-3 px-3">
-                                        <span className="inline-block mr-1.5 px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[9px] border border-slate-200">
-                                            {u.role || "staff"}
-                                        </span>
-                                        <div className="flex flex-wrap gap-0.5">
-                                            {GROUPS.map(group => {
-                                                const groupPerms = PERMISSIONS.filter(p => p.group === group);
-                                                const has = groupPerms.filter(p => perms.includes(p.key)).length;
-                                                if (has === 0) return null;
-                                                const full = has === groupPerms.length;
-                                                return (
-                                                    <span key={group} className={`inline-block px-1.5 py-0.5 rounded text-[9px] border ${full ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-yellow-50 text-yellow-700 border-yellow-200"
-                                                        }`} title={groupPerms.filter(p => perms.includes(p.key)).map(p => p.label).join(", ")}>
-                                                        {group} {has}/{groupPerms.length}
-                                                    </span>
-                                                );
-                                            })}
-                                            {permCount === 0 && <span className="text-[10px] text-gray-300">Không có quyền</span>}
-                                        </div>
-                                    </td>
-                                    <td className="py-3 px-3">
-                                        <button onClick={() => toggleActive(u)} disabled={saving}
-                                            className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full cursor-pointer transition disabled:opacity-50 disabled:cursor-not-allowed ${u.active !== false
-                                                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
-                                                    : "bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
-                                                }`}>
-                                            <span className={`w-1.5 h-1.5 rounded-full ${u.active !== false ? "bg-emerald-500" : "bg-red-500"}`} />
-                                            {u.active !== false ? "Active" : "Khoá"}
-                                        </button>
-                                    </td>
-                                    <td className="py-3 px-3 text-[10px] text-gray-400">
-                                        {u.createdAt ? new Date(u.createdAt).toLocaleDateString("vi") : "—"}
-                                    </td>
-                                    <td className="py-3 px-3">
-                                        <div className="flex justify-end gap-1 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onClick={() => openEdit(u)} disabled={saving} className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition disabled:opacity-50 disabled:cursor-not-allowed" title="Sửa">
-                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
-                                            </button>
-                                            <button onClick={() => deleteUser(u)} disabled={saving} className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition disabled:opacity-50 disabled:cursor-not-allowed" title="Xoá">
-                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
-                                            </button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
-
-                {users.length === 0 && (
-                    <div className="py-12 text-center">
-                        <div className="text-3xl mb-2 opacity-30">👥</div>
-                        <div className="text-sm text-gray-400">Chưa có tài khoản nào khác</div>
-                        <div className="text-xs text-gray-300 mt-1">Bấm "Thêm tài khoản" để tạo</div>
-                    </div>
-                )}
-            </div>
-        </div>
+      <Empty
+        icon="🔒"
+        title="Không đủ quyền truy cập"
+        hint="Khu vực này yêu cầu quyền users.manage hoặc vai trò Chủ hệ thống."
+      />
     );
+  }
+
+  const rows = [
+    {
+      id: "__super__",
+      username: SUPER_ADMIN_USERNAME,
+      name: SUPER_ADMIN_NAME,
+      role: "owner",
+      permissions: PERMISSION_GROUPS.flatMap((group) => group.items.map((item) => item.key)),
+      active: true,
+      createdAt: null,
+      builtIn: true,
+      isSuper: true,
+    },
+    ...filteredUsers,
+  ];
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        title="Người dùng"
+        description="Tài khoản và phân quyền admin."
+        compact
+        actions={
+          <>
+            <Button variant="ghost" loading={loading} onClick={() => loadUsers()}>
+              Đồng bộ
+            </Button>
+            <Button variant="secondary" onClick={openCreate}>
+              Thêm tài khoản
+            </Button>
+          </>
+        }
+        chips={
+          <>
+            <Badge variant="info">Nguồn dữ liệu: {source === "sheet" ? "Google Sheet" : "Bản cục bộ"}</Badge>
+            <Badge variant="warning">Super admin cố định</Badge>
+          </>
+        }
+      />
+
+      {notice ? (
+        <Callout tone={notice.tone} title={notice.title}>
+          {notice.text}
+        </Callout>
+      ) : null}
+
+      <MetricStrip>
+        <MetricItem label="Tổng tài khoản" value={stats.total} meta="Bao gồm cả super admin mặc định" tone="blue" />
+        <MetricItem label="Đang hoạt động" value={stats.active} meta="Có thể đăng nhập ngay" tone="emerald" />
+        <MetricItem label="Đang khóa" value={stats.locked} meta="Không thể đăng nhập" tone="amber" />
+        <MetricItem label="Nhóm quản trị" value={stats.managers} meta="Owner hoặc có quyền users.manage" tone="violet" />
+      </MetricStrip>
+
+      <Section
+        title="Danh sách tài khoản"
+        compact
+      >
+        <div className="space-y-3">
+        <Toolbar className="grid grid-cols-1 gap-2 xl:grid-cols-[minmax(320px,1.7fr)_180px_180px]">
+          <Input
+            className="min-w-0"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Tìm tên đăng nhập, tên hiển thị..."
+          />
+          <Select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="min-w-0">
+            <option value="">Tất cả vai trò</option>
+            {ROLE_OPTIONS.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </Select>
+          <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="min-w-0">
+            <option value="all">Mọi trạng thái</option>
+            <option value="active">Đang hoạt động</option>
+            <option value="locked">Đang khóa</option>
+          </Select>
+        </Toolbar>
+
+        {rows.length === 0 ? (
+          <Empty
+            icon="👤"
+            title="Chưa có tài khoản nào"
+            hint='Bấm "Thêm tài khoản" để tạo người dùng quản trị đầu tiên ngoài super admin.'
+          />
+        ) : (
+          <div className="space-y-3">
+            <div className="hidden lg:block">
+              <Table
+                columns={[
+                  { title: "Tài khoản", dataIndex: "account", thClass: "w-[26%]" },
+                  { title: "Vai trò", dataIndex: "role", thClass: "w-[14%]" },
+                  { title: "Phạm vi quyền", dataIndex: "scope" },
+                  { title: "Trạng thái", dataIndex: "status", thClass: "w-[15%]" },
+                  { title: "Ngày tạo", dataIndex: "created", thClass: "w-[12%]" },
+                  { title: "", dataIndex: "actions", thClass: "w-[14%]" },
+                ]}
+                data={rows}
+                rowRender={(row) => {
+                  const summary = summarizeAccess(row);
+                  const isActive = row.active !== false;
+                  return (
+                    <tr key={row.id} className="align-top transition hover:bg-slate-900/55">
+                      <td className="px-3 py-3">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-800 bg-slate-900 text-sm font-semibold text-white">
+                            {(row.username?.[0] || "?").toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="truncate text-sm font-semibold text-white">{row.username}</div>
+                              {row.builtIn ? <Badge variant="warning">Built-in</Badge> : null}
+                            </div>
+                            <div className="mt-1 text-sm text-slate-400">{row.name || "Chưa có tên hiển thị"}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <Badge variant={roleBadge(row.role)}>{ROLE_LABELS[row.role] || row.role || "Nhân viên"}</Badge>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex flex-wrap gap-2">
+                          {summary.length ? (
+                            summary.map((item) => (
+                              <Badge key={item.label} variant={item.granted === item.total ? "success" : "info"}>
+                                {item.label} {item.granted}/{item.total}
+                              </Badge>
+                            ))
+                          ) : (
+                            <span className="text-sm text-slate-500">Chỉ dùng quyền mặc định từ vai trò.</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="space-y-2">
+                          <Badge variant={isActive ? "success" : "warning"}>
+                            {isActive ? "Đang hoạt động" : "Đang khóa"}
+                          </Badge>
+                          {!row.builtIn ? (
+                            <div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={saving}
+                                onClick={() => toggleActive(row)}
+                              >
+                                {isActive ? "Khóa tài khoản" : "Mở khóa"}
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-sm text-slate-400">
+                        {row.builtIn ? "Built-in" : formatDate(row.createdAt)}
+                      </td>
+                      <td className="px-3 py-3">
+                        {row.builtIn ? (
+                          <div className="text-xs text-slate-600">—</div>
+                        ) : (
+                          <div className="flex justify-end gap-2">
+                            <Button variant="ghost" size="sm" onClick={() => openEdit(row)}>
+                              Sửa
+                            </Button>
+                            <Button variant="danger" size="sm" onClick={() => setDeleteTarget(row)}>
+                              Xóa
+                            </Button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                }}
+              />
+            </div>
+
+            <div className="grid gap-3 lg:hidden">
+              {rows.map((row) => {
+                const summary = summarizeAccess(row);
+                const isActive = row.active !== false;
+                return (
+                  <div key={row.id} className="rounded-3xl border border-slate-800 bg-slate-950/70 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="text-base font-semibold text-white">{row.username}</div>
+                          {row.builtIn ? <Badge variant="warning">Built-in</Badge> : null}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-400">{row.name || "Chưa có tên hiển thị"}</div>
+                      </div>
+                      <Badge variant={roleBadge(row.role)}>{ROLE_LABELS[row.role] || row.role || "Nhân viên"}</Badge>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {summary.length ? (
+                        summary.map((item) => (
+                          <Badge key={item.label} variant={item.granted === item.total ? "success" : "info"}>
+                            {item.label} {item.granted}/{item.total}
+                          </Badge>
+                        ))
+                      ) : (
+                        <span className="text-sm text-slate-500">Chỉ dùng quyền mặc định từ vai trò.</span>
+                      )}
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                      <div className="space-y-2">
+                        <Badge variant={isActive ? "success" : "warning"}>
+                          {isActive ? "Đang hoạt động" : "Đang khóa"}
+                        </Badge>
+                        <div className="text-xs text-slate-500">
+                          {row.builtIn ? "Built-in" : `Ngày tạo: ${formatDate(row.createdAt)}`}
+                        </div>
+                      </div>
+
+                      {row.builtIn ? null : (
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <Button variant="ghost" size="sm" onClick={() => toggleActive(row)} disabled={saving}>
+                            {isActive ? "Khóa" : "Mở khóa"}
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => openEdit(row)}>
+                            Sửa
+                          </Button>
+                          <Button variant="danger" size="sm" onClick={() => setDeleteTarget(row)}>
+                            Xóa
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        </div>
+      </Section>
+
+      <Modal
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title={editId ? "Sửa tài khoản" : "Thêm tài khoản"}
+        description="Cấp quyền theo từng nhóm công việc để admin vận hành gọn và an toàn hơn."
+        footer={
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-slate-400">{form.permissions.length} quyền đang được chọn</div>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => setShowForm(false)}>
+                Hủy
+              </Button>
+              <Button variant="secondary" loading={saving} onClick={submitForm}>
+                {editId ? "Lưu thay đổi" : "Tạo tài khoản"}
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <form onSubmit={submitForm}>
+          <UserForm form={form} setForm={setForm} message={formMessage} />
+        </form>
+      </Modal>
+
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Xóa tài khoản"
+        description="Thao tác này sẽ gỡ tài khoản khỏi danh sách quản trị."
+        widthClass="max-w-xl"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" onClick={() => setDeleteTarget(null)}>
+              Hủy
+            </Button>
+            <Button variant="danger" loading={saving} onClick={confirmDelete}>
+              Xóa tài khoản
+            </Button>
+          </div>
+        }
+      >
+        <div className="text-sm leading-6 text-slate-300">
+          Bạn sắp xóa tài khoản <span className="font-semibold text-white">{deleteTarget?.username}</span>. Hệ thống sẽ chặn thao tác này nếu đây là tài khoản quản trị cuối cùng còn hoạt động.
+        </div>
+      </Modal>
+    </div>
+  );
 }

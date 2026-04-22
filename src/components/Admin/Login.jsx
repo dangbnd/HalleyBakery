@@ -240,18 +240,25 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
-      <form onSubmit={submit} className="w-full max-w-sm bg-white border border-gray-200 rounded-2xl p-8 shadow-xl space-y-5">
+    <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.16),_transparent_24%),radial-gradient(circle_at_top_right,_rgba(217,70,239,0.10),_transparent_20%),linear-gradient(180deg,#020617,#0f172a)] px-4 py-10">
+      <form
+        onSubmit={submit}
+        className="w-full max-w-sm space-y-5 rounded-[28px] border border-slate-800 bg-slate-900/92 p-8 shadow-[0_32px_80px_rgba(2,6,23,0.55)] backdrop-blur"
+      >
         <div className="text-center">
-          <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center text-2xl font-bold text-white shadow-lg shadow-pink-500/20 mb-3">H</div>
-          <h1 className="text-xl font-bold text-gray-800">Đăng nhập Admin</h1>
-          <p className="text-xs text-gray-400 mt-1">Halley Bakery Management</p>
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-fuchsia-500 via-rose-500 to-orange-400 text-2xl font-bold text-white shadow-[0_16px_30px_rgba(244,63,94,0.28)]">
+            H
+          </div>
+          <h1 className="text-xl font-bold text-white">Đăng nhập Admin</h1>
+          <p className="mt-1 text-xs text-slate-500">HALLEY Bakery • Bảng điều hành nội bộ</p>
         </div>
-        {err && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{err}</div>}
+        {err ? (
+          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">{err}</div>
+        ) : null}
         <div>
-          <label className="text-sm font-medium text-gray-700 mb-1.5 block">Tài khoản</label>
+          <label className="mb-1.5 block text-sm font-medium text-slate-300">Tài khoản</label>
           <input
-            className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition"
+            className="w-full rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/20"
             value={u}
             onChange={(e) => setU(e.target.value)}
             placeholder="Nhập tên đăng nhập"
@@ -259,10 +266,10 @@ export default function Login() {
           />
         </div>
         <div>
-          <label className="text-sm font-medium text-gray-700 mb-1.5 block">Mật khẩu</label>
+          <label className="mb-1.5 block text-sm font-medium text-slate-300">Mật khẩu</label>
           <div className="relative">
             <input
-              className="w-full border border-gray-200 rounded-xl pl-4 pr-11 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition"
+              className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-4 pr-11 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/20"
               type={showPass ? "text" : "password"}
               value={p}
               onChange={(e) => setP(e.target.value)}
@@ -271,7 +278,7 @@ export default function Login() {
             <button
               type="button"
               onClick={() => setShowPass((v) => !v)}
-              className="absolute inset-y-0 right-0 w-10 grid place-items-center text-gray-500 hover:text-gray-700"
+              className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-500 transition hover:text-slate-300"
               aria-label={showPass ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
               title={showPass ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
             >
@@ -291,16 +298,16 @@ export default function Login() {
             </button>
           </div>
         </div>
-        <button className="w-full bg-gradient-to-r from-gray-800 to-gray-900 hover:from-gray-900 hover:to-black text-white rounded-xl py-2.5 font-medium text-sm transition-all shadow-md hover:shadow-lg active:scale-[0.98]">
+        <button className="w-full rounded-xl border border-blue-500/70 bg-blue-500 py-2.5 text-sm font-medium text-white shadow-[0_12px_30px_rgba(59,130,246,0.25)] transition-all hover:bg-blue-400 active:scale-[0.98]">
           Đăng nhập
         </button>
 
         <div className="relative">
           <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t border-gray-200" />
+            <span className="w-full border-t border-slate-800" />
           </div>
           <div className="relative flex justify-center text-[11px] uppercase tracking-wider">
-            <span className="bg-white px-2 text-gray-400">hoặc</span>
+            <span className="bg-slate-900 px-2 text-slate-500">hoặc</span>
           </div>
         </div>
 
@@ -308,12 +315,12 @@ export default function Login() {
           type="button"
           onClick={submitGoogle}
           disabled={googleBusy}
-          className="w-full h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
+          className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-950 text-sm font-medium text-slate-200 transition hover:border-slate-700 hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <span className="text-base leading-none">G</span>
           {googleBusy ? "Đang xác thực Google..." : "Đăng nhập bằng Google"}
         </button>
-        <p className="text-[11px] text-gray-400 leading-4">{allowlistHint}</p>
+        <p className="text-[11px] leading-4 text-slate-500">{allowlistHint}</p>
       </form>
     </div>
   );
