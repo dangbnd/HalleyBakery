@@ -1006,9 +1006,10 @@ export default function AdminOverviewPanel({ onNavigate }) {
   const leads = useMemo(() => mergeLeads(remote.leads || [], localLeads), [remote.leads, localLeads]);
   const behavior = useMemo(() => summarizeCustomerBehavior(products, { events, leads }), [products, events, leads]);
 
-  useEffect(() => {
+  const refreshRemote = (force = false) => {
     let stopped = false;
-    loadRemoteCustomerBehavior()
+    setRemote((prev) => ({ ...prev, loading: true }));
+    loadRemoteCustomerBehavior({ force })
       .then((data) => {
         if (!stopped) setRemote({ loading: false, ...data });
       })
@@ -1027,6 +1028,10 @@ export default function AdminOverviewPanel({ onNavigate }) {
     return () => {
       stopped = true;
     };
+  };
+
+  useEffect(() => {
+    return refreshRemote(false);
   }, []);
 
   const activeProducts = products.filter((item) => item?.active !== false && productVisibility(item) !== "hidden").length;
@@ -1093,7 +1098,7 @@ export default function AdminOverviewPanel({ onNavigate }) {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <PeriodSwitch value={periodDays} onChange={setPeriodDays} />
-            <Button variant="ghost" size="sm" onClick={() => onNavigate?.("system", "settings")}>
+            <Button variant="ghost" size="sm" loading={remote.loading} onClick={() => refreshRemote(true)}>
               Đồng bộ
             </Button>
             <Button variant="secondary" size="sm" onClick={() => onNavigate?.("media", "upload")}>

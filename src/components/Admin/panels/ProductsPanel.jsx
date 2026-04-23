@@ -199,20 +199,20 @@ export default function ProductsPanel({ canEdit = true, canDelete = true }) {
     writeLS("products", rows);
   };
 
-  const refreshProducts = async () => {
+  const refreshProducts = async (force = false) => {
     setLoading(true);
     try {
-      const result = await listConfiguredProductSheet().catch(() => null);
+      const result = await listConfiguredProductSheet({ force }).catch(() => null);
       if (result?.ok) {
         const rows = safe(result.rows).map(normProduct).filter((item) => !!s(item.name).trim());
         applyLocal(rows);
-        setSource("sheet");
+        setSource(result.cached ? "cache" : "sheet");
         setNotice(null);
       } else {
         const sheetId = getConfig("sheet_id");
         const gid = getConfig("sheet_gid_products");
         if (!sheetId) throw new Error("Chưa cấu hình Google Sheet cho tab sản phẩm.");
-        const rows = await fetchTabAsObjects({ sheetId, gid: gid || "0" });
+        const rows = await fetchTabAsObjects({ sheetId, gid: gid || "0", force });
         const normalized = rows.map(normProduct).filter((item) => !!s(item.name).trim());
         applyLocal(normalized);
         setSource("sheet-fallback");
@@ -336,7 +336,7 @@ export default function ProductsPanel({ canEdit = true, canDelete = true }) {
       setNotice({ tone: "success", title: "Đã lưu sản phẩm", text: `${clean.name} đã được cập nhật.` });
       setEditId(null);
       setDraft(null);
-      await refreshProducts();
+      await refreshProducts(true);
     } catch (error) {
       setNotice({
         tone: "danger",
@@ -361,7 +361,7 @@ export default function ProductsPanel({ canEdit = true, canDelete = true }) {
       });
       setNotice({ tone: "success", title: "Đã xóa sản phẩm", text: `${deleteTarget.name} đã được gỡ khỏi catalog.` });
       setDeleteTarget(null);
-      await refreshProducts();
+      await refreshProducts(true);
     } catch (error) {
       setNotice({
         tone: "danger",
@@ -385,14 +385,14 @@ export default function ProductsPanel({ canEdit = true, canDelete = true }) {
         description="Bảng catalog."
         compact
         actions={
-          <Button variant="ghost" loading={loading} onClick={refreshProducts}>
+          <Button variant="ghost" loading={loading} onClick={() => refreshProducts(true)}>
             Làm mới
           </Button>
         }
         chips={
           <>
             <Badge variant="info">
-              Nguồn dữ liệu: {source === "sheet" ? "Sheet chính" : source === "sheet-fallback" ? "Sheet fallback" : "Bản cục bộ"}
+              Nguồn dữ liệu: {source === "sheet" ? "Sheet chính" : source === "cache" ? "Cache local" : source === "sheet-fallback" ? "Sheet fallback" : "Bản cục bộ"}
             </Badge>
             {!canEdit || !canDelete ? (
               <Badge variant="warning">{!canEdit ? "Chỉ có quyền xem" : "Không có quyền xóa"}</Badge>

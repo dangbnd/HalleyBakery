@@ -28,14 +28,14 @@ function Root() {
       const timeoutMs = isAdminDomain ? 6000 : 400;
       try {
         await Promise.race([
-          syncConfigFromRemote({ force: true }),
+          syncConfigFromRemote(),
           new Promise((resolve) => setTimeout(resolve, timeoutMs)),
         ]);
       } catch {}
       if (!cancelled) setReady(true);
       if (!cancelled && isAdminDomain) {
         setTimeout(() => {
-          syncConfigFromRemote({ force: true }).catch(() => {});
+          syncConfigFromRemote().catch(() => {});
         }, 3000);
       }
     })();

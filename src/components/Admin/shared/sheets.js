@@ -18,6 +18,32 @@ function uniq(list = []) {
   return [...new Set(list.map((v) => s(v)).filter(Boolean))];
 }
 
+const ADMIN_SHEET_CACHE_TTL_MS = 10 * 60 * 1000;
+const ADMIN_PRODUCT_SHEET_CACHE_KEY = "hb_admin_product_sheet_cache_v1";
+
+function readJsonCache(key, ttlMs = ADMIN_SHEET_CACHE_TTL_MS) {
+  try {
+    const cached = JSON.parse(localStorage.getItem(key) || "null");
+    if (!cached || typeof cached !== "object") return null;
+    if (Date.now() - Number(cached.t || 0) >= ttlMs) return null;
+    return cached.v || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeJsonCache(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ t: Date.now(), v: value }));
+  } catch {}
+}
+
+function clearAdminSheetCaches() {
+  try {
+    localStorage.removeItem(ADMIN_PRODUCT_SHEET_CACHE_KEY);
+  } catch {}
+}
+
 function pickArray(data = {}, keys = []) {
   for (const key of keys) {
     const v = data?.[key];
@@ -742,12 +768,19 @@ export async function getConfiguredProductSheetNames() {
   return uniq([fromGid, fromTabs, titleCaseWord(fromTabs), "Product", "Products"]);
 }
 
-export async function listConfiguredProductSheet() {
+export async function listConfiguredProductSheet({ force = false } = {}) {
+  if (!force) {
+    const cached = readJsonCache(ADMIN_PRODUCT_SHEET_CACHE_KEY);
+    if (cached?.ok) return { ...cached, cached: true };
+  }
   let last = null;
   for (const name of await getConfiguredProductSheetNames()) {
     try {
       const data = await listSheet(name);
-      if (data?.ok) return data;
+      if (data?.ok) {
+        writeJsonCache(ADMIN_PRODUCT_SHEET_CACHE_KEY, data);
+        return { ...data, cached: false };
+      }
       last = new Error(responseMessage(data) || `Khong doc duoc tab ${name}`);
     } catch (e) {
       last = e;
@@ -758,6 +791,7 @@ export async function listConfiguredProductSheet() {
 }
 
 export async function updateConfiguredProductRow(row) {
+  clearAdminSheetCaches();
   let last = null;
   for (const name of await getConfiguredProductSheetNames()) {
     try {
@@ -770,6 +804,7 @@ export async function updateConfiguredProductRow(row) {
 }
 
 export async function deleteConfiguredProductRow(id) {
+  clearAdminSheetCaches();
   let last = null;
   for (const name of await getConfiguredProductSheetNames()) {
     try {

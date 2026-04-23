@@ -1,5 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { readAudit, readLS, writeLS } from "../../../utils.js";
+import {
+  REMOTE_BEHAVIOR_CACHE_EVENT,
+  clearRemoteCustomerBehaviorCache,
+  loadRemoteCustomerBehavior,
+} from "../../../services/remoteBehavior.js";
 import { Badge, Button, Empty, Input, PageHeader, Section } from "../ui/primitives.jsx";
 
 const PAGE_SIZE = 30;
@@ -46,12 +51,16 @@ function parseUA(ua) {
 function groupVisitors(entries) {
   const map = new Map();
   for (const entry of entries) {
-    const key = entry.ip || `fp:${(entry.ua || "").slice(0, 60)}|${entry.screen || ""}`;
+    const key =
+      entry.visitor_id ||
+      entry.session_id ||
+      entry.ip ||
+      `fp:${(entry.ua || "").slice(0, 60)}|${entry.screen || ""}`;
     if (!map.has(key)) {
       const { browser, os, device } = parseUA(entry.ua);
       map.set(key, {
         key,
-        ip: entry.ip || "",
+        ip: entry.ip || entry.visitor_id || entry.session_id || "",
         browser,
         os,
         device,
@@ -278,19 +287,106 @@ function ActivityList({ rows, page, setPage }) {
   );
 }
 
+const VISITOR_EVENT_TYPES = new Set(["page_view", "session_start", "page_leave"]);
+
+function pathFromRemoteEvent(event = {}) {
+  const path = String(event.page_path || "").trim();
+  if (path) return path;
+  try {
+    const url = new URL(String(event.page_url || ""));
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "/";
+  }
+}
+
+function remoteEventToVisitor(event = {}) {
+  if (!VISITOR_EVENT_TYPES.has(event.type)) return null;
+  return {
+    id: event.id,
+    ts: Number(event.ts || 0),
+    path: pathFromRemoteEvent(event),
+    ua: event.user_agent || "",
+    screen: event.screen || event.viewport || "",
+    lang: event.language || "",
+    ip: "",
+    visitor_id: event.visitor_id || "",
+    session_id: event.session_id || "",
+    referrer: event.referrer || "",
+    source: "tracking",
+  };
+}
+
+function mergeVisitorEntries(...groups) {
+  const out = [];
+  const seen = new Set();
+  for (const entry of groups.flat().filter(Boolean)) {
+    const key = entry.id || `${entry.visitor_id || entry.session_id || entry.ua}:${entry.ts}:${entry.path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(entry);
+  }
+  return out.sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
+}
+
 export default function AuditPanel() {
   const [tab, setTab] = useState("visitors");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [version, setVersion] = useState(0);
+  const [remote, setRemote] = useState({ loading: true, ok: false, events: [], source: "loading", error: "" });
 
   const refresh = () => setVersion((value) => value + 1);
-  const visitors = useMemo(() => readLS("visitors", []), [version]);
+  const localVisitors = useMemo(() => readLS("visitors", []), [version]);
+  const remoteVisitors = useMemo(
+    () => (Array.isArray(remote.events) ? remote.events : []).map(remoteEventToVisitor).filter(Boolean),
+    [remote.events]
+  );
+  const visitors = useMemo(
+    () => mergeVisitorEntries(Array.isArray(localVisitors) ? localVisitors : [], remoteVisitors),
+    [localVisitors, remoteVisitors]
+  );
   const activities = useMemo(() => readAudit(), [version]);
 
   useEffect(() => {
     window.addEventListener("storage", refresh);
-    return () => window.removeEventListener("storage", refresh);
+    window.addEventListener(REMOTE_BEHAVIOR_CACHE_EVENT, refresh);
+    return () => {
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener(REMOTE_BEHAVIOR_CACHE_EVENT, refresh);
+    };
+  }, []);
+
+  const refreshRemote = (force = false) => {
+    let stopped = false;
+    setRemote((prev) => ({ ...prev, loading: true }));
+    loadRemoteCustomerBehavior({ force })
+      .then((data) => {
+        if (!stopped) setRemote({ loading: false, ...data });
+      })
+      .catch((error) => {
+        if (!stopped) {
+          setRemote({
+            loading: false,
+            ok: false,
+            events: [],
+            source: "remote",
+            error: String(error?.message || error || "remote_failed"),
+          });
+        }
+      });
+    return () => {
+      stopped = true;
+    };
+  };
+
+  useEffect(() => {
+    const stop = refreshRemote(false);
+    const interval = window.setInterval(() => refreshRemote(false), 10 * 60 * 1000);
+    return () => {
+      stop();
+      window.clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -321,6 +417,8 @@ export default function AuditPanel() {
   const clearCurrentTab = () => {
     if (tab === "visitors") {
       writeLS("visitors", []);
+      clearRemoteCustomerBehaviorCache();
+      setRemote((prev) => ({ ...prev, events: [] }));
     } else {
       writeLS("audit", []);
     }
@@ -352,6 +450,9 @@ export default function AuditPanel() {
         compact
         actions={
           <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" loading={remote.loading} onClick={() => refreshRemote(true)}>
+              Cập nhật tracking
+            </Button>
             <TabButton active={tab === "visitors"} label="Khách truy cập" count={visitorGroups.length} onClick={() => setTab("visitors")} />
             <TabButton active={tab === "activity"} label="Nhật ký quản trị" count={filteredActivities.length} onClick={() => setTab("activity")} />
           </div>

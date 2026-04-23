@@ -1,6 +1,5 @@
 // src/services/sheets.multi.js
 import { normalizeImageUrl } from "../utils/img.js";
-import { queuedFetch } from "./fetchQueue.js";
 import { cachedText } from "./cache.js";
 import { getConfig } from "../utils/config.js";
 
@@ -144,9 +143,9 @@ function parseCSV(text = "") {
   return out;
 }
 
-async function fetchTabCSV({ sheetId, gid }) {
+async function fetchTabCSV({ sheetId, gid, force = false }) {
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
-  const txt = await cachedText(url);
+  const txt = await cachedText(url, { force });
   const rows = parseCSV(txt.replace(/^\uFEFF/, ""));
   const rawHead = rows.shift() || [];
 
@@ -191,14 +190,14 @@ function slugify(s = "") {
 }
 
 /* ---------- Load nhiều tab sản phẩm ---------- */
-export async function fetchProductsFromTabs({ sheetId, tabs, normalize, onTabDone }) {
+export async function fetchProductsFromTabs({ sheetId, tabs, normalize, onTabDone, force = false }) {
   if (!Array.isArray(tabs) || !tabs.length) return [];
 
   // Tải qua hàng đợi (tối đa 4 song song nhờ queuedFetch)
   const lists = await Promise.all(
     tabs.map(async (t) => {
       try {
-        const rows = await fetchTabCSV({ sheetId, gid: t.gid });
+        const rows = await fetchTabCSV({ sheetId, gid: t.gid, force });
         const mapped = rows.map((r) => {
           // M5: thống nhất image field — fallback giống sheets.js
           const images = String(r.images || r.image || r.hinh || r.hinhanh || r.img || r["hình ảnh"] || "")
@@ -244,19 +243,14 @@ export async function fetchProductsFromTabs({ sheetId, tabs, normalize, onTabDon
 }
 
 /* ---------- Fetch Unified Data (GAS) ---------- */
-export async function fetchUnifiedData(apiUrl) {
-  let timeout;
+export async function fetchUnifiedData(apiUrl, { force = false } = {}) {
   try {
     const url = String(apiUrl || "").trim();
     if (!url || url.includes("...")) return null;
     if (!/^https?:\/\//i.test(url) && !url.startsWith("/")) return null;
 
-    const controller = new AbortController();
-    timeout = setTimeout(() => controller.abort(), 3500);
-    const res = await queuedFetch(url, { signal: controller.signal, cache: "no-store" });
-
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
+    const raw = await cachedText(url, { force });
+    const data = JSON.parse(raw);
 
     // Chuẩn hoá sơ bộ products
     if (Array.isArray(data.products)) {
@@ -272,7 +266,5 @@ export async function fetchUnifiedData(apiUrl) {
   } catch (e) {
     if (e?.name !== "AbortError") console.error("Fetch Unified Data fail:", e);
     return null;
-  } finally {
-    if (timeout) clearTimeout(timeout);
   }
 }

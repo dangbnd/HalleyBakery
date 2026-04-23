@@ -26,6 +26,12 @@ const STORAGE_KEYS = {
   tool: "admin.tool",
   collapsed: "admin.collapsed",
 };
+const DEFAULT_TOOL_BY_WORKSPACE = {
+  operations: "analytics",
+};
+const TOOL_ORDER_BY_WORKSPACE = {
+  operations: ["analytics", "users", "audit"],
+};
 
 const LEGACY_DARK_TOOLS = new Set(["typesize", "upload", "aitags", "settings"]);
 
@@ -160,10 +166,17 @@ function isToolVisible(user, tool) {
   return canAccessAdminTab(user, tool.access || tool.key);
 }
 
+function orderWorkspaceTools(workspace, tools = []) {
+  const order = TOOL_ORDER_BY_WORKSPACE[workspace.key];
+  if (!order) return tools;
+  const rank = new Map(order.map((key, index) => [key, index]));
+  return [...tools].sort((a, b) => (rank.get(a.key) ?? 99) - (rank.get(b.key) ?? 99));
+}
+
 function buildWorkspaceList(user) {
   return WORKSPACES.map((workspace) => ({
     ...workspace,
-    tools: workspace.tools.filter((tool) => isToolVisible(user, tool)),
+    tools: orderWorkspaceTools(workspace, workspace.tools.filter((tool) => isToolVisible(user, tool))),
   })).filter((workspace) => workspace.key === "overview" || workspace.tools.length > 0);
 }
 
@@ -451,6 +464,8 @@ export default function AdminIndex() {
   });
   const [toolKey, setToolKey] = useState(() => {
     try {
+      const workspace = localStorage.getItem(STORAGE_KEYS.workspace);
+      if (workspace && DEFAULT_TOOL_BY_WORKSPACE[workspace]) return DEFAULT_TOOL_BY_WORKSPACE[workspace];
       return localStorage.getItem(STORAGE_KEYS.tool) || "overview";
     } catch {
       return "overview";
@@ -470,7 +485,9 @@ export default function AdminIndex() {
   useEffect(() => {
     if (!currentWorkspace) return;
     if (!currentWorkspace.tools.some((tool) => tool.key === toolKey)) {
-      setToolKey(currentWorkspace.tools[0]?.key || "overview");
+      const preferred = DEFAULT_TOOL_BY_WORKSPACE[currentWorkspace.key];
+      const nextTool = currentWorkspace.tools.find((tool) => tool.key === preferred) || currentWorkspace.tools[0];
+      setToolKey(nextTool?.key || "overview");
     }
   }, [currentWorkspace, toolKey]);
 
@@ -488,8 +505,10 @@ export default function AdminIndex() {
   const selectWorkspace = (nextWorkspaceKey) => {
     const workspace = workspaces.find((item) => item.key === nextWorkspaceKey);
     if (!workspace) return;
+    const preferred = DEFAULT_TOOL_BY_WORKSPACE[workspace.key];
+    const nextTool = workspace.tools.find((item) => item.key === preferred) || workspace.tools[0];
     setWorkspaceKey(workspace.key);
-    setToolKey(workspace.tools[0]?.key || "overview");
+    setToolKey(nextTool?.key || "overview");
   };
 
   const navigateToTool = (nextWorkspaceKey, nextToolKey) => {

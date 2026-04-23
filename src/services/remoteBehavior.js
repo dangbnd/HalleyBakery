@@ -1,6 +1,9 @@
 import { KEYS, getConfig } from "../utils/config.js";
 
 const EVENT_LIMIT = 8000;
+export const REMOTE_BEHAVIOR_CACHE_KEY = "hb_remote_customer_behavior_cache_v1";
+export const REMOTE_BEHAVIOR_CACHE_EVENT = "hb:remote-customer-behavior-changed";
+export const REMOTE_BEHAVIOR_CACHE_MS = 10 * 60 * 1000;
 
 function s(value) {
   return value == null ? "" : String(value).trim();
@@ -69,6 +72,26 @@ export function normalizeRemoteEvent(row = {}) {
     severity: s(field(row, ["severity"])),
     page_path: s(field(row, ["page_path"])),
     page_url: s(field(row, ["page_url"])),
+    page_title: s(field(row, ["page_title"])),
+    route: s(field(row, ["route"])),
+    referrer: s(field(row, ["referrer"])),
+    user_agent: s(field(row, ["user_agent", "ua"])),
+    screen: s(field(row, ["screen"])),
+    viewport: s(field(row, ["viewport"])),
+    language: s(field(row, ["language", "lang"])),
+    timezone: s(field(row, ["timezone"])),
+    connection: s(field(row, ["connection"])),
+    app_host: s(field(row, ["app_host", "host"])),
+    target_tag: s(field(row, ["target_tag"])),
+    target_text: s(field(row, ["target_text"])),
+    target_href: s(field(row, ["target_href"])),
+    target_id: s(field(row, ["target_id"])),
+    file: s(field(row, ["file", "filename"])),
+    line: s(field(row, ["line", "lineno"])),
+    col: s(field(row, ["col", "colno"])),
+    stack: s(field(row, ["stack"])),
+    duration_ms: s(field(row, ["duration_ms", "duration"])),
+    value: s(field(row, ["value"])),
     session_id: s(field(row, ["session_id"])),
     visitor_id: s(field(row, ["visitor_id"])),
     meta,
@@ -132,10 +155,75 @@ function leadsFromEvents(events = []) {
     }));
 }
 
-export async function loadRemoteCustomerBehavior() {
+function emitRemoteCacheChanged() {
+  try {
+    if (typeof window !== "undefined") window.dispatchEvent(new Event(REMOTE_BEHAVIOR_CACHE_EVENT));
+  } catch {}
+}
+
+export function readRemoteCustomerBehaviorCache({ ttlMs = REMOTE_BEHAVIOR_CACHE_MS } = {}) {
+  try {
+    const cached = JSON.parse(localStorage.getItem(REMOTE_BEHAVIOR_CACHE_KEY) || "null");
+    if (!cached || typeof cached !== "object") return null;
+    const fetchedAt = Number(cached.fetchedAt || 0);
+    return {
+      ...cached,
+      events: Array.isArray(cached.events) ? cached.events : [],
+      leads: Array.isArray(cached.leads) ? cached.leads : [],
+      fresh: fetchedAt > 0 && Date.now() - fetchedAt < ttlMs,
+      ageMs: fetchedAt > 0 ? Date.now() - fetchedAt : Infinity,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeRemoteCustomerBehaviorCache(data = {}) {
+  const payload = {
+    ok: !!data.ok,
+    events: Array.isArray(data.events) ? data.events : [],
+    leads: Array.isArray(data.leads) ? data.leads : [],
+    source: data.source || "remote",
+    error: data.error || "",
+    fetchedAt: Date.now(),
+  };
+  try {
+    localStorage.setItem(REMOTE_BEHAVIOR_CACHE_KEY, JSON.stringify(payload));
+    emitRemoteCacheChanged();
+  } catch {}
+  return payload;
+}
+
+export function clearRemoteCustomerBehaviorCache() {
+  try {
+    localStorage.removeItem(REMOTE_BEHAVIOR_CACHE_KEY);
+    emitRemoteCacheChanged();
+  } catch {}
+}
+
+function fromCache(cached, extra = {}) {
+  return {
+    ok: !!cached?.ok,
+    events: Array.isArray(cached?.events) ? cached.events : [],
+    leads: Array.isArray(cached?.leads) ? cached.leads : [],
+    source: cached?.source || "cache",
+    error: cached?.error || "",
+    fetchedAt: cached?.fetchedAt || 0,
+    cached: true,
+    fresh: !!cached?.fresh,
+    stale: !cached?.fresh,
+    ...extra,
+  };
+}
+
+export async function loadRemoteCustomerBehavior({ force = false, ttlMs = REMOTE_BEHAVIOR_CACHE_MS } = {}) {
+  const cached = readRemoteCustomerBehaviorCache({ ttlMs });
+  if (!force && cached?.fresh) return fromCache(cached, { stale: false });
+
   const webApp = s(getConfig(KEYS.GS_WEBAPP_URL, ""));
   const authToken = s(getConfig(KEYS.GS_WEBAPP_TOKEN, ""));
   if (!webApp) {
+    if (cached) return fromCache(cached, { error: "missing_webapp" });
     return { ok: false, events: [], leads: [], source: "missing_webapp", error: "missing_webapp" };
   }
 
@@ -151,6 +239,7 @@ export async function loadRemoteCustomerBehavior() {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok && !Array.isArray(data.events)) {
+    if (cached) return fromCache(cached, { error: data.error || `remote_http_${res.status}` });
     return {
       ok: false,
       events: [],
@@ -164,11 +253,19 @@ export async function loadRemoteCustomerBehavior() {
   const explicitLeads = (Array.isArray(data.leads) ? data.leads : []).map(normalizeRemoteLead);
   const leads = mergeLeads(explicitLeads, leadsFromEvents(events));
 
-  return {
+  const result = {
     ok: !!data.ok,
     events: mergeEvents(events),
     leads,
     source: data.source || "remote",
     error: data.error || "",
+  };
+  writeRemoteCustomerBehaviorCache(result);
+  return {
+    ...result,
+    fetchedAt: Date.now(),
+    cached: false,
+    fresh: true,
+    stale: false,
   };
 }

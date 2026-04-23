@@ -19,7 +19,12 @@ import {
   readCustomerEvents,
   summarizeCustomerBehavior,
 } from "../../../utils/customerBehavior.js";
-import { loadRemoteCustomerBehavior, mergeEvents, mergeLeads } from "../../../services/remoteBehavior.js";
+import {
+  REMOTE_BEHAVIOR_CACHE_EVENT,
+  loadRemoteCustomerBehavior,
+  mergeEvents,
+  mergeLeads,
+} from "../../../services/remoteBehavior.js";
 import { cdnThumb } from "../../../utils/img.js";
 import { Badge, Button, Empty, PageHeader, Section, cn } from "../ui/primitives.jsx";
 
@@ -813,17 +818,19 @@ export default function AnalyticsPanel() {
   useEffect(() => {
     const refresh = () => setTick((value) => value + 1);
     window.addEventListener(CUSTOMER_BEHAVIOR_EVENT, refresh);
+    window.addEventListener(REMOTE_BEHAVIOR_CACHE_EVENT, refresh);
     window.addEventListener("storage", refresh);
     return () => {
       window.removeEventListener(CUSTOMER_BEHAVIOR_EVENT, refresh);
+      window.removeEventListener(REMOTE_BEHAVIOR_CACHE_EVENT, refresh);
       window.removeEventListener("storage", refresh);
     };
   }, []);
 
-  useEffect(() => {
+  const refreshRemote = (force = false) => {
     let stopped = false;
     setRemote((prev) => ({ ...prev, loading: true }));
-    loadRemoteCustomerBehavior()
+    loadRemoteCustomerBehavior({ force })
       .then((data) => {
         if (!stopped) setRemote({ loading: false, ...data });
       })
@@ -842,7 +849,16 @@ export default function AnalyticsPanel() {
     return () => {
       stopped = true;
     };
-  }, [tick]);
+  };
+
+  useEffect(() => {
+    const stop = refreshRemote(false);
+    const interval = window.setInterval(() => refreshRemote(false), 10 * 60 * 1000);
+    return () => {
+      stop();
+      window.clearInterval(interval);
+    };
+  }, []);
 
   const totalInPeriod = countInWindow(events, periodDays) + countInWindow(leads, periodDays);
   const sourceLabel = remote.loading
@@ -860,6 +876,9 @@ export default function AnalyticsPanel() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <PeriodSwitch value={periodDays} onChange={setPeriodDays} />
+            <Button type="button" variant="secondary" loading={remote.loading} onClick={() => refreshRemote(true)}>
+              Cập nhật tracking
+            </Button>
             <Button
               type="button"
               variant="ghost"

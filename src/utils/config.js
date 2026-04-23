@@ -97,7 +97,7 @@ const ENV_MAP = {
 
 const REMOTE_SNAPSHOT_KEY = `${PREFIX}remote_snapshot_v1`;
 const REMOTE_SYNC_TTL_KEY = `${PREFIX}remote_sync_ts`;
-const REMOTE_CONFIG_TTL_MS = 60 * 1000;
+const REMOTE_CONFIG_TTL_MS = 10 * 60 * 1000;
 const REMOTE_FETCH_TIMEOUT_MS = 8000;
 
 const CONFIG_TAB_MATCHERS = [

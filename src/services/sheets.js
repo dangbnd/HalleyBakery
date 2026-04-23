@@ -17,9 +17,9 @@ function makeUid(r) {
 }
 
 // gviz JSON (ổn cho tab tổng quát)
-export async function fetchSheetRows({ sheetId, gid = "0" }) {
+export async function fetchSheetRows({ sheetId, gid = "0", force = false } = {}) {
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&gid=${gid}`;
-  const txt = await cachedText(url);
+  const txt = await cachedText(url, { force });
   const json = JSON.parse(txt.substring(txt.indexOf("{"), txt.lastIndexOf("}") + 1));
   const cols = json.table.cols.map((c) => (c.label || "").trim().toLowerCase());
   return (json.table.rows || []).map((r) =>
@@ -51,9 +51,9 @@ function parseCSV(text = "") {
 }
 
 // CSV export (ổn cho tab có dấu phẩy)
-export async function fetchTabAsObjects({ sheetId, gid }) {
+export async function fetchTabAsObjects({ sheetId, gid, force = false } = {}) {
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
-  const txt = await cachedText(url);
+  const txt = await cachedText(url, { force });
   const rows = parseCSV(txt.replace(/^\uFEFF/, ""));
   const head = (rows.shift() || []).map((s) => String(s || "").trim().toLowerCase());
   return rows
@@ -63,8 +63,8 @@ export async function fetchTabAsObjects({ sheetId, gid }) {
 
 /* ===================== FB URLs ===================== */
 
-export async function fetchFbUrls({ sheetId, gid }) {
-  const rows = await fetchTabAsObjects({ sheetId, gid });
+export async function fetchFbUrls({ sheetId, gid, force = false } = {}) {
+  const rows = await fetchTabAsObjects({ sheetId, gid, force });
   const pick = (r) => r.url || r.fb || r.fb_url || r.post || r.link || r.col0 || r.col1 || "";
   const out = [];
   for (const r of rows) {
