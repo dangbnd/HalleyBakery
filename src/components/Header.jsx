@@ -305,7 +305,7 @@ export default function Header({
 
   /* -------------------- Render -------------------- */
   return (
-    <header className="sticky top-0 z-40 bg-white/90 supports-[backdrop-filter]:bg-white/60 backdrop-blur border-b">
+    <header className="sticky top-0 z-[100] bg-white/90 supports-[backdrop-filter]:bg-white/60 backdrop-blur border-b">
       {/* Mobile */}
       <div className="md:hidden max-w-6xl mx-auto px-3 py-2">
         <div className="flex items-center gap-2">

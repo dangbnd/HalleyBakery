@@ -899,7 +899,7 @@ export default function SocialProofSection({
         <h2 className="text-lg font-semibold">Feedback của khách hàng</h2>
       </div>
 
-      <div className="relative overflow-hidden rounded-[34px] border border-slate-200/70 bg-[radial-gradient(circle_at_top,#ffffff_0%,#f4fbff_58%,#eef7fb_100%)] px-4 py-5 shadow-[0_18px_48px_rgba(148,163,184,0.08)] sm:px-6 md:px-8 md:py-7">
+      <div className="relative z-0 isolate overflow-hidden rounded-[34px] border border-slate-200/70 bg-[radial-gradient(circle_at_top,#ffffff_0%,#f4fbff_58%,#eef7fb_100%)] px-4 py-5 shadow-[0_18px_48px_rgba(148,163,184,0.08)] sm:px-6 md:px-8 md:py-7">
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
           <div className="absolute left-[-7rem] top-10 h-36 w-36 rounded-full bg-white/70 blur-3xl md:h-52 md:w-52" />
           <div className="absolute right-[-5rem] top-20 h-40 w-40 rounded-full bg-sky-100/60 blur-3xl md:h-56 md:w-56" />

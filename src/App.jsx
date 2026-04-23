@@ -1704,7 +1704,7 @@ export default function App() {
   const showCatBar = route === "home" ? homeMenuReady : route === "search" ? homeMenuReady : true;
 
   const CatBar = (
-    <div ref={catbarRef} id="hb-catbar" className="sticky top-[96px] md:top-[117px] z-30">
+    <div ref={catbarRef} id="hb-catbar" className="sticky top-[96px] md:top-[117px] z-[80]">
       <div className="max-w-6xl mx-auto px-4">
         <div className="relative bg-gray-50/50 supports-[backdrop-filter]:bg-gray-50/50 backdrop-blur border rounded-xl">
           <CategoryBar

@@ -57,8 +57,8 @@ export default function AnnouncementTicker({ items = [], speed = 80 }) {
   if (!texts.length) return null;
 
   return (
-    // Dưới header (56/72px), thấp hơn CategoryBar để không đè.
-    <div className="sticky top-[56px] md:top-[68px] z-30 md:pointer-events-auto pointer-events-none">
+    // Dưới header, nhưng vẫn nằm trên nội dung khi cuộn.
+    <div className="sticky top-[56px] md:top-[68px] z-[90] md:pointer-events-auto pointer-events-none">
       <div className="max-w-6xl mx-auto px-4">
         {/* Viền gradient + glow: luôn hiển thị (mobile & desktop) */}
         <div className="group relative rounded-md p-[2px] bg-gradient-to-r from-fuchsia-500 via-rose-500 to-amber-400 shadow-[0_12px_40px_-12px_rgba(244,63,94,.35)]">
