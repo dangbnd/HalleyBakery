@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -17,6 +17,7 @@ import {
   readCustomerEvents,
   summarizeCustomerBehavior,
 } from "../../../utils/customerBehavior.js";
+import { loadRemoteCustomerBehavior, mergeEvents, mergeLeads } from "../../../services/remoteBehavior.js";
 import { getConfig, KEYS } from "../../../utils/config.js";
 import { cdnThumb } from "../../../utils/img.js";
 import { Badge, Button, Empty, PageHeader, Section, cn } from "../ui/primitives.jsx";
@@ -155,10 +156,12 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
     const row = {
       key,
       label: dayLabel(ts),
+      "Vào web": 0,
       "Xem mẫu": 0,
       "Liên hệ": 0,
       "Tìm kiếm": 0,
       "Lead": 0,
+      "Lỗi": 0,
       total: 0,
     };
     rows.push(row);
@@ -170,10 +173,12 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
     const row = byKey.get(dayKey(event.ts));
     if (!row) return;
     row.total += 1;
+    if (event.type === "page_view") row["Vào web"] += 1;
     if (event.type === "detail_open") row["Xem mẫu"] += 1;
     if (event.type === "messenger_click") row["Liên hệ"] += 1;
     if (event.type === "search_submit" || event.type === "search_query") row["Tìm kiếm"] += 1;
     if (event.type === "consult_submit") row["Lead"] += 1;
+    if (event.type === "js_error" || event.type === "react_error" || event.type === "unhandled_rejection" || event.type === "resource_error") row["Lỗi"] += 1;
   });
 
   leads.forEach((lead) => {
@@ -976,6 +981,7 @@ function makeTasks({ health, sheetId, gsWebAppUrl, gsToken, driveRootId, googleC
 
 export default function AdminOverviewPanel({ onNavigate }) {
   const [periodDays, setPeriodDays] = useState(14);
+  const [remote, setRemote] = useState({ loading: true, ok: false, events: [], leads: [], source: "loading", error: "" });
   const user = useMemo(() => getAuthUser(), []);
   const products = useMemo(() => {
     const list = readLS(LS.PRODUCTS, []);
@@ -994,9 +1000,34 @@ export default function AdminOverviewPanel({ onNavigate }) {
     return Array.isArray(list) ? list : [];
   }, []);
   const activity = useMemo(() => readAudit().slice(0, 12), []);
-  const events = useMemo(() => readCustomerEvents(), []);
-  const leads = useMemo(() => readConsultLeads(), []);
-  const behavior = useMemo(() => summarizeCustomerBehavior(products), [products]);
+  const localEvents = useMemo(() => readCustomerEvents(), []);
+  const localLeads = useMemo(() => readConsultLeads(), []);
+  const events = useMemo(() => mergeEvents(remote.events || [], localEvents), [remote.events, localEvents]);
+  const leads = useMemo(() => mergeLeads(remote.leads || [], localLeads), [remote.leads, localLeads]);
+  const behavior = useMemo(() => summarizeCustomerBehavior(products, { events, leads }), [products, events, leads]);
+
+  useEffect(() => {
+    let stopped = false;
+    loadRemoteCustomerBehavior()
+      .then((data) => {
+        if (!stopped) setRemote({ loading: false, ...data });
+      })
+      .catch((error) => {
+        if (!stopped) {
+          setRemote({
+            loading: false,
+            ok: false,
+            events: [],
+            leads: [],
+            source: "remote",
+            error: String(error?.message || error || "remote_failed"),
+          });
+        }
+      });
+    return () => {
+      stopped = true;
+    };
+  }, []);
 
   const activeProducts = products.filter((item) => item?.active !== false && productVisibility(item) !== "hidden").length;
   const categories = new Set(products.map((item) => String(item?.category || "").trim()).filter(Boolean));
@@ -1018,12 +1049,16 @@ export default function AdminOverviewPanel({ onNavigate }) {
 
   const currentDetails = countEvents(events, periodDays, (event) => event.type === "detail_open");
   const prevDetails = countEvents(events, periodDays, (event) => event.type === "detail_open", periodDays);
+  const currentPageViews = countEvents(events, periodDays, (event) => event.type === "page_view");
+  const prevPageViews = countEvents(events, periodDays, (event) => event.type === "page_view", periodDays);
   const currentContacts = countEvents(events, periodDays, (event) => event.type === "messenger_click");
   const prevContacts = countEvents(events, periodDays, (event) => event.type === "messenger_click", periodDays);
   const currentSearches = countEvents(events, periodDays, (event) => event.type === "search_submit" || event.type === "search_query");
   const prevSearches = countEvents(events, periodDays, (event) => event.type === "search_submit" || event.type === "search_query", periodDays);
   const currentLeads = countLeads(leads, periodDays);
   const prevLeads = countLeads(leads, periodDays, periodDays);
+  const currentErrors = countEvents(events, periodDays, (event) => event.type === "js_error" || event.type === "react_error" || event.type === "unhandled_rejection" || event.type === "resource_error");
+  const prevErrors = countEvents(events, periodDays, (event) => event.type === "js_error" || event.type === "react_error" || event.type === "unhandled_rejection" || event.type === "resource_error", periodDays);
 
   const tasks = makeTasks({
     health,
@@ -1041,6 +1076,10 @@ export default function AdminOverviewPanel({ onNavigate }) {
       <Badge variant="info">{user?.name || user?.username || "Admin"}</Badge>
       <Badge variant={sheetId ? "success" : "warning"}>{sheetId ? "Sheet đã nối" : "Thiếu Sheet"}</Badge>
       <Badge variant={gsWebAppUrl && gsToken ? "success" : "warning"}>{gsWebAppUrl && gsToken ? "WebApp sẵn sàng" : "WebApp thiếu cấu hình"}</Badge>
+      <Badge variant={remote.ok ? "success" : remote.loading ? "info" : "warning"}>
+        {remote.loading ? "Đang tải tracking" : remote.ok ? `Tracking remote` : "Tracking local"}
+      </Badge>
+      {remote.error ? <Badge variant="warning">{remote.error}</Badge> : null}
       <Badge variant={lastSyncAt ? "violet" : "neutral"}>{lastSyncAt ? `Sync ${new Date(lastSyncAt).toLocaleDateString("vi-VN")}` : "Chưa có mốc sync"}</Badge>
     </>
   );
@@ -1065,11 +1104,20 @@ export default function AdminOverviewPanel({ onNavigate }) {
         chips={sourceBadges}
       />
 
-      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-6">
+        <KpiCard
+          label="Lượt vào web"
+          value={currentPageViews}
+          meta={`${fmt(behavior.totals?.pageViews)} page view đã ghi`}
+          color={COLORS.cyan}
+          sparkData={trend}
+          sparkKey="Vào web"
+          delta={calcDelta(currentPageViews, prevPageViews)}
+        />
         <KpiCard
           label="Lượt xem mẫu"
           value={currentDetails}
-          meta={`${fmt(behavior.totals?.details)} tổng detail local`}
+          meta={`${fmt(behavior.totals?.details)} tổng detail`}
           color={COLORS.blue}
           sparkData={trend}
           sparkKey="Xem mẫu"
@@ -1102,6 +1150,15 @@ export default function AdminOverviewPanel({ onNavigate }) {
           sparkKey="Lead"
           delta={calcDelta(currentLeads, prevLeads)}
         />
+        <KpiCard
+          label="Bug / crash"
+          value={currentErrors}
+          meta={`${fmt(behavior.totals?.errors)} lỗi frontend`}
+          color={COLORS.slate}
+          sparkData={trend}
+          sparkKey="Lỗi"
+          delta={calcDelta(currentErrors, prevErrors)}
+        />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.45fr_0.75fr]">
@@ -1128,10 +1185,12 @@ export default function AdminOverviewPanel({ onNavigate }) {
                   <XAxis dataKey="label" stroke="#64748b" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
                   <YAxis stroke="#64748b" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} allowDecimals={false} />
                   <Tooltip content={<ChartTooltip />} />
+                  <Area type="monotone" dataKey="Vào web" stroke={COLORS.cyan} strokeWidth={2.4} fill="transparent" dot={false} isAnimationActive={false} />
                   <Area type="monotone" dataKey="Xem mẫu" stroke={COLORS.blue} strokeWidth={2.5} fill="url(#detailArea)" dot={false} isAnimationActive={false} />
                   <Area type="monotone" dataKey="Liên hệ" stroke={COLORS.rose} strokeWidth={2.5} fill="url(#contactArea)" dot={false} isAnimationActive={false} />
                   <Area type="monotone" dataKey="Lead" stroke={COLORS.emerald} strokeWidth={2} fill="transparent" dot={false} isAnimationActive={false} />
                   <Area type="monotone" dataKey="Tìm kiếm" stroke={COLORS.amber} strokeWidth={2} fill="transparent" dot={false} isAnimationActive={false} />
+                  <Area type="monotone" dataKey="Lỗi" stroke={COLORS.slate} strokeWidth={2} fill="transparent" dot={false} isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>

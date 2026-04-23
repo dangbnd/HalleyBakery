@@ -1,4 +1,5 @@
 import { readLS, removeLS, writeLS } from "../utils.js";
+import { queueTelemetryEvent } from "../services/telemetry.js";
 import { firstImg } from "./img.js";
 import { pidOf } from "./pid.js";
 
@@ -99,6 +100,7 @@ export function recordCustomerEvent(type, payload = {}) {
   const list = readCustomerEvents();
   list.unshift(entry);
   writeLS(CUSTOMER_EVENT_KEY, list.slice(0, MAX_EVENTS));
+  queueTelemetryEvent(entry.type, entry);
   emitChanged();
   return entry;
 }
@@ -215,9 +217,9 @@ function productStat(map, snap) {
   return cur;
 }
 
-export function summarizeCustomerBehavior(products = []) {
-  const events = readCustomerEvents();
-  const leads = readConsultLeads();
+export function summarizeCustomerBehavior(products = [], source = {}) {
+  const events = Array.isArray(source.events) ? source.events : readCustomerEvents();
+  const leads = Array.isArray(source.leads) ? source.leads : readConsultLeads();
   const catalog = new Map((products || []).map((p) => [pidOf(p), productSnapshot(p)]));
   const byProduct = new Map();
   const searches = new Map();
@@ -226,14 +228,28 @@ export function summarizeCustomerBehavior(products = []) {
 
   const totals = {
     events: events.length,
+    pageViews: 0,
+    sessions: 0,
+    clicks: 0,
     details: 0,
     messenger: 0,
     searches: 0,
     favorites: getFavoriteIds().length,
     consults: leads.length,
+    errors: 0,
+    resourceErrors: 0,
   };
 
   for (const event of events) {
+    if (event.type === "page_view") totals.pageViews += 1;
+    if (event.type === "session_start") totals.sessions += 1;
+    if (event.type === "ui_click") totals.clicks += 1;
+    if (event.type === "js_error" || event.type === "react_error" || event.type === "unhandled_rejection") totals.errors += 1;
+    if (event.type === "resource_error") {
+      totals.errors += 1;
+      totals.resourceErrors += 1;
+    }
+
     const snap = event.product?.pid ? { ...(catalog.get(event.product.pid) || {}), ...event.product } : null;
     if (event.query && (event.type === "search_submit" || event.type === "search_query")) {
       totals.searches += 1;

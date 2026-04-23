@@ -239,6 +239,9 @@ function doPost(e) {
     var cfgHandled = HB_tryHandleConfigActions_(data);
     if (cfgHandled) return jsonResp_(cfgHandled);
 
+    var trackingHandled = HB_tryHandleTrackingActions_(data);
+    if (trackingHandled) return jsonResp_(trackingHandled);
+
     // ── DRIVE ACTIONS ──
     var driveHandled = HB_tryHandleDriveActions_(data);
     if (driveHandled) return jsonResp_(driveHandled);
@@ -273,6 +276,9 @@ function doGet(e) {
     if (data) {
       var cfgHandled = HB_tryHandleConfigActions_(data);
       if (cfgHandled) return jsonResp_(cfgHandled);
+
+      var trackingHandled = HB_tryHandleTrackingActions_(data);
+      if (trackingHandled) return jsonResp_(trackingHandled);
 
       var driveHandled = HB_tryHandleDriveActions_(data);
       if (driveHandled) return jsonResp_(driveHandled);

@@ -1,9 +1,13 @@
 import { Component } from "react";
+import { trackReactError } from "../../services/telemetry.js";
 
 export default class ErrorBoundary extends Component {
   constructor(p){ super(p); this.state = { error: null }; }
   static getDerivedStateFromError(err){ return { error: err }; }
-  componentDidCatch(err, info){ console.error("ErrorBoundary:", err, info); }
+  componentDidCatch(err, info){
+    console.error("ErrorBoundary:", err, info);
+    trackReactError(err, info, "App");
+  }
   render(){
     if (this.state.error) {
       return (

@@ -1,0 +1,402 @@
+import { KEYS, getConfig } from "../utils/config.js";
+import { parseBooleanLike } from "../utils.js";
+
+const VISITOR_ID_KEY = "hb_visitor_id_v1";
+const SESSION_ID_KEY = "hb_session_id_v1";
+const SESSION_STARTED_KEY = "hb_session_started_at_v1";
+const QUEUE_LIMIT = 120;
+const BATCH_LIMIT = 40;
+const FLUSH_DELAY_MS = 1600;
+const HEARTBEAT_MS = 30_000;
+
+let queue = [];
+let flushTimer = 0;
+let initialized = false;
+let cleanupFns = [];
+let lastPageKey = "";
+let lastClickAt = 0;
+
+function s(value) {
+  return value == null ? "" : String(value).trim();
+}
+
+function clip(value = "", max = 500) {
+  const text = s(value).replace(/\s+/g, " ");
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function uid(prefix = "id") {
+  try {
+    if (crypto?.randomUUID) return `${prefix}_${crypto.randomUUID()}`;
+  } catch {}
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function readStorage(storage, key, fallback = "") {
+  try {
+    return storage?.getItem(key) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStorage(storage, key, value) {
+  try {
+    storage?.setItem(key, value);
+  } catch {}
+}
+
+export function isAdminRuntime() {
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname.toLowerCase();
+  return host.startsWith("admin.") || window.location.pathname.startsWith("/admin");
+}
+
+export function isTelemetryEnabled() {
+  const raw = getConfig(KEYS.ENABLE_VISITOR_TRACKING, "true");
+  return parseBooleanLike(raw, true);
+}
+
+function getWebAppUrl() {
+  return s(getConfig(KEYS.GS_WEBAPP_URL, ""));
+}
+
+function getVisitorId() {
+  if (typeof window === "undefined") return "";
+  let id = readStorage(window.localStorage, VISITOR_ID_KEY);
+  if (!id) {
+    id = uid("v");
+    writeStorage(window.localStorage, VISITOR_ID_KEY, id);
+  }
+  return id;
+}
+
+function getSessionId() {
+  if (typeof window === "undefined") return "";
+  let id = readStorage(window.sessionStorage, SESSION_ID_KEY);
+  if (!id) {
+    id = uid("s");
+    writeStorage(window.sessionStorage, SESSION_ID_KEY, id);
+    writeStorage(window.sessionStorage, SESSION_STARTED_KEY, String(Date.now()));
+  }
+  return id;
+}
+
+function connectionLabel() {
+  try {
+    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!c) return "";
+    return [c.effectiveType, c.downlink ? `${c.downlink}mbps` : "", c.saveData ? "saveData" : ""].filter(Boolean).join(" ");
+  } catch {
+    return "";
+  }
+}
+
+function screenLabel() {
+  try {
+    return `${window.screen?.width || 0}x${window.screen?.height || 0}@${window.devicePixelRatio || 1}`;
+  } catch {
+    return "";
+  }
+}
+
+function viewportLabel() {
+  try {
+    return `${window.innerWidth || 0}x${window.innerHeight || 0}`;
+  } catch {
+    return "";
+  }
+}
+
+function commonContext() {
+  if (typeof window === "undefined") return {};
+  return {
+    visitor_id: getVisitorId(),
+    session_id: getSessionId(),
+    page_path: `${window.location.pathname}${window.location.search}${window.location.hash}`,
+    page_url: window.location.href,
+    page_title: document.title || "",
+    referrer: document.referrer || "",
+    visibility: document.visibilityState || "",
+    user_agent: navigator.userAgent || "",
+    screen: screenLabel(),
+    viewport: viewportLabel(),
+    language: navigator.language || "",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+    connection: connectionLabel(),
+    app_host: window.location.host,
+  };
+}
+
+function normalizeEvent(type, payload = {}) {
+  const ts = Date.now();
+  return {
+    id: payload.id || uid("evt"),
+    ts,
+    ts_iso: new Date(ts).toISOString(),
+    type: clip(type, 80),
+    source: clip(payload.source || "telemetry", 120),
+    ...commonContext(),
+    ...payload,
+  };
+}
+
+function scheduleFlush() {
+  if (flushTimer || typeof window === "undefined") return;
+  flushTimer = window.setTimeout(() => {
+    flushTimer = 0;
+    flushTelemetry();
+  }, FLUSH_DELAY_MS);
+}
+
+export function queueTelemetryEvent(typeOrEvent, payload = {}) {
+  if (typeof window === "undefined") return null;
+  if (isAdminRuntime() || !isTelemetryEnabled()) return null;
+
+  const event =
+    typeof typeOrEvent === "string"
+      ? normalizeEvent(typeOrEvent, payload)
+      : normalizeEvent(typeOrEvent?.type || "event", { ...typeOrEvent, ...payload });
+
+  queue.push(event);
+  if (queue.length > QUEUE_LIMIT) queue = queue.slice(-QUEUE_LIMIT);
+  scheduleFlush();
+  return event;
+}
+
+export async function flushTelemetry({ beacon = false } = {}) {
+  if (typeof window === "undefined") return { ok: false, skipped: true };
+  if (!queue.length || isAdminRuntime() || !isTelemetryEnabled()) return { ok: true, skipped: true };
+
+  const webApp = getWebAppUrl();
+  if (!webApp) {
+    scheduleFlush();
+    return { ok: false, skipped: true, error: "missing_webapp" };
+  }
+
+  const batch = queue.slice(0, BATCH_LIMIT);
+  const rest = queue.slice(BATCH_LIMIT);
+  const body = JSON.stringify({ webApp, events: batch });
+
+  if (beacon && navigator.sendBeacon) {
+    try {
+      const sent = navigator.sendBeacon("/api/track", new Blob([body], { type: "text/plain;charset=utf-8" }));
+      if (sent) {
+        queue = rest;
+        if (queue.length) scheduleFlush();
+        return { ok: true, beacon: true };
+      }
+    } catch {}
+  }
+
+  try {
+    const res = await fetch("/api/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json;charset=utf-8" },
+      body,
+      keepalive: batch.length <= 8,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok || data?.inserted > 0 || data?.accepted > 0) {
+      queue = rest;
+      if (queue.length) scheduleFlush();
+      return { ok: true, data };
+    }
+    scheduleFlush();
+    return { ok: false, data };
+  } catch (error) {
+    scheduleFlush();
+    return { ok: false, error: s(error?.message || error) };
+  }
+}
+
+function closestTrackTarget(start) {
+  let el = start;
+  for (let depth = 0; el && depth < 6; depth += 1) {
+    if (el.matches?.("a,button,[role='button'],[data-track],[data-card]")) return el;
+    el = el.parentElement;
+  }
+  return null;
+}
+
+function clickPayload(event) {
+  const target = closestTrackTarget(event.target);
+  if (!target) return null;
+  const card = target.closest?.("[data-card]");
+  return {
+    source: "dom_click",
+    target_tag: target.tagName || "",
+    target_text: clip(target.getAttribute?.("aria-label") || target.getAttribute?.("title") || target.innerText || target.textContent || "", 180),
+    target_href: clip(target.href || target.getAttribute?.("href") || "", 1000),
+    target_id: clip(target.id || card?.id || "", 160),
+    meta: {
+      button: event.button,
+      x: Math.round(event.clientX || 0),
+      y: Math.round(event.clientY || 0),
+    },
+  };
+}
+
+function trackPerformance() {
+  try {
+    const nav = performance.getEntriesByType("navigation")?.[0];
+    if (nav) {
+      queueTelemetryEvent("performance_navigation", {
+        source: "performance",
+        duration_ms: Math.round(nav.duration || 0),
+        meta: {
+          type: nav.type,
+          dns: Math.round((nav.domainLookupEnd || 0) - (nav.domainLookupStart || 0)),
+          connect: Math.round((nav.connectEnd || 0) - (nav.connectStart || 0)),
+          ttfb: Math.round((nav.responseStart || 0) - (nav.requestStart || 0)),
+          response: Math.round((nav.responseEnd || 0) - (nav.responseStart || 0)),
+          domInteractive: Math.round(nav.domInteractive || 0),
+          loadEventEnd: Math.round(nav.loadEventEnd || 0),
+        },
+      });
+    }
+
+    const paints = performance.getEntriesByType("paint") || [];
+    paints.forEach((paint) => {
+      queueTelemetryEvent("performance_paint", {
+        source: "performance",
+        value: paint.name,
+        duration_ms: Math.round(paint.startTime || 0),
+      });
+    });
+  } catch {}
+}
+
+function errorPayload(error, extra = {}) {
+  return {
+    source: extra.source || "window_error",
+    severity: "error",
+    message: clip(error?.message || error || extra.message, 1000),
+    file: extra.file || error?.filename || "",
+    line: extra.line || error?.lineno || "",
+    col: extra.col || error?.colno || "",
+    stack: clip(error?.stack || extra.stack || "", 3000),
+    meta: extra.meta,
+  };
+}
+
+export function trackReactError(error, info = {}, name = "react") {
+  queueTelemetryEvent("react_error", errorPayload(error, {
+    source: "react_error_boundary",
+    meta: {
+      boundary: name,
+      componentStack: clip(info?.componentStack || "", 2500),
+    },
+  }));
+  flushTelemetry();
+}
+
+export function trackPageView(meta = {}) {
+  if (typeof window === "undefined" || isAdminRuntime()) return;
+  const key = `${window.location.pathname}${window.location.search}${window.location.hash}:${meta.route || ""}`;
+  if (key === lastPageKey) return;
+  lastPageKey = key;
+  queueTelemetryEvent("page_view", { source: meta.source || "route", route: meta.route || "", meta });
+}
+
+export function initTelemetry() {
+  if (typeof window === "undefined" || initialized || isAdminRuntime()) return () => {};
+  initialized = true;
+
+  queueTelemetryEvent("session_start", {
+    source: "telemetry",
+    meta: {
+      startedAt: readStorage(window.sessionStorage, SESSION_STARTED_KEY),
+    },
+  });
+  trackPageView({ source: "initial", route: "initial" });
+
+  const onError = (event) => {
+    const target = event.target;
+    if (target && target !== window) {
+      queueTelemetryEvent("resource_error", {
+        source: "resource",
+        severity: "error",
+        target_tag: target.tagName || "",
+        target_href: target.src || target.href || "",
+        message: `Resource failed: ${target.tagName || "unknown"}`,
+      });
+      flushTelemetry();
+      return;
+    }
+    queueTelemetryEvent("js_error", errorPayload(event.error || event.message, {
+      file: event.filename,
+      line: event.lineno,
+      col: event.colno,
+      stack: event.error?.stack,
+    }));
+    flushTelemetry();
+  };
+
+  const onRejection = (event) => {
+    const reason = event.reason;
+    queueTelemetryEvent("unhandled_rejection", errorPayload(reason, {
+      source: "unhandled_rejection",
+      meta: { reason: clip(typeof reason === "string" ? reason : reason?.message || "", 1000) },
+    }));
+    flushTelemetry();
+  };
+
+  const onClick = (event) => {
+    const now = Date.now();
+    if (now - lastClickAt < 120) return;
+    const payload = clickPayload(event);
+    if (!payload) return;
+    lastClickAt = now;
+    queueTelemetryEvent("ui_click", payload);
+  };
+
+  const onVisibility = () => {
+    queueTelemetryEvent("visibility_change", { source: "visibility", visibility: document.visibilityState || "" });
+    if (document.visibilityState === "hidden") flushTelemetry({ beacon: true });
+  };
+
+  const onPageHide = () => {
+    queueTelemetryEvent("page_leave", { source: "pagehide" });
+    flushTelemetry({ beacon: true });
+  };
+
+  const onOnline = () => queueTelemetryEvent("network_online", { source: "network" });
+  const onOffline = () => queueTelemetryEvent("network_offline", { source: "network", severity: "warning" });
+
+  window.addEventListener("error", onError, true);
+  window.addEventListener("unhandledrejection", onRejection);
+  document.addEventListener("click", onClick, true);
+  document.addEventListener("visibilitychange", onVisibility);
+  window.addEventListener("pagehide", onPageHide);
+  window.addEventListener("online", onOnline);
+  window.addEventListener("offline", onOffline);
+
+  const heartbeat = window.setInterval(() => {
+    queueTelemetryEvent("session_heartbeat", { source: "heartbeat" });
+  }, HEARTBEAT_MS);
+
+  const perfTimer = window.setTimeout(trackPerformance, 2500);
+
+  cleanupFns = [
+    () => window.removeEventListener("error", onError, true),
+    () => window.removeEventListener("unhandledrejection", onRejection),
+    () => document.removeEventListener("click", onClick, true),
+    () => document.removeEventListener("visibilitychange", onVisibility),
+    () => window.removeEventListener("pagehide", onPageHide),
+    () => window.removeEventListener("online", onOnline),
+    () => window.removeEventListener("offline", onOffline),
+    () => window.clearInterval(heartbeat),
+    () => window.clearTimeout(perfTimer),
+  ];
+
+  return () => {
+    cleanupFns.forEach((fn) => {
+      try {
+        fn();
+      } catch {}
+    });
+    cleanupFns = [];
+    initialized = false;
+  };
+}

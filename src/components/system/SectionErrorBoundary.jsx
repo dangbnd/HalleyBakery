@@ -1,4 +1,5 @@
 import { Component } from "react";
+import { trackReactError } from "../../services/telemetry.js";
 
 /**
  * ErrorBoundary cho từng section — khi 1 section lỗi, chỉ section đó hiện fallback,
@@ -16,6 +17,7 @@ export default class SectionErrorBoundary extends Component {
 
     componentDidCatch(error, info) {
         console.error(`[SectionErrorBoundary] ${this.props.name || "unknown"}:`, error, info);
+        trackReactError(error, info, this.props.name || "Section");
     }
 
     render() {

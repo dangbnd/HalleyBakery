@@ -19,6 +19,7 @@ import {
   readCustomerEvents,
   summarizeCustomerBehavior,
 } from "../../../utils/customerBehavior.js";
+import { loadRemoteCustomerBehavior, mergeEvents, mergeLeads } from "../../../services/remoteBehavior.js";
 import { cdnThumb } from "../../../utils/img.js";
 import { Badge, Button, Empty, PageHeader, Section, cn } from "../ui/primitives.jsx";
 
@@ -128,11 +129,13 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
     const row = {
       key,
       label: dayLabel(ts),
+      "Vào web": 0,
       "Mở detail": 0,
       "Liên hệ": 0,
       "Tìm kiếm": 0,
       "Yêu thích": 0,
       "Tư vấn": 0,
+      "Lỗi": 0,
       total: 0,
     };
     rows.push(row);
@@ -145,10 +148,12 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
     const row = byKey.get(dayKey(ts));
     if (!row) return;
     row.total += 1;
+    if (event.type === "page_view") row["Vào web"] += 1;
     if (event.type === "detail_open") row["Mở detail"] += 1;
     if (event.type === "messenger_click") row["Liên hệ"] += 1;
     if (event.type === "search_submit" || event.type === "search_query") row["Tìm kiếm"] += 1;
     if (event.type === "favorite_add") row["Yêu thích"] += 1;
+    if (event.type === "js_error" || event.type === "react_error" || event.type === "unhandled_rejection" || event.type === "resource_error") row["Lỗi"] += 1;
   });
 
   leads.forEach((lead) => {
@@ -168,20 +173,24 @@ function countInWindow(rows = [], periodDays = 14) {
 }
 
 function buildMix(summary, periodEvents = [], periodLeads = []) {
+  const pageViews = periodEvents.filter((event) => event.type === "page_view").length;
   const details = periodEvents.filter((event) => event.type === "detail_open").length;
   const contacts = periodEvents.filter((event) => event.type === "messenger_click").length;
   const searches = periodEvents.filter((event) => event.type === "search_submit" || event.type === "search_query").length;
   const favorites = summary.totals.favorites || periodEvents.filter((event) => event.type === "favorite_add").length;
   const consults = periodLeads.length;
-  const known = details + contacts + searches + periodEvents.filter((event) => event.type === "favorite_add").length + periodEvents.filter((event) => event.type === "consult_submit").length;
+  const errors = periodEvents.filter((event) => event.type === "js_error" || event.type === "react_error" || event.type === "unhandled_rejection" || event.type === "resource_error").length;
+  const known = pageViews + details + contacts + searches + errors + periodEvents.filter((event) => event.type === "favorite_add").length + periodEvents.filter((event) => event.type === "consult_submit").length;
   const other = Math.max(0, periodEvents.length - known);
 
   return [
+    { name: "Vào web", value: pageViews, color: COLORS.cyan },
     { name: "Mở detail", value: details, color: COLORS.blue },
     { name: "Liên hệ", value: contacts, color: COLORS.rose },
     { name: "Tìm kiếm", value: searches, color: COLORS.amber },
     { name: "Yêu thích", value: favorites, color: COLORS.violet },
     { name: "Tư vấn", value: consults, color: COLORS.emerald },
+    { name: "Lỗi", value: errors, color: COLORS.slate },
     { name: "Khác", value: other, color: COLORS.slate },
   ].filter((item) => item.value > 0);
 }
@@ -289,14 +298,16 @@ function normalizeRankRows(rows = [], limit = 8, labelMap = null) {
 }
 
 function buildFunnel(summary) {
+  const pageViews = Number(summary.totals.pageViews || 0);
   const views = Number(summary.totals.details || 0);
   const contacts = Number(summary.totals.messenger || 0);
   const leads = Number(summary.totals.consults || 0);
   const searches = Number(summary.totals.searches || 0);
-  const max = Math.max(1, views, contacts, leads, searches);
+  const max = Math.max(1, pageViews, views, contacts, leads, searches);
 
   return [
-    { label: "Mở detail", value: views, meta: "đầu phễu", color: COLORS.blue, width: (views / max) * 100 },
+    { label: "Vào web", value: pageViews, meta: "phiên/page view", color: COLORS.cyan, width: (pageViews / max) * 100 },
+    { label: "Mở detail", value: views, meta: `${rate(views, pageViews)} từ vào web`, color: COLORS.blue, width: (views / max) * 100 },
     { label: "Tìm kiếm", value: searches, meta: `${rate(searches, views)} so với detail`, color: COLORS.amber, width: (searches / max) * 100 },
     { label: "Liên hệ", value: contacts, meta: `${rate(contacts, views)} chuyển sang chat`, color: COLORS.rose, width: (contacts / max) * 100 },
     { label: "Tư vấn", value: leads, meta: `${rate(leads, Math.max(contacts, 1))} từ liên hệ`, color: COLORS.emerald, width: (leads / max) * 100 },
@@ -768,6 +779,7 @@ function EventFeed({ rows = [] }) {
 export default function AnalyticsPanel() {
   const [tick, setTick] = useState(0);
   const [periodDays, setPeriodDays] = useState(14);
+  const [remote, setRemote] = useState({ loading: true, ok: false, events: [], leads: [], source: "loading", error: "" });
 
   const products = useMemo(() => {
     const list = readLS(LS.PRODUCTS, []);
@@ -781,9 +793,11 @@ export default function AnalyticsPanel() {
     const list = readLS(LS.CATEGORIES, []);
     return Array.isArray(list) ? list : [];
   }, [tick]);
-  const events = useMemo(() => readCustomerEvents(), [tick]);
-  const leads = useMemo(() => readConsultLeads(), [tick]);
-  const summary = useMemo(() => summarizeCustomerBehavior(products), [products, tick]);
+  const localEvents = useMemo(() => readCustomerEvents(), [tick]);
+  const localLeads = useMemo(() => readConsultLeads(), [tick]);
+  const events = useMemo(() => mergeEvents(remote.events || [], localEvents), [remote.events, localEvents]);
+  const leads = useMemo(() => mergeLeads(remote.leads || [], localLeads), [remote.leads, localLeads]);
+  const summary = useMemo(() => summarizeCustomerBehavior(products, { events, leads }), [products, events, leads]);
 
   const periodEvents = useMemo(() => events.filter((event) => isInWindow(Number(event.ts || 0), periodDays)), [events, periodDays]);
   const periodLeads = useMemo(() => leads.filter((lead) => isInWindow(Number(lead.ts || 0), periodDays)), [leads, periodDays]);
@@ -806,7 +820,36 @@ export default function AnalyticsPanel() {
     };
   }, []);
 
+  useEffect(() => {
+    let stopped = false;
+    setRemote((prev) => ({ ...prev, loading: true }));
+    loadRemoteCustomerBehavior()
+      .then((data) => {
+        if (!stopped) setRemote({ loading: false, ...data });
+      })
+      .catch((error) => {
+        if (!stopped) {
+          setRemote({
+            loading: false,
+            ok: false,
+            events: [],
+            leads: [],
+            source: "remote",
+            error: String(error?.message || error || "remote_failed"),
+          });
+        }
+      });
+    return () => {
+      stopped = true;
+    };
+  }, [tick]);
+
   const totalInPeriod = countInWindow(events, periodDays) + countInWindow(leads, periodDays);
+  const sourceLabel = remote.loading
+    ? "Đang tải remote"
+    : remote.ok
+      ? `Remote ${remote.source || "Events"}`
+      : "Local fallback";
 
   return (
     <div className="space-y-4">
@@ -830,18 +873,21 @@ export default function AnalyticsPanel() {
         }
         chips={
           <>
-            <Badge variant="warning">Nguồn local</Badge>
+            <Badge variant={remote.ok ? "success" : remote.loading ? "info" : "warning"}>{sourceLabel}</Badge>
             <Badge variant="info">{format(events.length)} event</Badge>
             <Badge variant="success">{format(leads.length)} lead</Badge>
+            {remote.error ? <Badge variant="warning">{remote.error}</Badge> : null}
           </>
         }
       />
 
-      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-5">
+      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-6">
         <MetricCard label="Event trong kỳ" value={totalInPeriod} meta={`${periodDays} ngày gần nhất`} tone="blue" />
+        <MetricCard label="Lượt vào web" value={summary.totals.pageViews} meta={`${format(summary.totals.sessions)} session đã ghi`} tone="neutral" />
         <MetricCard label="Mở detail" value={summary.totals.details} meta="Lượt xem chi tiết sản phẩm" tone="violet" />
         <MetricCard label="Liên hệ" value={summary.totals.messenger} meta={`${rate(summary.totals.messenger, summary.totals.details)} từ detail`} tone="rose" />
         <MetricCard label="Tìm kiếm" value={summary.totals.searches} meta="Truy vấn search đã ghi" tone="amber" />
+        <MetricCard label="Bug/crash" value={summary.totals.errors} meta={`${format(summary.totals.resourceErrors)} lỗi tài nguyên`} tone="rose" />
         <MetricCard label="Lead tư vấn" value={summary.totals.consults} meta={`${rate(summary.totals.consults, Math.max(summary.totals.messenger, 1))} từ liên hệ`} tone="emerald" />
       </div>
 
@@ -861,10 +907,12 @@ export default function AnalyticsPanel() {
                   <XAxis dataKey="label" stroke="#64748b" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
                   <YAxis stroke="#64748b" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} allowDecimals={false} />
                   <Tooltip content={<ChartTooltip />} />
+                  <Area type="monotone" dataKey="Vào web" stroke={COLORS.cyan} strokeWidth={2.4} fill="transparent" dot={false} isAnimationActive={false} />
                   <Area type="monotone" dataKey="Mở detail" stroke={COLORS.blue} strokeWidth={2.5} fill="url(#analyticsDetailArea)" dot={false} isAnimationActive={false} />
                   <Area type="monotone" dataKey="Liên hệ" stroke={COLORS.rose} strokeWidth={2.2} fill="transparent" dot={false} isAnimationActive={false} />
                   <Area type="monotone" dataKey="Tìm kiếm" stroke={COLORS.amber} strokeWidth={2.2} fill="transparent" dot={false} isAnimationActive={false} />
                   <Area type="monotone" dataKey="Tư vấn" stroke={COLORS.emerald} strokeWidth={2.2} fill="transparent" dot={false} isAnimationActive={false} />
+                  <Area type="monotone" dataKey="Lỗi" stroke={COLORS.slate} strokeWidth={2.2} fill="transparent" dot={false} isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>

@@ -41,6 +41,7 @@ import {
   toggleFavoriteProduct,
 } from "./utils/customerBehavior.js";
 import { submitConsultLead } from "./services/consult.js";
+import { initTelemetry, trackPageView } from "./services/telemetry.js";
 
 /* ---------------- helpers ---------------- */
 
@@ -632,10 +633,15 @@ export default function App() {
     };
   }, []);
 
-  const visitorTrackingEnabled = useMemo(
-    () => /^(1|true|yes|on)$/i.test(String(getConfig("enable_visitor_tracking", "false"))),
-    [configTick]
-  );
+  const telemetryStartedRef = useRef(false);
+
+  useEffect(() => {
+    if (telemetryStartedRef.current) return undefined;
+    telemetryStartedRef.current = true;
+    return initTelemetry();
+  }, []);
+
+  const visitorTrackingEnabled = false;
 
   /* Visitor access tracking (opt-in) */
   useEffect(() => {
@@ -777,6 +783,15 @@ export default function App() {
     }
     window.history.replaceState(null, "", u);
   }, [route, q, activeCat, filterState]);
+
+  useEffect(() => {
+    trackPageView({
+      route,
+      query: q,
+      category: activeCat,
+      source: "app_route",
+    });
+  }, [route, q, activeCat]);
 
   /* FB urls */
   useEffect(() => {
