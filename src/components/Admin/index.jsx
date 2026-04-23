@@ -1,16 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import AuthGuard from "./core/AuthGuard.jsx";
-import AdminOverviewPanel from "./panels/AdminOverviewPanel.jsx";
-import AnalyticsPanel from "./panels/AnalyticsPanel.jsx";
-import AuditPanel from "./panels/AuditPanel.jsx";
-import ProductsPanel from "./panels/ProductsPanel.jsx";
-import SettingsPanel from "./panels/SettingsPanel.jsx";
-import TypeSizePanel from "./panels/TypeSizePanel.jsx";
-import UploadPanel from "./panels/UploadPanel.jsx";
-import UsersPanel from "./panels/UsersPanel.jsx";
-import AITagsPanel from "./panels/AITagsPanel.jsx";
 import { Tabs } from "./ui/tabs.jsx";
-import { Badge, Button, Card, cn } from "./ui/primitives.jsx";
+import { Badge, Button, Card, Spinner, cn } from "./ui/primitives.jsx";
 import {
   LS,
   audit,
@@ -20,6 +11,16 @@ import {
   removeLS,
 } from "../../utils.js";
 
+const AdminOverviewPanel = lazy(() => import("./panels/AdminOverviewPanel.jsx"));
+const AnalyticsPanel = lazy(() => import("./panels/AnalyticsPanel.jsx"));
+const AuditPanel = lazy(() => import("./panels/AuditPanel.jsx"));
+const ProductsPanel = lazy(() => import("./panels/ProductsPanel.jsx"));
+const SettingsPanel = lazy(() => import("./panels/SettingsPanel.jsx"));
+const TypeSizePanel = lazy(() => import("./panels/TypeSizePanel.jsx"));
+const UploadPanel = lazy(() => import("./panels/UploadPanel.jsx"));
+const UsersPanel = lazy(() => import("./panels/UsersPanel.jsx"));
+const AITagsPanel = lazy(() => import("./panels/AITagsPanel.jsx"));
+
 const STORAGE_KEYS = {
   workspace: "admin.workspace",
   tool: "admin.tool",
@@ -27,6 +28,17 @@ const STORAGE_KEYS = {
 };
 
 const LEGACY_DARK_TOOLS = new Set(["typesize", "upload", "aitags", "settings"]);
+
+function PanelFallback() {
+  return (
+    <Card className="p-8">
+      <div className="flex items-center justify-center gap-3 text-sm text-slate-400">
+        <Spinner />
+        <span>Đang tải panel...</span>
+      </div>
+    </Card>
+  );
+}
 
 function Icon({ name, active = false, size = 20 }) {
   const color = active ? "#60a5fa" : "currentColor";
@@ -405,11 +417,13 @@ function renderTool(toolKey, user, onNavigate) {
       break;
   }
 
+  const content = <Suspense fallback={<PanelFallback />}>{panel}</Suspense>;
+
   if (LEGACY_DARK_TOOLS.has(toolKey)) {
-    return <div className="legacy-admin-dark">{panel}</div>;
+    return <div className="legacy-admin-dark">{content}</div>;
   }
 
-  return panel;
+  return content;
 }
 
 export default function AdminIndex() {

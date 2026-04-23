@@ -10,6 +10,7 @@ import SectionErrorBoundary from "./components/system/SectionErrorBoundary.jsx";
 import Header from "./components/Header.jsx";
 import { Footer } from "./components/Footer.jsx";
 import { Hero } from "./components/Hero.jsx";
+import SocialProofSection from "./components/SocialProofSection.jsx";
 import CategoryBar from "./components/CategoryBar.jsx";
 import Filters from "./components/Filters.jsx";
 import FilterSheet from "./components/FilterSheet.jsx";
@@ -1913,6 +1914,14 @@ export default function App() {
             interval={2000}
             fbUrls={fbUrls}
             onBannerClick={(p) => openQuick(p, "hero")}
+          />
+        )}
+        {isHome && (
+          <SocialProofSection
+            entries={DATA.socialProof}
+            products={products}
+            categoryTitleMap={categoryTitleMap}
+            onProductClick={(p) => openQuick(p, "social_proof")}
           />
         )}
         {showCatBar ? CatBar : null}

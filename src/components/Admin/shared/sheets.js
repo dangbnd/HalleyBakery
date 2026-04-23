@@ -272,6 +272,7 @@ export const deleteFromSheet = (sheet, id, options = {}) =>
 const RUNTIME_CONFIG_KEYS = [
   KEYS.SHEET_ID,
   KEYS.DRIVE_FOLDER_ID,
+  KEYS.FEEDBACK_DRIVE_FOLDER_ID,
   KEYS.SHEET_GID_CONFIG,
   KEYS.PRODUCT_TABS,
   KEYS.SHEET_GID_PRODUCTS,
@@ -427,6 +428,10 @@ async function upsertConfigEntries(entries = [], { authToken = "", webappUrl = "
   }
 
   return { ok: true, sheetName, inserted, updated };
+}
+
+export async function saveConfigEntriesToSheet(entries = [], options = {}) {
+  return upsertConfigEntries(entries, options);
 }
 
 export async function saveRuntimeConfigToSheet(config = {}, options = {}) {

@@ -13,6 +13,28 @@ export const DATA = {
   social: {
     fbPost: "https://www.facebook.com/halleybakery/posts/pfbid02iegyTurHEyZ9MW4rzrgw7hAxPiwzxwoJDhktgWgKBz4n7u7jjUmqnHKeLbXZoy3Tl?__cft__[0]=AZUKJnnQtDqxF0q7YGumPSwyno92dr247RVhjuLO0F1JHoMNVwwkvuJ2Ev0sKwQADAtqXlkrFImBileDLWs7ZRU5j7HZJnB8BXstjyABcYbt8xpNnis9EEe8HXl17oOJn9hffj4wT0M45hhanL7_3tANnJaaACubjRFwBh_qARhgNw&__tn__=%2CO%2CP-R",
   },
+  socialProof: [
+    {
+      key: "than-tai",
+      occasion: "Khai trương",
+      feedback: "Form lên chắc, màu nổi và đổi lời chúc nhanh theo từng đơn.",
+    },
+    {
+      key: "be-trai",
+      occasion: "Sinh nhật bé trai",
+      feedback: "Tone xanh sạch, thêm tên và số tuổi gọn, lên bàn tiệc rất sáng.",
+    },
+    {
+      key: "3d",
+      occasion: "Sinh nhật theo nhân vật",
+      feedback: "Mẫu 3D giữ khối rõ, chụp cận cảnh vẫn ra chi tiết và nhìn vui mắt.",
+    },
+    {
+      key: "basic",
+      occasion: "Tiệc gia đình",
+      feedback: "Mẫu basic gọn, dễ tăng size hoặc thêm chữ mà tổng thể vẫn cân.",
+    },
+  ],
   categories:[
     {key:'fresh_women',title:'Bánh kem nữ'},
   ],

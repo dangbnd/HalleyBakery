@@ -24,6 +24,14 @@ const MANUAL_FIELDS = [
     span: "sm:col-span-2 lg:col-span-3",
   },
   {
+    key: KEYS.FEEDBACK_DRIVE_FOLDER_ID,
+    label: "Feedback Drive Folder ID",
+    placeholder: "1abcFeedbackFolder...",
+    desc: "Thư mục riêng để lưu ảnh feedback khách gửi.",
+    icon: "🖼️",
+    span: "sm:col-span-2 lg:col-span-3",
+  },
+  {
     key: KEYS.MESSENGER_LINK,
     label: "Messenger Link",
     placeholder: "https://m.me/...",

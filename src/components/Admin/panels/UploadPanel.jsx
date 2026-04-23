@@ -2,9 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { LS, audit, readLS } from "../../../utils.js";
 import { KEYS, getConfig, getGeminiKeys, setConfig, pushConfigKeyToSheet } from "../../../utils/config.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
-import { listDriveFileHashes, listDriveLeafFolders, uploadDriveFile } from "../shared/sheets.js";
+import { listDriveFileHashes, listDriveLeafFolders, saveConfigEntriesToSheet, uploadDriveFile } from "../shared/sheets.js";
 import { isTokenExpired, requestGoogleDriveToken, uploadFileDirectToDrive, saveHashesToSheet, loadHashesFromSheet } from "../shared/driveDirect.js";
 import { Badge, Button, Callout, MetricItem, MetricStrip, PageHeader, Section, Toolbar } from "../ui/primitives.jsx";
+import { buildDriveImageUrl, parseFeedbackImagesConfig, serializeFeedbackImagesConfig, upsertFeedbackImageRecord } from "../../../utils/feedback.js";
 
 const AI_MODEL = "gemini-2.0-flash";
 const OAUTH_CACHE_KEY = "admin.upload.oauth.v1";
@@ -59,9 +60,14 @@ function readConfigSnapshot() {
     productsGid: s(getConfig(KEYS.SHEET_GID_PRODUCTS, "")),
     tagGid: s(getConfig(KEYS.SHEET_GID_TAGS, "")),
     driveRootId: s(getConfig(KEYS.DRIVE_FOLDER_ID, "")),
+    feedbackDriveFolderId: s(getConfig(KEYS.FEEDBACK_DRIVE_FOLDER_ID, "")),
     gsWebappUrl: s(getConfig(KEYS.GS_WEBAPP_URL, "")),
     googleOAuthClientId: s(getConfig(KEYS.GOOGLE_OAUTH_CLIENT_ID, "")),
   };
+}
+
+function readFeedbackLibrary() {
+  return parseFeedbackImagesConfig(getConfig(KEYS.FEEDBACK_IMAGES, ""));
 }
 
 // Đọc keys từ ai_gemini_keys localStorage (do AITagsPanel quản lý)
@@ -368,9 +374,11 @@ function applyCategoryAutoFolder(item, categoryKey, categories, folders) {
 export default function UploadPanel({ canEdit = true }) {
   const [bootMeta] = useState(() => readMetaCache());
   const [cfg, setCfg] = useState(() => readConfigSnapshot());
+  const [uploadMode, setUploadMode] = useState("catalog");
   const [categories, setCategories] = useState(() => bootMeta?.categories || []);
   const [tagOptions, setTagOptions] = useState(() => bootMeta?.tagOptions || []);
   const [folders, setFolders] = useState(() => bootMeta?.folders || []);
+  const [feedbackLibrary, setFeedbackLibrary] = useState(() => readFeedbackLibrary());
   const [driveHashIndex, setDriveHashIndex] = useState(() => {
     const map = new Map();
     (bootMeta?.driveHashes || []).forEach(row => {
@@ -414,9 +422,32 @@ export default function UploadPanel({ canEdit = true }) {
 
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => () => itemsRef.current.forEach(it => URL.revokeObjectURL(it.previewUrl)), []);
+  useEffect(() => {
+    const refresh = () => {
+      setCfg(readConfigSnapshot());
+      setFeedbackLibrary(readFeedbackLibrary());
+    };
+    window.addEventListener("hb:config-changed", refresh);
+    return () => window.removeEventListener("hb:config-changed", refresh);
+  }, []);
+  useEffect(() => {
+    if (!cfg.feedbackDriveFolderId) return;
+    setItems((prev) =>
+      prev.map((item) =>
+        item.uploadType === "feedback" && !item.done
+          ? { ...item, folderId: cfg.feedbackDriveFolderId, folderManual: true }
+          : item
+      )
+    );
+  }, [cfg.feedbackDriveFolderId]);
 
   const hasDirectConfig = !!cfg.googleOAuthClientId;
   const directReady = hasDirectConfig && !!oauthToken && !isTokenExpired(oauthExpiresAt);
+  const isFeedbackMode = uploadMode === "feedback";
+  const feedbackFolderReady = !!cfg.feedbackDriveFolderId;
+  const feedbackFolderLink = cfg.feedbackDriveFolderId
+    ? `https://drive.google.com/drive/folders/${cfg.feedbackDriveFolderId}`
+    : "";
 
   const validationMap = useMemo(() => {
     const foldersSet = new Set(folders.map((f) => f.id));
@@ -436,8 +467,12 @@ export default function UploadPanel({ canEdit = true }) {
         driveDup = driveHashIndex.get(itemKey) || [];
         if (driveDup.length) issues.push(`Trùng ảnh trên Drive (${driveDup[0].name}).`);
       }
-      if (!item.categoryKey) issues.push("Chưa chọn danh mục.");
-      if (!item.folderId || !foldersSet.has(item.folderId)) issues.push("Chưa có thư mục.");
+      if (item.uploadType === "feedback") {
+        if (!item.folderId) issues.push("Chưa cấu hình thư mục feedback.");
+      } else {
+        if (!item.categoryKey) issues.push("Chưa chọn danh mục.");
+        if (!item.folderId || !foldersSet.has(item.folderId)) issues.push("Chưa có thư mục.");
+      }
       out[item.id] = { canUpload: canEdit && !item.done && !item.uploading && !issues.length, issues, isDuplicate: localDup.length > 0 || driveDup.length > 0 };
     });
     return out;
@@ -578,15 +613,29 @@ export default function UploadPanel({ canEdit = true }) {
     if (!canEdit) return;
     const nextItems = Array.from(fileList || []).filter(f => /^image\//i.test(f.type)).map(file => ({
       id: makeUid(), file, name: file.name, size: file.size, type: file.type, previewUrl: URL.createObjectURL(file),
-      selected: true, categoryKey: "", folderId: "", tagsText: "", aiLoading: false, hash: "", hashAlgo: "", hashLoading: true, done: false
+      uploadType: uploadMode,
+      selected: true,
+      categoryKey: "",
+      folderId: uploadMode === "feedback" ? cfg.feedbackDriveFolderId : "",
+      folderManual: uploadMode === "feedback",
+      tagsText: "",
+      aiLoading: false,
+      hash: "",
+      hashAlgo: "",
+      hashLoading: true,
+      done: false
     }));
     setItems(prev => [...prev, ...nextItems]);
     nextItems.forEach(it => computeHash(it.id, it.file));
-  }, [canEdit, computeHash]);
+  }, [canEdit, computeHash, cfg.feedbackDriveFolderId, uploadMode]);
 
   const runAiOne = async (id) => {
     if (!canEdit) return;
     const item = itemsRef.current.find(x => x.id === id);
+    if (item?.uploadType === "feedback") {
+      updateItem(id, { error: "Ảnh feedback không cần AI phân loại." });
+      return;
+    }
     const keys = readAllGeminiKeys();
     const modelIds = readActiveModels();
     if (!item) return;
@@ -649,6 +698,30 @@ export default function UploadPanel({ canEdit = true }) {
     }
   };
 
+  const persistFeedbackAsset = useCallback(async (item, out) => {
+    const nextRecord = {
+      id: s(out?.id),
+      image: buildDriveImageUrl(out?.id),
+      url: s(out?.url || out?.downloadUrl),
+      name: s(item?.name || out?.name || "Feedback khach hang"),
+      uploadedAt: new Date().toISOString(),
+    };
+    const nextLibrary = upsertFeedbackImageRecord(readFeedbackLibrary(), nextRecord);
+    const serialized = serializeFeedbackImagesConfig(nextLibrary);
+
+    setConfig(KEYS.FEEDBACK_IMAGES, serialized);
+    setFeedbackLibrary(nextLibrary);
+
+    try {
+      await saveConfigEntriesToSheet([{ key: KEYS.FEEDBACK_IMAGES, value: serialized }], { webappUrl: cfg.gsWebappUrl });
+    } catch (error) {
+      pushConfigKeyToSheet(KEYS.FEEDBACK_IMAGES, serialized).catch(() => {});
+      throw error;
+    } finally {
+      window.dispatchEvent(new Event("hb:config-changed"));
+    }
+  }, [cfg.gsWebappUrl]);
+
   const uploadOne = async (id) => {
     if (!canEdit) return;
     const item = itemsRef.current.find(x => x.id === id);
@@ -663,9 +736,17 @@ export default function UploadPanel({ canEdit = true }) {
         const dUrl = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(item.file); });
         out = await uploadDriveFile({ folderId: item.folderId, rootFolderId: cfg.driveRootId, fileName: item.name, mimeType: item.type, base64: dUrl.split(",")[1], category: item.categoryKey, tags: normalizeTagsInput(item.tagsText) });
       }
-      updateItem(id, { uploading: false, done: true, uploadUrl: out.url });
+      let syncError = "";
+      if (item.uploadType === "feedback") {
+        try {
+          await persistFeedbackAsset(item, out);
+        } catch (error) {
+          syncError = `Đã upload Drive nhưng chưa lưu danh sách feedback: ${error.message}`;
+        }
+      }
+      updateItem(id, { uploading: false, done: true, uploadUrl: out.url, error: syncError });
       
-      audit("upload.image", {
+      audit(item.uploadType === "feedback" ? "upload.feedback_image" : "upload.image", {
         name: item.name,
         category: item.categoryKey,
         folderId: item.folderId,
@@ -703,16 +784,49 @@ export default function UploadPanel({ canEdit = true }) {
   const doneCount = items.filter((x) => x.done).length;
   const issueCount = items.filter((x) => (validationMap[x.id]?.issues || []).length || x.error).length;
   const hasItems = items.length > 0;
+  const feedbackCount = feedbackLibrary.length;
 
   return (
     <div className="space-y-4">
       <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
 
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setUploadMode("catalog")}
+          className={`h-10 rounded-2xl border px-4 text-sm font-semibold transition ${!isFeedbackMode ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+        >
+          Ảnh sản phẩm
+        </button>
+        <button
+          type="button"
+          onClick={() => setUploadMode("feedback")}
+          className={`h-10 rounded-2xl border px-4 text-sm font-semibold transition ${isFeedbackMode ? "border-rose-500 bg-rose-500 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+        >
+          Ảnh feedback
+        </button>
+        <Badge variant={feedbackCount ? "violet" : "neutral"}>{feedbackCount} feedback đã lưu</Badge>
+        {isFeedbackMode && feedbackFolderReady ? (
+          <a
+            href={feedbackFolderLink}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-medium text-rose-600 hover:underline"
+          >
+            Mở thư mục feedback
+          </a>
+        ) : null}
+      </div>
+
       {!hasItems && (
         <>
           <PageHeader
-            title="Upload ảnh"
-            description="Hàng chờ media, tự phân loại và đẩy ảnh lên Drive."
+            title={isFeedbackMode ? "Upload ảnh feedback" : "Upload ảnh"}
+            description={
+              isFeedbackMode
+                ? "Ảnh chụp màn hình khách gửi sẽ được đẩy vào thư mục feedback riêng trên Google Drive."
+                : "Hàng chờ media, tự phân loại và đẩy ảnh lên Drive."
+            }
             compact
             chips={
               <>
@@ -725,11 +839,11 @@ export default function UploadPanel({ canEdit = true }) {
 
           <MetricStrip columnsClassName="xl:grid-cols-6">
             <MetricItem label="Hàng chờ" value={items.length} meta={`${totalSelected} đang chọn`} tone="blue" />
-            <MetricItem label="Sẵn sàng" value={readyCount} meta="Có danh mục và thư mục" tone="emerald" />
+            <MetricItem label="Sẵn sàng" value={readyCount} meta={isFeedbackMode ? "Có thư mục feedback" : "Có danh mục và thư mục"} tone="emerald" />
             <MetricItem label="Cảnh báo" value={issueCount} meta={`${duplicateCount} ảnh trùng`} tone="amber" />
             <MetricItem label="Đã upload" value={doneCount} meta="Hoàn tất trong phiên này" tone="violet" />
-            <MetricItem label="Danh mục" value={categories.length} meta="Đọc từ Sheet/cache" tone="blue" />
-            <MetricItem label="Thư mục" value={folders.length} meta="Thư mục Drive cấp cuối" tone="rose" />
+            <MetricItem label={isFeedbackMode ? "Feedback đã lưu" : "Danh mục"} value={isFeedbackMode ? feedbackCount : categories.length} meta={isFeedbackMode ? "Đang có trên storefront" : "Đọc từ Sheet/cache"} tone="blue" />
+            <MetricItem label="Thư mục" value={isFeedbackMode ? Number(feedbackFolderReady) : folders.length} meta={isFeedbackMode ? (feedbackFolderReady ? "Folder feedback đã cấu hình" : "Thiếu folder feedback") : "Thư mục Drive cấp cuối"} tone="rose" />
           </MetricStrip>
         </>
       )}
@@ -737,6 +851,12 @@ export default function UploadPanel({ canEdit = true }) {
       {!canEdit && (
         <Callout tone="warning" title="Chế độ chỉ xem">
           Tài khoản này không có quyền thêm ảnh, chạy AI, upload hoặc cập nhật cấu hình.
+        </Callout>
+      )}
+
+      {isFeedbackMode && !feedbackFolderReady && (
+        <Callout tone="warning" title="Thiếu thư mục feedback">
+          Vào tab Cấu hình và điền `Feedback Drive Folder ID` trước khi upload ảnh feedback.
         </Callout>
       )}
 
@@ -822,9 +942,10 @@ export default function UploadPanel({ canEdit = true }) {
           </div>
           
           {/* Thống kê nhanh */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 text-xs">
             <div className="rounded-xl bg-gray-50/50 hover:bg-gray-50 border border-gray-100 px-3 py-2 transition"><div className="text-gray-500 font-medium mb-0.5">Sheet ID</div><div className="font-mono text-gray-800 truncate">{cfg.sheetId || "(chưa cấu hình)"}</div></div>
             <div className="rounded-xl bg-gray-50/50 hover:bg-gray-50 border border-gray-100 px-3 py-2 transition"><div className="text-gray-500 font-medium mb-0.5">Thư mục gốc Drive</div><div className="font-mono text-gray-800 truncate">{cfg.driveRootId || "(chưa cấu hình)"}</div></div>
+            <div className="rounded-xl bg-gray-50/50 hover:bg-gray-50 border border-gray-100 px-3 py-2 transition"><div className="text-gray-500 font-medium mb-0.5">Folder feedback</div><div className="font-mono text-gray-800 truncate">{cfg.feedbackDriveFolderId || "(chưa cấu hình)"}</div></div>
             <div className="rounded-xl bg-gray-50/50 hover:bg-gray-50 border border-gray-100 px-3 py-2 transition"><div className="text-gray-500 font-medium mb-0.5">Danh mục</div><div className="text-gray-800 font-semibold">{categories.length} mục</div></div>
             <div className="rounded-xl bg-gray-50/50 hover:bg-gray-50 border border-gray-100 px-3 py-2 transition"><div className="text-gray-500 font-medium mb-0.5">Thư mục cấp cuối</div><div className="text-gray-800 font-semibold">{folders.length} thư mục</div></div>
             <div className="rounded-xl bg-gray-50/50 hover:bg-gray-50 border border-gray-100 px-3 py-2 transition"><div className="text-gray-500 font-medium mb-0.5">Tag mẫu</div><div className="text-gray-800 font-semibold">{tagOptions?.length || 0} tag</div></div>
@@ -966,18 +1087,22 @@ export default function UploadPanel({ canEdit = true }) {
                     <div className="flex items-center gap-1 min-w-0">
                       <div className="flex-1 min-w-0">
                         <div className="text-[10px] font-semibold text-gray-800 truncate">{item.name}</div>
-                        <div className="text-[9px] text-gray-400">{fmtBytes(item.size)}</div>
+                        <div className="text-[9px] text-gray-400">
+                          {fmtBytes(item.size)} · {item.uploadType === "feedback" ? "feedback" : "catalog"}
+                        </div>
                       </div>
                       <div className="flex gap-1 shrink-0">
                         {/* AI button */}
-                        <button onClick={() => runAiOne(item.id)} disabled={!canEdit || item.aiLoading}
-                          className="w-5 h-5 flex items-center justify-center rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-500 disabled:opacity-40 transition"
-                          title="AI gợi ý category + tag">
-                          {item.aiLoading
-                            ? <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
-                            : <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M15.98 1.804a1 1 0 0 0-1.96 0l-.24 1.192a1 1 0 0 1-.784.785l-1.192.239a1 1 0 0 0 0 1.962l1.192.24a1 1 0 0 1 .784.784l.24 1.192a1 1 0 0 0 1.962 0l.24-1.192a1 1 0 0 1 .784-.784l1.192-.24a1 1 0 0 0 0-1.962l-1.192-.24a1 1 0 0 1-.784-.784l-.24-1.192ZM6.949 5.684a1 1 0 0 0-1.898 0l-.683 2.051a1 1 0 0 1-.633.633l-2.051.683a1 1 0 0 0 0 1.898l2.051.684a1 1 0 0 1 .633.632l.683 2.051a1 1 0 0 0 1.898 0l.683-2.051a1 1 0 0 1 .633-.633l2.051-.683a1 1 0 0 0 0-1.898l-2.051-.683a1 1 0 0 1-.633-.633L6.95 5.684ZM13.949 13.684a1 1 0 0 0-1.898 0l-.184.551a1 1 0 0 1-.633.633l-.551.184a1 1 0 0 0 0 1.898l.551.183a1 1 0 0 1 .633.634l.184.551a1 1 0 0 0 1.898 0l.184-.551a1 1 0 0 1 .633-.634l.551-.183a1 1 0 0 0 0-1.898l-.551-.184a1 1 0 0 1-.633-.633l-.184-.551Z"/></svg>
-                          }
-                        </button>
+                        {item.uploadType !== "feedback" ? (
+                          <button onClick={() => runAiOne(item.id)} disabled={!canEdit || item.aiLoading}
+                            className="w-5 h-5 flex items-center justify-center rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-500 disabled:opacity-40 transition"
+                            title="AI gợi ý category + tag">
+                            {item.aiLoading
+                              ? <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
+                              : <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M15.98 1.804a1 1 0 0 0-1.96 0l-.24 1.192a1 1 0 0 1-.784.785l-1.192.239a1 1 0 0 0 0 1.962l1.192.24a1 1 0 0 1 .784.784l.24 1.192a1 1 0 0 0 1.962 0l.24-1.192a1 1 0 0 1 .784-.784l1.192-.24a1 1 0 0 0 0-1.962l-1.192-.24a1 1 0 0 1-.784-.784l-.24-1.192ZM6.949 5.684a1 1 0 0 0-1.898 0l-.683 2.051a1 1 0 0 1-.633.633l-2.051.683a1 1 0 0 0 0 1.898l2.051.684a1 1 0 0 1 .633.632l.683 2.051a1 1 0 0 0 1.898 0l.683-2.051a1 1 0 0 1 .633-.633l2.051-.683a1 1 0 0 0 0-1.898l-2.051-.683a1 1 0 0 1-.633-.633L6.95 5.684ZM13.949 13.684a1 1 0 0 0-1.898 0l-.184.551a1 1 0 0 1-.633.633l-.551.184a1 1 0 0 0 0 1.898l.551.183a1 1 0 0 1 .633.634l.184.551a1 1 0 0 0 1.898 0l.184-.551a1 1 0 0 1 .633-.634l.551-.183a1 1 0 0 0 0-1.898l-.551-.184a1 1 0 0 1-.633-.633l-.184-.551Z"/></svg>
+                            }
+                          </button>
+                        ) : null}
                         {/* Upload button */}
                         <button onClick={() => uploadOne(item.id)} disabled={!check.canUpload}
                           className="w-5 h-5 flex items-center justify-center rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-600 disabled:opacity-30 transition"
@@ -987,24 +1112,34 @@ export default function UploadPanel({ canEdit = true }) {
                       </div>
                     </div>
 
-                    {/* Category + Folder */}
-                    <select value={item.categoryKey} onChange={e => {
-                      const it = applyCategoryAutoFolder(item, e.target.value, categories, folders);
-                      updateItem(item.id, { categoryKey: it.categoryKey, folderId: it.folderId, folderHint: it.folderHint });
-                    }} disabled={!canEdit} className="w-full h-6 px-1.5 text-[10px] bg-gray-50 border border-gray-200 rounded-md focus:border-indigo-400 outline-none cursor-pointer text-gray-700 disabled:opacity-60">
-                      <option value="">📁 Chọn danh mục...</option>
-                      {categories.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
-                    </select>
+                    {item.uploadType === "feedback" ? (
+                      <div className="rounded-lg border border-rose-100 bg-rose-50/60 px-2 py-1.5 text-[10px] text-rose-700">
+                        <div className="font-semibold">Upload vào thư mục feedback riêng</div>
+                        <div className="mt-0.5 truncate text-rose-500">
+                          {item.folderId || "Chưa cấu hình Feedback Drive Folder ID"}
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <select value={item.categoryKey} onChange={e => {
+                          const it = applyCategoryAutoFolder(item, e.target.value, categories, folders);
+                          updateItem(item.id, { categoryKey: it.categoryKey, folderId: it.folderId, folderHint: it.folderHint });
+                        }} disabled={!canEdit} className="w-full h-6 px-1.5 text-[10px] bg-gray-50 border border-gray-200 rounded-md focus:border-indigo-400 outline-none cursor-pointer text-gray-700 disabled:opacity-60">
+                          <option value="">📁 Chọn danh mục...</option>
+                          {categories.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+                        </select>
 
-                    <select value={item.folderId} onChange={e => updateItem(item.id, { folderId: e.target.value, folderManual: true })} disabled={!canEdit}
-                      className="w-full h-6 px-1.5 text-[10px] bg-gray-50 border border-gray-200 rounded-md focus:border-indigo-400 outline-none cursor-pointer text-gray-700 disabled:opacity-60">
-                      <option value="">📂 Thư mục...</option>
-                      {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                    </select>
+                        <select value={item.folderId} onChange={e => updateItem(item.id, { folderId: e.target.value, folderManual: true })} disabled={!canEdit}
+                          className="w-full h-6 px-1.5 text-[10px] bg-gray-50 border border-gray-200 rounded-md focus:border-indigo-400 outline-none cursor-pointer text-gray-700 disabled:opacity-60">
+                          <option value="">📂 Thư mục...</option>
+                          {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                        </select>
 
-                    <input value={item.tagsText} onChange={e => updateItem(item.id, { tagsText: e.target.value })} disabled={!canEdit}
-                      placeholder="🏷 Tags..."
-                      className="w-full h-6 px-1.5 text-[10px] bg-gray-50 border border-gray-200 rounded-md focus:border-indigo-400 outline-none text-gray-700 disabled:opacity-60" />
+                        <input value={item.tagsText} onChange={e => updateItem(item.id, { tagsText: e.target.value })} disabled={!canEdit}
+                          placeholder="🏷 Tags..."
+                          className="w-full h-6 px-1.5 text-[10px] bg-gray-50 border border-gray-200 rounded-md focus:border-indigo-400 outline-none text-gray-700 disabled:opacity-60" />
+                      </>
+                    )}
 
                     {/* Errors */}
                     {(check.issues[0] || item.error) && (

@@ -9,6 +9,8 @@ const SHARED_COOKIE_MAX_AGE = 60 * 60 * 24 * 365 * 2;
 const KEYS = {
   SHEET_ID: "sheet_id",
   DRIVE_FOLDER_ID: "drive_folder_id",
+  FEEDBACK_DRIVE_FOLDER_ID: "feedback_drive_folder_id",
+  FEEDBACK_IMAGES: "feedback_images",
   SHEET_GID_CONFIG: "sheet_gid_config",
   PRODUCT_TABS: "product_tabs",
   SHEET_GID_FB: "sheet_gid_fb",
@@ -40,6 +42,7 @@ const KEYS = {
 const SHARED_KEYS = new Set([
   KEYS.SHEET_ID,
   KEYS.DRIVE_FOLDER_ID,
+  KEYS.FEEDBACK_DRIVE_FOLDER_ID,
   KEYS.SHEET_GID_CONFIG,
   KEYS.PRODUCT_TABS,
   KEYS.SHEET_GID_FB,
@@ -64,6 +67,8 @@ const SHARED_KEYS = new Set([
 const ENV_MAP = {
   [KEYS.SHEET_ID]: "VITE_SHEET_ID",
   [KEYS.DRIVE_FOLDER_ID]: "VITE_DRIVE_FOLDER_ID",
+  [KEYS.FEEDBACK_DRIVE_FOLDER_ID]: "VITE_FEEDBACK_DRIVE_FOLDER_ID",
+  [KEYS.FEEDBACK_IMAGES]: "VITE_FEEDBACK_IMAGES",
   [KEYS.SHEET_GID_CONFIG]: "VITE_SHEET_GID_CONFIG",
   [KEYS.PRODUCT_TABS]: "VITE_PRODUCT_TABS",
   [KEYS.SHEET_GID_FB]: "VITE_SHEET_GID_FB",
@@ -106,6 +111,12 @@ const CONFIG_TAB_MATCHERS = [
 const REMOTE_ALIAS_MAP = {
   [KEYS.SHEET_ID]: ["sheet_id", "sheetid", "google_sheet_id", "spreadsheet_id"],
   [KEYS.DRIVE_FOLDER_ID]: ["drive_folder_id", "drivefolderid", "google_drive_folder_id", "folder_id"],
+  [KEYS.FEEDBACK_DRIVE_FOLDER_ID]: [
+    "feedback_drive_folder_id",
+    "feedback_folder_id",
+    "google_feedback_drive_folder_id",
+  ],
+  [KEYS.FEEDBACK_IMAGES]: ["feedback_images", "feedback_image_list", "social_proof_images"],
   [KEYS.SHEET_GID_CONFIG]: ["sheet_gid_config", "gid_config", "config_gid", "url_gid"],
   [KEYS.PRODUCT_TABS]: ["product_tabs", "producttabs", "tabs", "products_tabs"],
   [KEYS.SHEET_GID_PRODUCTS]: ["sheet_gid_products", "gid_products", "products_gid"],
@@ -395,7 +406,7 @@ function normalizeValue(key, value) {
   const raw = String(value ?? "").trim();
   if (!raw) return "";
   if (key === KEYS.SHEET_ID) return extractSheetId(raw);
-  if (key === KEYS.DRIVE_FOLDER_ID) return extractDriveFolderId(raw);
+  if (key === KEYS.DRIVE_FOLDER_ID || key === KEYS.FEEDBACK_DRIVE_FOLDER_ID) return extractDriveFolderId(raw);
   if (GID_KEYS.has(key)) return normalizeGidLike(raw);
   if (key === KEYS.PRODUCT_TABS) return raw.replace(/,+$/g, "").trim();
   if (key === KEYS.API_ALL_URL || key === KEYS.GS_WEBAPP_URL || key === KEYS.MESSENGER_LINK || key === KEYS.ZALO_LINK || key === KEYS.GOOGLE_OAUTH_CLIENT_ID || key === KEYS.GS_WEBAPP_TOKEN) {
