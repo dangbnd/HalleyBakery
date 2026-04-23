@@ -146,6 +146,27 @@ function HB_trackingEnsure_() {
   return { ok: true, eventsSheet: HB_TRACKING_EVENTS_SHEET_, consultsSheet: HB_TRACKING_CONSULTS_SHEET_ };
 }
 
+function testTrackingSetup() {
+  return HB_trackingEnsure_();
+}
+
+function testTrackingPing() {
+  return HB_tryHandleTrackingActions_({
+    action: "tracking.track",
+    events: [{
+      id: "manual-" + Date.now(),
+      ts: new Date().toISOString(),
+      ts_ms: Date.now(),
+      type: "manual_test",
+      source: "apps-script",
+      severity: "info",
+      page_path: "/apps-script-test",
+      message: "Manual tracking smoke test",
+      app_host: "apps-script",
+    }],
+  });
+}
+
 function HB_trackingValue_(row, header) {
   if (!row) return "";
   if (Object.prototype.hasOwnProperty.call(row, header)) return row[header] == null ? "" : row[header];
