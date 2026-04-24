@@ -224,6 +224,7 @@ function viewportLabel() {
 }
 
 function finiteNumber(value) {
+  if (value == null || (typeof value === "string" && value.trim() === "")) return "";
   const n = Number(value);
   return Number.isFinite(n) ? n : "";
 }

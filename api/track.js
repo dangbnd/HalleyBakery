@@ -6,6 +6,11 @@ const GPS_REVERSE_GEOCODE_TIMEOUT_MS = 2500;
 const GPS_REVERSE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const GPS_REVERSE_CACHE_LIMIT = 120;
 const gpsReverseCache = new Map();
+const IP_LOOKUP_URL = "https://ipwho.is";
+const IP_LOOKUP_TIMEOUT_MS = 2500;
+const IP_LOOKUP_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const IP_LOOKUP_CACHE_LIMIT = 300;
+const ipLookupCache = new Map();
 
 const ALLOWED_EVENT_TYPES = new Set([
   "session_start",
@@ -109,6 +114,10 @@ function s(value) {
   return value == null ? "" : String(value).trim();
 }
 
+function isBlankValue(value) {
+  return value == null || (typeof value === "string" && value.trim() === "");
+}
+
 function clip(value = "", max = 500) {
   const text = s(value);
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
@@ -116,7 +125,7 @@ function clip(value = "", max = 500) {
 
 function firstNonBlank(...values) {
   for (const value of values) {
-    if (value != null && value !== "") return value;
+    if (!isBlankValue(value)) return value;
   }
   return "";
 }
@@ -186,6 +195,7 @@ function cleanGeoValue(value = "") {
 }
 
 function numberOrNull(value) {
+  if (isBlankValue(value)) return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -230,8 +240,9 @@ function formatReverseGeocodeAddress(data = {}) {
   return clip([...new Set(parts)].join(", "), 240);
 }
 
-async function reverseGeocodeGps(coords = {}) {
-  const key = gpsReverseCacheKey(coords);
+async function reverseGeocodeCoords(coords = {}, options = {}) {
+  const zoom = String(options.zoom || "18");
+  const key = `${zoom}:${gpsReverseCacheKey(coords)}`;
   const now = Date.now();
   const cached = gpsReverseCache.get(key);
   if (cached && now - cached.at <= GPS_REVERSE_CACHE_TTL_MS) return cached.address || "";
@@ -244,7 +255,7 @@ async function reverseGeocodeGps(coords = {}) {
     url.searchParams.set("format", "jsonv2");
     url.searchParams.set("lat", String(coords.lat));
     url.searchParams.set("lon", String(coords.lon));
-    url.searchParams.set("zoom", "18");
+    url.searchParams.set("zoom", zoom);
     url.searchParams.set("addressdetails", "1");
     url.searchParams.set("accept-language", "vi,en");
 
@@ -265,6 +276,90 @@ async function reverseGeocodeGps(coords = {}) {
     return address;
   } catch {
     return "";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function reverseGeocodeGps(coords = {}) {
+  return reverseGeocodeCoords(coords, { zoom: 18 });
+}
+
+function formatIpLookupAddress(data = {}) {
+  const parts = [
+    data.city,
+    data.region,
+    data.country,
+  ].map(s).filter(Boolean);
+  return clip([...new Set(parts)].join(", "), 240);
+}
+
+function isPublicIpCandidate(ip = "") {
+  const value = s(ip).toLowerCase();
+  if (!value || value === "unknown" || value === "::1" || value === "localhost") return false;
+  if (/^(10|127)\./.test(value)) return false;
+  if (/^192\.168\./.test(value)) return false;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(value)) return false;
+  if (value.startsWith("fc") || value.startsWith("fd") || value.startsWith("fe80:")) return false;
+  return true;
+}
+
+function pruneIpLookupCache(now = Date.now()) {
+  for (const [key, item] of ipLookupCache.entries()) {
+    if (!item || now - item.at > IP_LOOKUP_CACHE_TTL_MS) ipLookupCache.delete(key);
+  }
+  while (ipLookupCache.size > IP_LOOKUP_CACHE_LIMIT) {
+    const oldest = ipLookupCache.keys().next().value;
+    if (!oldest) break;
+    ipLookupCache.delete(oldest);
+  }
+}
+
+async function lookupIpLocation(ip = "") {
+  const clean = cleanIpAddress(ip);
+  if (!isPublicIpCandidate(clean)) return null;
+
+  const now = Date.now();
+  const cached = ipLookupCache.get(clean);
+  if (cached && now - cached.at <= IP_LOOKUP_CACHE_TTL_MS) return cached.location || null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), IP_LOOKUP_TIMEOUT_MS);
+
+  try {
+    const url = new URL(`${IP_LOOKUP_URL}/${encodeURIComponent(clean)}`);
+    url.searchParams.set("lang", "vi");
+
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "HalleyBakeryTracking/1.0 (https://halleybakery.io.vn)",
+      },
+    });
+    if (!res.ok) return null;
+
+    const data = await res.json().catch(() => ({}));
+    if (data?.success === false) return null;
+
+    const coords = gpsCoordsFromEvent({
+      latitude: data.latitude,
+      longitude: data.longitude,
+    });
+    const reverseAddress = coords ? await reverseGeocodeCoords(coords, { zoom: 14 }) : "";
+    const fallbackAddress = formatIpLookupAddress(data);
+    const location = {
+      address: reverseAddress || fallbackAddress,
+      source: "ip_lookup",
+      latitude: coords?.lat ?? "",
+      longitude: coords?.lon ?? "",
+    };
+
+    ipLookupCache.set(clean, { at: now, location });
+    pruneIpLookupCache(now);
+    return location;
+  } catch {
+    return null;
   } finally {
     clearTimeout(timer);
   }
@@ -419,6 +514,7 @@ function uid() {
 }
 
 function numberOrBlank(value) {
+  if (isBlankValue(value)) return "";
   const n = Number(value);
   return Number.isFinite(n) ? n : "";
 }
@@ -742,12 +838,15 @@ export default async function handler(req, res) {
       location_source: s(event?.location_source),
     }));
     const gpsEnrichedEvents = await enrichEventsWithGpsAddress(eventsWithRequestContext);
+    const needsIpLookup = gpsEnrichedEvents.some((event) => !s(event.address));
+    const ipLookupLocation = needsIpLookup ? await lookupIpLocation(ipAddress) : null;
+    const ipLookupAddress = s(ipLookupLocation?.address);
     const data = await trackEvents({
       webApp,
       events: gpsEnrichedEvents.map((event) => ({
         ...event,
-        address: s(event.address) || requestAddress,
-        location_source: s(event.location_source) || (requestAddress ? "ip_header" : ""),
+        address: s(event.address) || ipLookupAddress || requestAddress,
+        location_source: s(event.location_source) || (ipLookupAddress ? "ip_lookup" : requestAddress ? "ip_header" : ""),
       })),
     });
     return json(res, data.ok ? 200 : 202, data);
