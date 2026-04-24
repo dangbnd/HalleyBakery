@@ -295,6 +295,10 @@ function rowName(row = {}, fallback = "Chưa rõ") {
   return String(row.name || row.label || row.key || row.product_name || row.pid || fallback).trim() || fallback;
 }
 
+function hasOutcomeSignal(row = {}) {
+  return Number(row.leads || row.consult || 0) > 0 || Number(row.contacts || row.messenger || 0) > 0;
+}
+
 function buildFunnelBottleneck(summary = {}) {
   const totals = summary.totals || {};
   const checks = [
@@ -358,11 +362,44 @@ function buildFunnelBottleneck(summary = {}) {
 
 function buildDecisionCards(summary = {}, sourceRows = [], campaignRows = [], categoryRows = [], searchRows = [], zeroSearchRows = []) {
   const totals = summary.totals || {};
-  const topProduct = (summary.topProducts || []).find((row) => row.consult > 0 || row.messenger > 0 || row.detail > 0) || summary.topProducts?.[0];
+  const outcomeProduct = (summary.topProducts || []).find(hasOutcomeSignal);
+  const trafficProduct = (summary.topProducts || []).find((row) => row.detail > 0 || row.impression > 0);
+  const topProduct = outcomeProduct || trafficProduct || summary.topProducts?.[0];
   const topDemand = categoryRows[0] || searchRows[0] || zeroSearchRows[0];
-  const topSource = sourceRows.find((row) => row.leads > 0 || row.contacts > 0) || sourceRows[0];
-  const topCampaign = campaignRows.find((row) => row.leads > 0 || row.contacts > 0);
+  const outcomeSource = sourceRows.find(hasOutcomeSignal);
+  const trafficSource = sourceRows.find((row) => row.visits > 0 || row.details > 0 || row.score > 0);
+  const topCampaign = campaignRows.find(hasOutcomeSignal);
   const bottleneck = buildFunnelBottleneck(summary);
+  const adsTitle = topCampaign
+    ? `Scale ${topCampaign.name}`
+    : outcomeSource
+      ? `Ưu tiên ${outcomeSource.name}`
+      : trafficSource
+        ? `${trafficSource.name} mới có traffic`
+        : "Chạy test traffic nhỏ";
+  const adsMetric = topCampaign
+    ? `${format(topCampaign.contacts)} liên hệ • ${format(topCampaign.leads)} lead`
+    : outcomeSource
+      ? `${format(outcomeSource.contacts)} liên hệ • ${format(outcomeSource.leads)} lead`
+      : trafficSource
+        ? `${format(trafficSource.visits)} vào web • ${format(trafficSource.contacts)} liên hệ`
+        : `${format(totals.messenger)} liên hệ`;
+  const adsDetail = topCampaign || outcomeSource
+    ? "Nguồn này đã có tín hiệu cuối phễu, có thể remake nội dung tương tự hoặc tăng ngân sách có kiểm soát."
+    : trafficSource
+      ? "Nguồn này mới kéo traffic nhưng chưa ra liên hệ. Chưa nên scale ngân sách; cần kiểm nội dung, landing, detail và CTA."
+      : "Chưa có nguồn thắng rõ, cần gắn UTM cho từng bài/post/ad để đọc campaign sạch hơn.";
+  const productHasOutcome = !!outcomeProduct;
+  const productTitle = topProduct
+    ? productHasOutcome
+      ? `Đẩy ${rowName(topProduct)}`
+      : `Theo dõi ${rowName(topProduct)}`
+    : "Chưa có mẫu thắng rõ";
+  const productDetail = topProduct
+    ? productHasOutcome
+      ? "Đưa mẫu này lên đầu section, dùng ảnh thật/feedback và chuẩn bị size/giá để tư vấn nhanh."
+      : "Mẫu này mới có tín hiệu xem, chưa có liên hệ/lead. Ưu tiên sửa ảnh, tiêu đề, mô tả và CTA trước khi chạy ads."
+    : "Cần thêm khách thật mở detail/liên hệ để xác định mẫu nên nhập/đẩy.";
 
   return [
     {
@@ -377,29 +414,21 @@ function buildDecisionCards(summary = {}, sourceRows = [], campaignRows = [], ca
     },
     {
       key: "ads",
-      tone: "emerald",
+      tone: topCampaign || outcomeSource ? "emerald" : trafficSource ? "amber" : "neutral",
       eyebrow: "Quảng cáo",
-      title: topCampaign ? `Scale ${topCampaign.name}` : topSource ? `Test lại ${topSource.name}` : "Chạy test traffic nhỏ",
-      metric: topCampaign
-        ? `${format(topCampaign.leads)} lead`
-        : topSource
-          ? `${format(topSource.contacts)} liên hệ`
-          : `${format(totals.messenger)} liên hệ`,
-      detail: topCampaign || topSource
-        ? "Nguồn này đã có tín hiệu cuối phễu, nên ưu tiên ngân sách hoặc remake nội dung tương tự."
-        : "Chưa có nguồn thắng rõ, cần gắn UTM cho từng bài/post/ad để đọc campaign sạch hơn.",
+      title: adsTitle,
+      metric: adsMetric,
+      detail: adsDetail,
     },
     {
       key: "product",
-      tone: "violet",
+      tone: productHasOutcome ? "violet" : topProduct ? "amber" : "neutral",
       eyebrow: "Kinh doanh",
-      title: topProduct ? `Đẩy ${rowName(topProduct)}` : "Chưa có mẫu thắng rõ",
+      title: productTitle,
       metric: topProduct
         ? `${format(topProduct.messenger)} liên hệ • ${format(topProduct.consult)} lead`
         : `${format(totals.consults)} lead`,
-      detail: topProduct
-        ? "Đưa mẫu này lên đầu section, dùng ảnh thật/feedback và chuẩn bị size/giá để tư vấn nhanh."
-        : "Cần thêm khách thật mở detail/liên hệ để xác định mẫu nên nhập/đẩy.",
+      detail: productDetail,
     },
     {
       key: "bottleneck",
@@ -414,12 +443,15 @@ function buildDecisionCards(summary = {}, sourceRows = [], campaignRows = [], ca
 
 function buildPlaybookRows(summary = {}, sourceRows = [], campaignRows = [], categoryRows = [], searchRows = [], zeroSearchRows = []) {
   const totals = summary.totals || {};
-  const topProduct = (summary.topProducts || []).find((row) => row.consult > 0 || row.messenger > 0) || summary.topProducts?.[0];
+  const outcomeProduct = (summary.topProducts || []).find(hasOutcomeSignal);
+  const trafficProduct = (summary.topProducts || []).find((row) => row.detail > 0 || row.impression > 0);
+  const topProduct = outcomeProduct || trafficProduct || summary.topProducts?.[0];
   const hotSearch = searchRows[0];
   const missingSearch = zeroSearchRows[0];
   const hotCategory = categoryRows[0];
-  const source = sourceRows.find((row) => row.leads > 0 || row.contacts > 0) || sourceRows[0];
-  const campaign = campaignRows.find((row) => row.leads > 0 || row.contacts > 0);
+  const source = sourceRows.find(hasOutcomeSignal);
+  const trafficSource = sourceRows.find((row) => row.visits > 0 || row.details > 0 || row.score > 0);
+  const campaign = campaignRows.find(hasOutcomeSignal);
   const bottleneck = buildFunnelBottleneck(summary);
 
   return [
@@ -440,7 +472,11 @@ function buildPlaybookRows(summary = {}, sourceRows = [], campaignRows = [], cat
     {
       key: "ads",
       title: "Nên quảng cáo gì",
-      action: topProduct ? `Chạy mẫu ${rowName(topProduct)} với ảnh thật và CTA Messenger.` : "Chạy test catalog nhỏ, mỗi ad gắn UTM riêng.",
+      action: outcomeProduct
+        ? `Chạy mẫu ${rowName(outcomeProduct)} với ảnh thật và CTA Messenger.`
+        : trafficProduct
+          ? `Chưa scale ads; test lại ảnh/tiêu đề cho ${rowName(trafficProduct)} trước.`
+          : "Chạy test catalog nhỏ, mỗi ad gắn UTM riêng.",
       evidence: topProduct
         ? `${format(topProduct.detail)} detail, ${format(topProduct.messenger)} liên hệ, ${format(topProduct.consult)} lead.`
         : "Chưa có sản phẩm thắng rõ.",
@@ -454,12 +490,20 @@ function buildPlaybookRows(summary = {}, sourceRows = [], campaignRows = [], cat
     {
       key: "reach",
       title: "Nên tiếp cận ở đâu",
-      action: campaign ? `Nhân nội dung từ campaign ${campaign.name}.` : source ? `Ưu tiên kênh ${source.name}.` : "Chưa scale kênh, trước mắt gắn UTM cho mọi link đăng.",
+      action: campaign
+        ? `Nhân nội dung từ campaign ${campaign.name}.`
+        : source
+          ? `Ưu tiên kênh ${source.name}.`
+          : trafficSource
+            ? `${trafficSource.name} mới kéo traffic, chưa có liên hệ; dùng để test nội dung, chưa scale.`
+            : "Chưa scale kênh, trước mắt gắn UTM cho mọi link đăng.",
       evidence: campaign
         ? `${format(campaign.contacts)} liên hệ, ${format(campaign.leads)} lead.`
         : source
           ? `${format(source.contacts)} liên hệ, ${format(source.leads)} lead.`
-          : "Nguồn/campaign chưa đủ sạch.",
+          : trafficSource
+            ? `${format(trafficSource.visits)} vào web, ${format(trafficSource.contacts)} liên hệ.`
+            : "Nguồn/campaign chưa đủ sạch.",
     },
   ];
 }
