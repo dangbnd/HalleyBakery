@@ -8,14 +8,42 @@ const SESSION_STARTED_KEY = "hb_session_started_at_v1";
 const QUEUE_LIMIT = 120;
 const BATCH_LIMIT = 40;
 const FLUSH_DELAY_MS = 1600;
-const HEARTBEAT_MS = 30_000;
 
 let queue = [];
 let flushTimer = 0;
 let initialized = false;
 let cleanupFns = [];
 let lastPageKey = "";
-let lastClickAt = 0;
+
+const IMPORTANT_EVENT_TYPES = new Set([
+  "session_start",
+  "page_view",
+  "search_query",
+  "search_submit",
+  "search_suggestion_click",
+  "search_results_view",
+  "search_zero_result",
+  "category_results_view",
+  "detail_open",
+  "product_impression",
+  "size_select",
+  "favorite_add",
+  "favorite_remove",
+  "messenger_click",
+  "contact_entry_click",
+  "consult_form_open",
+  "consult_form_start",
+  "consult_form_abandon",
+  "consult_submit",
+  "category_click",
+  "tag_click",
+  "favorites_page_open",
+  "share_copy",
+  "resource_error",
+  "js_error",
+  "react_error",
+  "unhandled_rejection",
+]);
 
 function s(value) {
   return value == null ? "" : String(value).trim();
@@ -160,6 +188,8 @@ export function queueTelemetryEvent(typeOrEvent, payload = {}) {
       ? normalizeEvent(typeOrEvent, payload)
       : normalizeEvent(typeOrEvent?.type || "event", { ...typeOrEvent, ...payload });
 
+  if (!IMPORTANT_EVENT_TYPES.has(event.type)) return null;
+
   queue.push(event);
   if (queue.length > QUEUE_LIMIT) queue = queue.slice(-QUEUE_LIMIT);
   scheduleFlush();
@@ -210,63 +240,6 @@ export async function flushTelemetry({ beacon = false } = {}) {
     scheduleFlush();
     return { ok: false, error: s(error?.message || error) };
   }
-}
-
-function closestTrackTarget(start) {
-  let el = start;
-  for (let depth = 0; el && depth < 6; depth += 1) {
-    if (el.matches?.("a,button,[role='button'],[data-track],[data-card]")) return el;
-    el = el.parentElement;
-  }
-  return null;
-}
-
-function clickPayload(event) {
-  const target = closestTrackTarget(event.target);
-  if (!target) return null;
-  const card = target.closest?.("[data-card]");
-  return {
-    source: "dom_click",
-    target_tag: target.tagName || "",
-    target_text: clip(target.getAttribute?.("aria-label") || target.getAttribute?.("title") || target.innerText || target.textContent || "", 180),
-    target_href: clip(target.href || target.getAttribute?.("href") || "", 1000),
-    target_id: clip(target.id || card?.id || "", 160),
-    meta: {
-      button: event.button,
-      x: Math.round(event.clientX || 0),
-      y: Math.round(event.clientY || 0),
-    },
-  };
-}
-
-function trackPerformance() {
-  try {
-    const nav = performance.getEntriesByType("navigation")?.[0];
-    if (nav) {
-      queueTelemetryEvent("performance_navigation", {
-        source: "performance",
-        duration_ms: Math.round(nav.duration || 0),
-        meta: {
-          type: nav.type,
-          dns: Math.round((nav.domainLookupEnd || 0) - (nav.domainLookupStart || 0)),
-          connect: Math.round((nav.connectEnd || 0) - (nav.connectStart || 0)),
-          ttfb: Math.round((nav.responseStart || 0) - (nav.requestStart || 0)),
-          response: Math.round((nav.responseEnd || 0) - (nav.responseStart || 0)),
-          domInteractive: Math.round(nav.domInteractive || 0),
-          loadEventEnd: Math.round(nav.loadEventEnd || 0),
-        },
-      });
-    }
-
-    const paints = performance.getEntriesByType("paint") || [];
-    paints.forEach((paint) => {
-      queueTelemetryEvent("performance_paint", {
-        source: "performance",
-        value: paint.name,
-        duration_ms: Math.round(paint.startTime || 0),
-      });
-    });
-  } catch {}
 }
 
 function errorPayload(error, extra = {}) {
@@ -327,7 +300,6 @@ export function initTelemetry() {
       startedAt: readStorage(window.sessionStorage, SESSION_STARTED_KEY),
     },
   });
-  trackPageView({ source: "initial", route: "initial" });
 
   const onError = (event) => {
     const target = event.target;
@@ -360,52 +332,22 @@ export function initTelemetry() {
     flushTelemetry();
   };
 
-  const onClick = (event) => {
-    const now = Date.now();
-    if (now - lastClickAt < 120) return;
-    const payload = clickPayload(event);
-    if (!payload) return;
-    lastClickAt = now;
-    queueTelemetryEvent("ui_click", payload);
-  };
-
   const onVisibility = () => {
-    queueTelemetryEvent("visibility_change", { source: "visibility", visibility: document.visibilityState || "" });
     if (document.visibilityState === "hidden") flushTelemetry({ beacon: true });
   };
 
-  const onPageHide = () => {
-    queueTelemetryEvent("page_leave", { source: "pagehide" });
-    flushTelemetry({ beacon: true });
-  };
-
-  const onOnline = () => queueTelemetryEvent("network_online", { source: "network" });
-  const onOffline = () => queueTelemetryEvent("network_offline", { source: "network", severity: "warning" });
+  const onPageHide = () => flushTelemetry({ beacon: true });
 
   window.addEventListener("error", onError, true);
   window.addEventListener("unhandledrejection", onRejection);
-  document.addEventListener("click", onClick, true);
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("pagehide", onPageHide);
-  window.addEventListener("online", onOnline);
-  window.addEventListener("offline", onOffline);
-
-  const heartbeat = window.setInterval(() => {
-    queueTelemetryEvent("session_heartbeat", { source: "heartbeat" });
-  }, HEARTBEAT_MS);
-
-  const perfTimer = window.setTimeout(trackPerformance, 2500);
 
   cleanupFns = [
     () => window.removeEventListener("error", onError, true),
     () => window.removeEventListener("unhandledrejection", onRejection),
-    () => document.removeEventListener("click", onClick, true),
     () => document.removeEventListener("visibilitychange", onVisibility),
     () => window.removeEventListener("pagehide", onPageHide),
-    () => window.removeEventListener("online", onOnline),
-    () => window.removeEventListener("offline", onOffline),
-    () => window.clearInterval(heartbeat),
-    () => window.clearTimeout(perfTimer),
   ];
 
   return () => {

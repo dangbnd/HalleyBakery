@@ -8,7 +8,31 @@ import { buildProductChatLink, openChatTarget } from "../utils/chatLink.js";
 import { queueTelemetryEvent } from "../services/telemetry.js";
 import { productSnapshot } from "../utils/customerBehavior.js";
 
+const IMPRESSION_STORAGE_KEY = "hb_seen_product_impressions_v1";
 const impressionSeen = new Set();
+let impressionLoaded = false;
+
+function loadSeenImpressions() {
+  if (impressionLoaded || typeof window === "undefined") return;
+  impressionLoaded = true;
+  try {
+    const raw = window.sessionStorage.getItem(IMPRESSION_STORAGE_KEY);
+    const values = JSON.parse(raw || "[]");
+    if (!Array.isArray(values)) return;
+    values.forEach((value) => {
+      const key = String(value || "").trim();
+      if (key) impressionSeen.add(key);
+    });
+  } catch {}
+}
+
+function persistSeenImpressions() {
+  if (typeof window === "undefined") return;
+  try {
+    const values = [...impressionSeen].slice(-500);
+    window.sessionStorage.setItem(IMPRESSION_STORAGE_KEY, JSON.stringify(values));
+  } catch {}
+}
 
 function MessengerIcon() {
   return (
@@ -98,17 +122,15 @@ export default function ProductCard({
     const snap = productSnapshot(p);
     if (!snap) return;
 
-    const pageKey =
-      typeof window === "undefined"
-        ? ""
-        : `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    loadSeenImpressions();
+
     const dedupeKey = [
-      pageKey,
       trackingContext.listId || trackingContext.listName || trackingContext.section || "catalog",
       snap.pid,
     ].join("|");
     if (impressionSeen.has(dedupeKey)) return;
     impressionSeen.add(dedupeKey);
+    persistSeenImpressions();
 
     queueTelemetryEvent("product_impression", {
       product: snap,
