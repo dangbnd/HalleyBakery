@@ -32,6 +32,7 @@ var HB_TRACKING_ALLOWED_EVENT_TYPES_ = {
 var HB_TRACKING_EVENT_HEADERS_ = [
   "id",
   "ip_address",
+  "address",
   "ts",
   "ts_ms",
   "type",
@@ -201,14 +202,31 @@ function HB_trackingHeaderIndex_(headers, name) {
 }
 
 function HB_trackingEnsureHeaderPositions_(sheet, current, headers) {
-  if (!sheet || headers[0] !== "id" || headers[1] !== "ip_address") return current;
+  if (!sheet || headers[0] !== "id") return current;
 
   var idCol = HB_trackingHeaderIndex_(current, "id");
-  var ipCol = HB_trackingHeaderIndex_(current, "ip_address");
-  if (!idCol || ipCol) return current;
+  if (!idCol) return current;
 
-  sheet.insertColumnAfter(idCol);
-  sheet.getRange(1, idCol + 1).setValue("ip_address");
+  if (headers[1] === "ip_address") {
+    var ipCol = HB_trackingHeaderIndex_(current, "ip_address");
+    if (!ipCol) {
+      sheet.insertColumnAfter(idCol);
+      sheet.getRange(1, idCol + 1).setValue("ip_address");
+      var lastColAfterIp = Math.max(sheet.getLastColumn(), headers.length, 1);
+      current = sheet.getRange(1, 1, 1, lastColAfterIp).getValues()[0];
+      ipCol = idCol + 1;
+    }
+
+    if (headers[2] === "address") {
+      var addressCol = HB_trackingHeaderIndex_(current, "address");
+      if (!addressCol) {
+        sheet.insertColumnAfter(ipCol);
+        sheet.getRange(1, ipCol + 1).setValue("address");
+        var lastColAfterAddress = Math.max(sheet.getLastColumn(), headers.length, 1);
+        current = sheet.getRange(1, 1, 1, lastColAfterAddress).getValues()[0];
+      }
+    }
+  }
 
   var lastCol = Math.max(sheet.getLastColumn(), headers.length, 1);
   return sheet.getRange(1, 1, 1, lastCol).getValues()[0];

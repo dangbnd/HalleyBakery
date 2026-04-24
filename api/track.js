@@ -21,6 +21,7 @@ const ALLOWED_EVENT_TYPES = new Set([
 const EVENT_HEADERS = [
   "id",
   "ip_address",
+  "address",
   "ts",
   "ts_ms",
   "type",
@@ -158,6 +159,16 @@ function cleanIpAddress(value = "") {
   return first;
 }
 
+function cleanGeoValue(value = "") {
+  const raw = String(value || "").split(",")[0].trim();
+  if (!raw || raw.toLowerCase() === "unknown") return "";
+  try {
+    return decodeURIComponent(raw).replace(/\+/g, " ").trim();
+  } catch {
+    return raw.replace(/\+/g, " ").trim();
+  }
+}
+
 function clientIpFromRequest(req) {
   const headers = req.headers || {};
   // Cloudflare sits in front of the app for the public domain. Prefer its
@@ -173,6 +184,26 @@ function clientIpFromRequest(req) {
     req.connection?.remoteAddress ||
     ""
   );
+}
+
+function geoHeader(headers = {}, names = []) {
+  for (const name of names) {
+    const value = cleanGeoValue(headerValue(headers, name));
+    if (value) return value;
+  }
+  return "";
+}
+
+function clientAddressFromRequest(req) {
+  const headers = req.headers || {};
+  const city = geoHeader(headers, ["x-vercel-ip-city", "cf-ipcity"]);
+  const region = geoHeader(headers, ["x-vercel-ip-country-region", "cf-region", "cf-region-code"]);
+  const country = geoHeader(headers, ["x-vercel-ip-country", "cf-ipcountry"]);
+  const parts = [];
+  [city, region, country].forEach((part) => {
+    if (part && !parts.some((existing) => existing.toLowerCase() === part.toLowerCase())) parts.push(part);
+  });
+  return parts.join(", ");
 }
 
 async function parseRequestBody(req) {
@@ -363,6 +394,7 @@ function normalizeEvent(input = {}) {
   return {
     id: s(input.id) || uid(),
     ip_address: clip(input.ip_address || input.ip || input.client_ip, 80),
+    address: clip(input.address || input.ip_address_location || input.location, 240),
     ts: input.ts_iso || new Date(at).toISOString(),
     ts_ms: at,
     type: clip(input.type || "event", 80),
@@ -566,11 +598,13 @@ export default async function handler(req, res) {
 
     const events = Array.isArray(body.events) ? body.events : body.event ? [body.event] : [];
     const ipAddress = clientIpFromRequest(req);
+    const address = clientAddressFromRequest(req);
     const data = await trackEvents({
       webApp,
       events: events.map((event) => ({
         ...event,
         ip_address: s(event?.ip_address || event?.ip || event?.client_ip) || ipAddress,
+        address: s(event?.address || event?.ip_address_location || event?.location) || address,
       })),
     });
     return json(res, data.ok ? 200 : 202, data);
