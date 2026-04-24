@@ -313,7 +313,8 @@ export async function loadRemoteCustomerBehavior({ force = false, ttlMs = REMOTE
 
   const events = (Array.isArray(data.events) ? data.events : []).map(normalizeRemoteEvent);
   const explicitLeads = (Array.isArray(data.leads) ? data.leads : []).map(normalizeRemoteLead);
-  const leads = mergeLeads(explicitLeads, leadsFromEvents(events));
+  const eventFallbackLeads = explicitLeads.length ? [] : leadsFromEvents(events);
+  const leads = mergeLeads(explicitLeads, eventFallbackLeads);
 
   const result = {
     ok: !!data.ok,

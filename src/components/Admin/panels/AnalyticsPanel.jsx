@@ -77,16 +77,28 @@ const CATEGORY_FALLBACK_LABELS = {
 };
 
 const EVENT_LABELS = {
+  session_start: "Bắt đầu phiên",
+  page_view: "Xem trang",
+  search_submit: "Tìm kiếm",
+  search_suggestion_click: "Bấm gợi ý search",
   search_results_view: "Xem kết quả",
   search_zero_result: "Search 0 kết quả",
   category_results_view: "Xem danh mục",
   product_impression: "Hiển thị mẫu",
   detail_open: "Mở detail",
+  size_select: "Chọn size",
   messenger_click: "Liên hệ",
-  search_submit: "Tìm kiếm",
+  contact_entry_click: "Bấm liên hệ chung",
   favorite_add: "Yêu thích",
+  favorite_remove: "Bỏ yêu thích",
+  consult_form_open: "Mở form tư vấn",
+  consult_form_start: "Bắt đầu nhập form",
+  consult_form_abandon: "Bỏ form tư vấn",
+  consult_submit: "Gửi tư vấn",
+  category_click: "Bấm danh mục",
+  tag_click: "Bấm tag",
+  favorites_page_open: "Mở yêu thích",
   share_copy: "Copy link",
-  consult_submit: "Tư vấn",
 };
 
 const fmt = new Intl.NumberFormat("vi-VN");
@@ -166,7 +178,7 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
     if (event.type === "product_impression") row["Hiển thị mẫu"] += 1;
     if (event.type === "detail_open") row["Mở detail"] += 1;
     if (event.type === "messenger_click" || event.type === "contact_entry_click") row["Liên hệ"] += 1;
-    if (event.type === "search_results_view") row["Tìm kiếm"] += 1;
+    if (event.type === "search_submit") row["Tìm kiếm"] += 1;
     if (event.type === "search_zero_result") row["0 kết quả"] += 1;
   });
 
@@ -187,14 +199,15 @@ function countInWindow(rows = [], periodDays = 14) {
 }
 
 function buildMix(summary, periodEvents = [], periodLeads = []) {
-  const pageViews = periodEvents.filter((event) => event.type === "page_view").length;
-  const impressions = periodEvents.filter((event) => event.type === "product_impression").length;
-  const details = periodEvents.filter((event) => event.type === "detail_open").length;
-  const contacts = periodEvents.filter((event) => event.type === "messenger_click" || event.type === "contact_entry_click").length;
-  const searches = periodEvents.filter((event) => event.type === "search_results_view").length;
-  const favorites = summary.totals.favorites || periodEvents.filter((event) => event.type === "favorite_add").length;
-  const consults = periodLeads.length;
-  const shares = periodEvents.filter((event) => event.type === "share_copy").length;
+  const totals = summary.totals || {};
+  const pageViews = Number(totals.pageViews || 0);
+  const impressions = Number(totals.impressions || 0);
+  const details = Number(totals.details || 0);
+  const contacts = Number(totals.messenger || 0);
+  const searches = Number(totals.searches || totals.searchSubmits || 0);
+  const favorites = Number(totals.favoriteAdds || 0);
+  const consults = Number(totals.consults || periodLeads.length || 0);
+  const shares = Number(totals.shares || 0);
 
   return [
     { name: "Vào web", value: pageViews, color: COLORS.cyan },
@@ -913,18 +926,18 @@ export default function AnalyticsPanel() {
   const mergedEvents = useMemo(() => mergeEvents(remote.events || [], localEvents), [remote.events, localEvents]);
   const events = useMemo(() => filterBusinessEvents(mergedEvents), [mergedEvents]);
   const leads = useMemo(() => mergeLeads(remote.leads || [], localLeads), [remote.leads, localLeads]);
-  const summary = useMemo(() => summarizeCustomerBehavior(products, { events, leads }), [products, events, leads]);
 
   const periodEvents = useMemo(() => events.filter((event) => isInWindow(Number(event.ts || 0), periodDays)), [events, periodDays]);
   const periodLeads = useMemo(() => leads.filter((lead) => isInWindow(Number(lead.ts || 0), periodDays)), [leads, periodDays]);
+  const periodSummary = useMemo(() => summarizeCustomerBehavior(products, { events: periodEvents, leads: periodLeads }), [products, periodEvents, periodLeads]);
   const trend = useMemo(() => buildTrend(events, leads, periodDays), [events, leads, periodDays]);
-  const mix = useMemo(() => buildMix(summary, periodEvents, periodLeads), [summary, periodEvents, periodLeads]);
+  const mix = useMemo(() => buildMix(periodSummary, periodEvents, periodLeads), [periodSummary, periodEvents, periodLeads]);
   const hourly = useMemo(() => buildHourly(events), [events]);
-  const funnel = useMemo(() => buildFunnel(summary), [summary]);
+  const funnel = useMemo(() => buildFunnel(periodSummary), [periodSummary]);
   const categoryLabels = useMemo(() => buildCategoryLabelMap(menu, categoryConfig), [menu, categoryConfig]);
-  const searchRows = useMemo(() => normalizeRankRows(summary.topSearches), [summary.topSearches]);
-  const tagRows = useMemo(() => normalizeRankRows(summary.topTags), [summary.topTags]);
-  const categoryRows = useMemo(() => normalizeRankRows(summary.topCategories, 8, categoryLabels), [summary.topCategories, categoryLabels]);
+  const searchRows = useMemo(() => normalizeRankRows(periodSummary.topSearches), [periodSummary.topSearches]);
+  const tagRows = useMemo(() => normalizeRankRows(periodSummary.topTags), [periodSummary.topTags]);
+  const categoryRows = useMemo(() => normalizeRankRows(periodSummary.topCategories, 8, categoryLabels), [periodSummary.topCategories, categoryLabels]);
   const sourceRows = useMemo(() => buildAttributionRows(periodEvents, periodLeads, "source"), [periodEvents, periodLeads]);
   const campaignRows = useMemo(() => buildAttributionRows(periodEvents, periodLeads, "campaign"), [periodEvents, periodLeads]);
 
@@ -973,7 +986,7 @@ export default function AnalyticsPanel() {
     };
   }, []);
 
-  const totalInPeriod = periodEvents.length + periodLeads.length;
+  const totalInPeriod = periodEvents.length;
   const sourceLabel = remote.loading
     ? "Đang tải remote"
     : remote.ok
@@ -1015,14 +1028,18 @@ export default function AnalyticsPanel() {
 
       <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-8">
         <MetricCard label="Event trong kỳ" value={totalInPeriod} meta={`${periodDays} ngày gần nhất`} tone="blue" />
-        <MetricCard label="Lượt vào web" value={summary.totals.pageViews} meta={`${format(summary.totals.sessions)} session đã ghi`} tone="neutral" />
-        <MetricCard label="Hiển thị mẫu" value={summary.totals.impressions} meta={`${rate(summary.totals.impressions, Math.max(summary.totals.pageViews, 1))} từ vào web`} tone="neutral" />
-        <MetricCard label="Mở detail" value={summary.totals.details} meta="Lượt xem chi tiết sản phẩm" tone="violet" />
-        <MetricCard label="Liên hệ" value={summary.totals.messenger} meta={`${rate(summary.totals.messenger, summary.totals.details)} từ detail`} tone="rose" />
-        <MetricCard label="Tìm kiếm" value={summary.totals.searches} meta="Truy vấn search đã ghi" tone="amber" />
-        <MetricCard label="Search 0 kết quả" value={summary.totals.zeroResultSearches} meta={`${rate(summary.totals.zeroResultSearches, Math.max(summary.totals.searches, 1))} trên search`} tone="amber" />
-        <MetricCard label="Mở form tư vấn" value={summary.totals.consultOpens} meta={`${rate(summary.totals.consultStarts, Math.max(summary.totals.consultOpens, 1))} bắt đầu nhập`} tone="violet" />
-        <MetricCard label="Lead tư vấn" value={summary.totals.consults} meta={`${rate(summary.totals.consults, Math.max(summary.totals.messenger, 1))} từ liên hệ`} tone="emerald" />
+        <MetricCard label="Lượt vào web" value={periodSummary.totals.pageViews} meta={`${format(periodSummary.totals.sessions)} session trong kỳ`} tone="neutral" />
+        <MetricCard label="Hiển thị mẫu" value={periodSummary.totals.impressions} meta={`${rate(periodSummary.totals.impressions, Math.max(periodSummary.totals.pageViews, 1))} từ vào web`} tone="neutral" />
+        <MetricCard label="Mở detail" value={periodSummary.totals.details} meta="Lượt xem chi tiết sản phẩm" tone="violet" />
+        <MetricCard label="Liên hệ" value={periodSummary.totals.messenger} meta={`${rate(periodSummary.totals.messenger, periodSummary.totals.details)} từ detail`} tone="rose" />
+        <MetricCard label="Tìm kiếm" value={periodSummary.totals.searches} meta={`${format(periodSummary.totals.searchSuggestionClicks)} bấm gợi ý`} tone="amber" />
+        <MetricCard label="Search 0 kết quả" value={periodSummary.totals.zeroResultSearches} meta={`${rate(periodSummary.totals.zeroResultSearches, Math.max(periodSummary.totals.searches, 1))} trên search`} tone="amber" />
+        <MetricCard label="Chọn size" value={periodSummary.totals.sizeSelects} meta="Nhu cầu size khách đang cân nhắc" tone="neutral" />
+        <MetricCard label="Yêu thích" value={periodSummary.totals.favoriteAdds} meta={`${format(periodSummary.totals.favoriteRemoves)} lượt bỏ yêu thích`} tone="violet" />
+        <MetricCard label="Mở form tư vấn" value={periodSummary.totals.consultOpens} meta={`${rate(periodSummary.totals.consultStarts, Math.max(periodSummary.totals.consultOpens, 1))} bắt đầu nhập`} tone="violet" />
+        <MetricCard label="Bỏ form" value={periodSummary.totals.consultAbandons} meta={`${rate(periodSummary.totals.consultAbandons, Math.max(periodSummary.totals.consultStarts, 1))} từ đã nhập`} tone="rose" />
+        <MetricCard label="Lead tư vấn" value={periodSummary.totals.consults} meta={`${rate(periodSummary.totals.consults, Math.max(periodSummary.totals.messenger, 1))} từ liên hệ`} tone="emerald" />
+        <MetricCard label="Copy link" value={periodSummary.totals.shares} meta={`${format(periodSummary.totals.favoritesPageOpens)} lượt mở yêu thích`} tone="blue" />
       </div>
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,0.75fr)]">
@@ -1120,12 +1137,12 @@ export default function AnalyticsPanel() {
         </Section>
       </div>
 
-      <ProductTable rows={summary.topProducts} categoryLabels={categoryLabels} />
+      <ProductTable rows={periodSummary.topProducts} categoryLabels={categoryLabels} />
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-        <LeadsTable rows={summary.recentLeads} />
+        <LeadsTable rows={periodSummary.recentLeads} />
         <Section title="Sự kiện gần đây" compact>
-          <EventFeed rows={summary.recentEvents} />
+          <EventFeed rows={periodSummary.recentEvents} />
         </Section>
       </div>
     </div>

@@ -613,7 +613,6 @@ export default function App() {
   // (để khi đóng QuickView không history.back() ra khỏi site)
   const quickInitFromURLRef = useRef(false);
   const didInitQuickURLRef = useRef(false);
-  const lastTrackedSearchRef = useRef("");
   const lastTrackedUrlProductRef = useRef("");
   const lastTrackedSearchViewRef = useRef("");
   const lastTrackedCategoryViewRef = useRef("");
@@ -848,21 +847,6 @@ export default function App() {
       setActiveCat("all");
     }
   }, [q]);
-
-  useEffect(() => {
-    const query = qDeb.trim();
-    if (query.length < 2) return;
-    const key = fold(query);
-    if (!key || key === lastTrackedSearchRef.current) return;
-    lastTrackedSearchRef.current = key;
-    recordCustomerEvent("search_query", {
-      query,
-      source: "typeahead",
-      page_type: "search",
-      content_group: "catalog",
-      section: "typeahead",
-    });
-  }, [qDeb]);
 
   /* admin shortcuts */
   useEffect(() => { if (location.hash === "#admin") setRoute("admin"); }, []);

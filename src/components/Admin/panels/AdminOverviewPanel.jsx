@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import { LS, getAuthUser, readAudit, readLS } from "../../../utils.js";
 import {
+  filterReportEvents,
   readConsultLeads,
   readCustomerEvents,
   summarizeCustomerBehavior,
@@ -175,9 +176,8 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
     row.total += 1;
     if (event.type === "page_view") row["Vào web"] += 1;
     if (event.type === "detail_open") row["Xem mẫu"] += 1;
-    if (event.type === "messenger_click") row["Liên hệ"] += 1;
-    if (event.type === "search_submit" || event.type === "search_query") row["Tìm kiếm"] += 1;
-    if (event.type === "consult_submit") row["Lead"] += 1;
+    if (event.type === "messenger_click" || event.type === "contact_entry_click") row["Liên hệ"] += 1;
+    if (event.type === "search_submit") row["Tìm kiếm"] += 1;
     if (event.type === "js_error" || event.type === "react_error" || event.type === "unhandled_rejection" || event.type === "resource_error") row["Lỗi"] += 1;
   });
 
@@ -393,9 +393,21 @@ function buildTopProducts(behavior, products = [], categoryLabels = new Map()) {
 
 function buildHourHeat(events = []) {
   const buckets = Array.from({ length: 24 }, (_, hour) => ({ hour, value: 0 }));
+  const usefulTypes = new Set([
+    "page_view",
+    "search_submit",
+    "search_zero_result",
+    "detail_open",
+    "messenger_click",
+    "contact_entry_click",
+    "consult_submit",
+    "consult_form_open",
+    "consult_form_start",
+  ]);
   events.forEach((event) => {
     const ts = Number(event.ts || 0);
     if (!isInWindow(ts, 30)) return;
+    if (!usefulTypes.has(event.type)) return;
     buckets[new Date(ts).getHours()].value += 1;
   });
   const max = Math.max(1, ...buckets.map((item) => item.value));
@@ -1002,7 +1014,8 @@ export default function AdminOverviewPanel({ onNavigate }) {
   const activity = useMemo(() => readAudit().slice(0, 12), []);
   const localEvents = useMemo(() => readCustomerEvents(), []);
   const localLeads = useMemo(() => readConsultLeads(), []);
-  const events = useMemo(() => mergeEvents(remote.events || [], localEvents), [remote.events, localEvents]);
+  const mergedEvents = useMemo(() => mergeEvents(remote.events || [], localEvents), [remote.events, localEvents]);
+  const events = useMemo(() => filterReportEvents(mergedEvents), [mergedEvents]);
   const leads = useMemo(() => mergeLeads(remote.leads || [], localLeads), [remote.leads, localLeads]);
   const behavior = useMemo(() => summarizeCustomerBehavior(products, { events, leads }), [products, events, leads]);
 
@@ -1056,10 +1069,10 @@ export default function AdminOverviewPanel({ onNavigate }) {
   const prevDetails = countEvents(events, periodDays, (event) => event.type === "detail_open", periodDays);
   const currentPageViews = countEvents(events, periodDays, (event) => event.type === "page_view");
   const prevPageViews = countEvents(events, periodDays, (event) => event.type === "page_view", periodDays);
-  const currentContacts = countEvents(events, periodDays, (event) => event.type === "messenger_click");
-  const prevContacts = countEvents(events, periodDays, (event) => event.type === "messenger_click", periodDays);
-  const currentSearches = countEvents(events, periodDays, (event) => event.type === "search_submit" || event.type === "search_query");
-  const prevSearches = countEvents(events, periodDays, (event) => event.type === "search_submit" || event.type === "search_query", periodDays);
+  const currentContacts = countEvents(events, periodDays, (event) => event.type === "messenger_click" || event.type === "contact_entry_click");
+  const prevContacts = countEvents(events, periodDays, (event) => event.type === "messenger_click" || event.type === "contact_entry_click", periodDays);
+  const currentSearches = countEvents(events, periodDays, (event) => event.type === "search_submit");
+  const prevSearches = countEvents(events, periodDays, (event) => event.type === "search_submit", periodDays);
   const currentLeads = countLeads(leads, periodDays);
   const prevLeads = countLeads(leads, periodDays, periodDays);
   const currentErrors = countEvents(events, periodDays, (event) => event.type === "js_error" || event.type === "react_error" || event.type === "unhandled_rejection" || event.type === "resource_error");
@@ -1149,7 +1162,7 @@ export default function AdminOverviewPanel({ onNavigate }) {
         <KpiCard
           label="Lead tư vấn"
           value={currentLeads}
-          meta={`${fmt(leads.length)} lead lưu trong trình duyệt`}
+          meta={`${fmt(leads.length)} lead trong tracking`}
           color={COLORS.emerald}
           sparkData={trend}
           sparkKey="Lead"
@@ -1169,7 +1182,7 @@ export default function AdminOverviewPanel({ onNavigate }) {
       <div className="grid gap-4 xl:grid-cols-[1.45fr_0.75fr]">
         <Section
           title="Xu hướng tương tác"
-          description={`Dữ liệu local trong ${periodDays} ngày gần nhất.`}
+          description={`Dữ liệu tracking trong ${periodDays} ngày gần nhất.`}
           compact
         >
           {events.length || leads.length ? (

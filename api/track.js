@@ -1,6 +1,35 @@
 const UNKNOWN_ACTION_RE =
   /no action|unknown action|unknown op|invalid action|unsupported action|action not supported|missing action|missing op|no handler|no function/i;
 
+const ALLOWED_EVENT_TYPES = new Set([
+  "session_start",
+  "page_view",
+  "search_submit",
+  "search_suggestion_click",
+  "search_results_view",
+  "search_zero_result",
+  "category_results_view",
+  "detail_open",
+  "product_impression",
+  "size_select",
+  "favorite_add",
+  "favorite_remove",
+  "messenger_click",
+  "contact_entry_click",
+  "consult_form_open",
+  "consult_form_start",
+  "consult_form_abandon",
+  "consult_submit",
+  "category_click",
+  "tag_click",
+  "favorites_page_open",
+  "share_copy",
+  "resource_error",
+  "js_error",
+  "react_error",
+  "unhandled_rejection",
+]);
+
 const EVENT_HEADERS = [
   "id",
   "ts",
@@ -309,7 +338,7 @@ function authPayload(token = "") {
 }
 
 async function trackEvents({ webApp = "", events = [] } = {}) {
-  const rows = events.map(normalizeEvent).filter((event) => event.type);
+  const rows = events.map(normalizeEvent).filter((event) => event.type && ALLOWED_EVENT_TYPES.has(event.type));
   if (!rows.length) return { ok: true, accepted: 0, inserted: 0 };
 
   try {

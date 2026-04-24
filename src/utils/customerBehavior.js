@@ -33,6 +33,13 @@ export const BUSINESS_EVENT_TYPES = new Set([
   "share_copy",
 ]);
 
+export const ERROR_EVENT_TYPES = new Set([
+  "resource_error",
+  "js_error",
+  "react_error",
+  "unhandled_rejection",
+]);
+
 const MAX_EVENTS = 2000;
 const MAX_RECENTS = 32;
 const MAX_LEADS = 500;
@@ -102,8 +109,16 @@ export function isBusinessEvent(event = {}) {
   return BUSINESS_EVENT_TYPES.has(String(event?.type || "").trim());
 }
 
+export function isErrorEvent(event = {}) {
+  return ERROR_EVENT_TYPES.has(String(event?.type || "").trim());
+}
+
 export function filterBusinessEvents(events = []) {
   return (Array.isArray(events) ? events : []).filter(isBusinessEvent);
+}
+
+export function filterReportEvents(events = []) {
+  return (Array.isArray(events) ? events : []).filter((event) => isBusinessEvent(event) || isErrorEvent(event));
 }
 
 export function recordCustomerEvent(type, payload = {}) {
@@ -263,6 +278,7 @@ function productStat(map, snap) {
 export function summarizeCustomerBehavior(products = [], source = {}) {
   const rawEvents = Array.isArray(source.events) ? source.events : readCustomerEvents();
   const events = filterBusinessEvents(rawEvents);
+  const errorEvents = (Array.isArray(rawEvents) ? rawEvents : []).filter(isErrorEvent);
   const leads = Array.isArray(source.leads) ? source.leads : readConsultLeads();
   const catalog = new Map((products || []).map((p) => [pidOf(p), productSnapshot(p)]));
   const byProduct = new Map();
@@ -277,26 +293,60 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
     impressions: 0,
     details: 0,
     messenger: 0,
+    contactEntries: 0,
     searches: 0,
+    searchSubmits: 0,
+    searchResultViews: 0,
+    searchSuggestionClicks: 0,
     zeroResultSearches: 0,
+    categoryResultViews: 0,
+    categoryClicks: 0,
+    tagClicks: 0,
+    sizeSelects: 0,
+    favoriteAdds: 0,
+    favoriteRemoves: 0,
     consultOpens: 0,
     consultStarts: 0,
+    consultAbandons: 0,
+    consultSubmits: 0,
     favorites: getFavoriteIds().length,
     consults: leads.length,
     shares: 0,
+    favoritesPageOpens: 0,
+    errors: errorEvents.length,
   };
 
   for (const event of events) {
     if (event.type === "page_view") totals.pageViews += 1;
     if (event.type === "session_start") totals.sessions += 1;
     if (event.type === "product_impression") totals.impressions += 1;
+    if (event.type === "detail_open") totals.details += 1;
+    if (event.type === "messenger_click" || event.type === "contact_entry_click") totals.messenger += 1;
+    if (event.type === "contact_entry_click") totals.contactEntries += 1;
     if (event.type === "consult_form_open") totals.consultOpens += 1;
     if (event.type === "consult_form_start") totals.consultStarts += 1;
+    if (event.type === "consult_form_abandon") totals.consultAbandons += 1;
+    if (event.type === "consult_submit") totals.consultSubmits += 1;
     if (event.type === "share_copy") totals.shares += 1;
+    if (event.type === "size_select") totals.sizeSelects += 1;
+    if (event.type === "favorite_add") totals.favoriteAdds += 1;
+    if (event.type === "favorite_remove") totals.favoriteRemoves += 1;
+    if (event.type === "category_results_view") totals.categoryResultViews += 1;
+    if (event.type === "category_click") totals.categoryClicks += 1;
+    if (event.type === "tag_click") totals.tagClicks += 1;
+    if (event.type === "favorites_page_open") totals.favoritesPageOpens += 1;
+    if (event.type === "search_suggestion_click") {
+      totals.searchSuggestionClicks += 1;
+      if (event.query) bumpCounter(searches, event.query.toLowerCase(), event.query);
+    }
     if (event.type === "search_zero_result") totals.zeroResultSearches += 1;
-    if (event.type === "search_results_view" && event.query) {
-      totals.searches += 1;
-      bumpCounter(searches, event.query.toLowerCase(), event.query);
+    if (event.type === "search_results_view") totals.searchResultViews += 1;
+    if (event.type === "search_submit") {
+      totals.searchSubmits += 1;
+      if (event.query) {
+        totals.searches += 1;
+        bumpCounter(searches, event.query.toLowerCase(), event.query);
+      }
     }
 
     const snap = event.product?.pid ? { ...(catalog.get(event.product.pid) || {}), ...event.product } : null;
@@ -312,10 +362,8 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
       stat.impression += 1;
     } else if (event.type === "detail_open") {
       stat.detail += 1;
-      totals.details += 1;
     } else if (event.type === "messenger_click" || event.type === "contact_entry_click") {
-      totals.messenger += 1;
-      if (event.type === "messenger_click") stat.messenger += 1;
+      stat.messenger += 1;
     } else if (event.type === "favorite_add") {
       stat.favorite += 1;
     } else if (event.type === "consult_submit") {
@@ -346,14 +394,23 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
     b.detail - a.detail;
 
   const recentEventTypes = new Set([
+    "search_submit",
+    "search_suggestion_click",
     "detail_open",
+    "size_select",
     "messenger_click",
+    "contact_entry_click",
+    "consult_form_open",
+    "consult_form_start",
+    "consult_form_abandon",
     "consult_submit",
     "search_zero_result",
     "favorite_add",
+    "favorite_remove",
     "share_copy",
     "category_click",
     "tag_click",
+    "favorites_page_open",
   ]);
 
   return {

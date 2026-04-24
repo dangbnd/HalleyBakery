@@ -12,6 +12,35 @@
 var HB_TRACKING_EVENTS_SHEET_ = "Events";
 var HB_TRACKING_CONSULTS_SHEET_ = "Consults";
 
+var HB_TRACKING_ALLOWED_EVENT_TYPES_ = {
+  session_start: true,
+  page_view: true,
+  search_submit: true,
+  search_suggestion_click: true,
+  search_results_view: true,
+  search_zero_result: true,
+  category_results_view: true,
+  detail_open: true,
+  product_impression: true,
+  size_select: true,
+  favorite_add: true,
+  favorite_remove: true,
+  messenger_click: true,
+  contact_entry_click: true,
+  consult_form_open: true,
+  consult_form_start: true,
+  consult_form_abandon: true,
+  consult_submit: true,
+  category_click: true,
+  tag_click: true,
+  favorites_page_open: true,
+  share_copy: true,
+  resource_error: true,
+  js_error: true,
+  react_error: true,
+  unhandled_rejection: true,
+};
+
 var HB_TRACKING_EVENT_HEADERS_ = [
   "id",
   "ts",
@@ -219,7 +248,7 @@ function testTrackingPing() {
       id: "manual-" + Date.now(),
       ts: new Date().toISOString(),
       ts_ms: Date.now(),
-      type: "manual_test",
+      type: "session_start",
       source: "apps-script",
       severity: "info",
       page_path: "/apps-script-test",
@@ -247,7 +276,12 @@ function HB_trackingValue_(row, header) {
 
 function HB_trackingAppendRows_(sheet, headers, rows) {
   if (!rows.length) return 0;
-  var values = rows.map(function (row) {
+  var filtered = rows.filter(function (row) {
+    var type = String(HB_trackingValue_(row, "type") || "").trim();
+    return !!HB_TRACKING_ALLOWED_EVENT_TYPES_[type];
+  });
+  if (!filtered.length) return 0;
+  var values = filtered.map(function (row) {
     return headers.map(function (header) {
       var value = HB_trackingValue_(row, header);
       if (typeof value === "object" && value !== null) {
@@ -274,7 +308,7 @@ function HB_trackingTrack_(req) {
     else if (req.data) events = Array.isArray(req.data) ? req.data : [req.data];
 
     var inserted = HB_trackingAppendRows_(sheet, HB_TRACKING_EVENT_HEADERS_, events);
-    return { ok: true, inserted: inserted, eventsSheet: HB_TRACKING_EVENTS_SHEET_ };
+    return { ok: true, accepted: events.length, inserted: inserted, eventsSheet: HB_TRACKING_EVENTS_SHEET_ };
   } catch (err) {
     return { ok: false, error: String(err && err.message ? err.message : err) };
   }
