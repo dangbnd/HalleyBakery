@@ -37,6 +37,24 @@ function noise(seed, salt = 0) {
   return value - Math.floor(value);
 }
 
+function makeVisitSeed() {
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    const values = new Uint32Array(1);
+    crypto.getRandomValues(values);
+    return values[0] || Date.now();
+  }
+  return Date.now() + Math.floor(Math.random() * 1000000);
+}
+
+function shuffleBySeed(items = [], seed = 0) {
+  const out = [...items];
+  for (let index = out.length - 1; index > 0; index--) {
+    const swapIndex = Math.floor(noise(seed, index + 31) * (index + 1));
+    [out[index], out[swapIndex]] = [out[swapIndex], out[index]];
+  }
+  return out;
+}
+
 function halton(index, base) {
   let result = 0;
   let factor = 1 / base;
@@ -185,14 +203,16 @@ function buildDisplayItems(entries = [], products = [], categoryTitleMap = {}, {
   return [...configured, ...auto].slice(0, DEMO_COUNT);
 }
 
-function buildCollageItems(items = [], count = 0) {
+function buildCollageItems(items = [], count = 0, variantSeed = 0) {
   if (!items.length || count <= 0) return [];
+  const shuffled = shuffleBySeed(items, variantSeed);
   return Array.from({ length: count }, (_, index) => {
-    const base = items[index % items.length];
+    const sourceIndex = index % shuffled.length;
+    const base = shuffled[sourceIndex];
     return {
       ...base,
-      collageId: `${base.id}-stack-${index}`,
-      sourceIndex: index % items.length,
+      collageId: `${base.id}-stack-${variantSeed}-${index}`,
+      sourceIndex,
     };
   });
 }
@@ -211,9 +231,12 @@ function readRuntimeFeedbackEntries() {
   }
 }
 
-function createArtCollageLayouts(count, mobile = false) {
+function createArtCollageLayouts(count, mobile = false, variantSeed = 0) {
   if (count <= 0) return [];
 
+  const seedOffset = Math.abs(Number(variantSeed) || 0) % 1000000;
+  const n = (index, salt = 0) => noise(index + seedOffset, salt + (mobile ? 97 : 0));
+  const rotationAt = (index, salt = 0) => ROTATIONS[Math.floor(n(index, salt) * ROTATIONS.length) % ROTATIONS.length];
   const baseCols = mobile ? 4 : 6;
   const baseRowsTarget = mobile ? 5 : 6;
   const baseCount = Math.min(count, baseCols * baseRowsTarget);
@@ -241,25 +264,25 @@ function createArtCollageLayouts(count, mobile = false) {
   for (let index = 0; index < baseCount; index++) {
     const row = Math.floor(index / baseCols);
     const slot = index % baseCols;
-    const order = orders[row % orders.length];
+    const order = orders[(row + Math.floor(n(row, 20) * orders.length)) % orders.length];
     const col = order[slot % order.length];
-    const sizeBoost = index % (mobile ? 6 : 7) === 2 ? (mobile ? 1.16 : 1.22) : 1;
+    const sizeBoost = n(index, 21) > (mobile ? 0.78 : 0.82) ? (mobile ? 1.16 : 1.22) : 1;
     const width =
-      cellWidth * (mobile ? 1.28 + noise(index, 1) * 0.34 : 1.2 + noise(index, 1) * 0.32) * sizeBoost;
-    const height = width * ((mobile ? 1.08 : 1.03) + noise(index, 2) * (mobile ? 0.14 : 0.18));
+      cellWidth * (mobile ? 1.28 + n(index, 1) * 0.34 : 1.2 + n(index, 1) * 0.32) * sizeBoost;
+    const height = width * ((mobile ? 1.08 : 1.03) + n(index, 2) * (mobile ? 0.14 : 0.18));
     let centerX =
       (col + 0.5) * cellWidth +
-      (noise(index, 3) - 0.5) * cellWidth * (mobile ? 0.5 : 0.42) +
+      (n(index, 3) - 0.5) * cellWidth * (mobile ? 0.5 : 0.42) +
       Math.sin((row + 1) * (slot + 1) * 0.9) * (mobile ? 1.5 : 1.8);
     let centerY =
       (row + 0.5) * cellHeight +
-      (noise(index, 4) - 0.5) * cellHeight * (mobile ? 0.46 : 0.4) +
+      (n(index, 4) - 0.5) * cellHeight * (mobile ? 0.46 : 0.4) +
       (col % 2 === 0 ? -cellHeight * 0.08 : cellHeight * 0.08);
     let rotate =
-      ROTATIONS[index % ROTATIONS.length] * (mobile ? 0.7 : 0.82) +
-      (noise(index, 5) - 0.5) * (mobile ? 8 : 11);
-    const frame = noise(index, 6) > 0.36 ? "polaroid" : "card";
-    let z = 8 + row * 2 + Math.floor(noise(index, 7) * (mobile ? 8 : 10));
+      rotationAt(index, 22) * (mobile ? 0.7 : 0.82) +
+      (n(index, 5) - 0.5) * (mobile ? 8 : 11);
+    const frame = n(index, 6) > 0.36 ? "polaroid" : "card";
+    let z = 8 + row * 2 + Math.floor(n(index, 7) * (mobile ? 8 : 10));
 
     if (col === 0) centerX -= cellWidth * 0.28;
     if (col === baseCols - 1) centerX += cellWidth * 0.28;
@@ -286,26 +309,26 @@ function createArtCollageLayouts(count, mobile = false) {
   for (let accentIndex = 0; accentIndex < accentCount; accentIndex++) {
     const index = baseCount + accentIndex;
     const seed = accentIndex + 1;
-    let width = mobile ? 28 + noise(index, 8) * 8 : 18 + noise(index, 8) * 11;
+    let width = mobile ? 28 + n(index, 8) * 8 : 18 + n(index, 8) * 11;
     if (accentIndex % 4 === 1) width += mobile ? 4 : 5;
     if (accentIndex % 5 === 3) width += mobile ? 2.5 : 3.5;
 
-    const height = width * ((mobile ? 1.08 : 1.03) + noise(index, 9) * (mobile ? 0.15 : 0.2));
+    const height = width * ((mobile ? 1.08 : 1.03) + n(index, 9) * (mobile ? 0.15 : 0.2));
     let centerX =
       8 +
       halton(seed, 2) * 84 +
-      (noise(index, 10) - 0.5) * (mobile ? 8 : 7) +
+      (n(index, 10) - 0.5) * (mobile ? 8 : 7) +
       Math.sin(seed * 1.9) * (mobile ? 3.5 : 3);
     let centerY =
       8 +
       halton(seed, 3) * 84 +
-      (noise(index, 11) - 0.5) * (mobile ? 8 : 7) +
+      (n(index, 11) - 0.5) * (mobile ? 8 : 7) +
       Math.cos(seed * 1.7) * (mobile ? 3.2 : 2.8);
     let rotate =
-      ROTATIONS[index % ROTATIONS.length] * (mobile ? 0.88 : 0.98) +
-      (noise(index, 12) - 0.5) * (mobile ? 10 : 14);
-    const frame = noise(index, 13) > 0.3 ? "polaroid" : "card";
-    let z = 28 + accentIndex * 2 + Math.floor(noise(index, 14) * 12);
+      rotationAt(index, 23) * (mobile ? 0.88 : 0.98) +
+      (n(index, 12) - 0.5) * (mobile ? 10 : 14);
+    const frame = n(index, 13) > 0.3 ? "polaroid" : "card";
+    let z = 28 + accentIndex * 2 + Math.floor(n(index, 14) * 12);
 
     if (centerX < 22) centerX -= mobile ? 5.5 : 4.5;
     if (centerX > 78) centerX += mobile ? 5.5 : 4.5;
@@ -330,8 +353,8 @@ function createArtCollageLayouts(count, mobile = false) {
   return layouts;
 }
 
-function createCollageLayouts(count, mobile = false) {
-  return createArtCollageLayouts(count, mobile);
+function createCollageLayouts(count, mobile = false, variantSeed = 0) {
+  return createArtCollageLayouts(count, mobile, variantSeed);
   const cols = mobile ? 4 : 6;
   const rows = Math.ceil(count / cols);
 
@@ -841,6 +864,7 @@ export default function SocialProofSection({
   products = [],
   categoryTitleMap = {},
 }) {
+  const [visitSeed] = useState(makeVisitSeed);
   const [runtimeFeedbackEntries, setRuntimeFeedbackEntries] = useState(() => readRuntimeFeedbackEntries());
   useEffect(() => {
     const refresh = () => setRuntimeFeedbackEntries(readRuntimeFeedbackEntries());
@@ -859,10 +883,10 @@ export default function SocialProofSection({
   const [selectedImageHint, setSelectedImageHint] = useState(null);
   const canHover = useCanHover();
 
-  const desktopItems = useMemo(() => buildCollageItems(items, DESKTOP_CARD_COUNT), [items]);
-  const mobileItems = useMemo(() => buildCollageItems(items, MOBILE_CARD_COUNT), [items]);
-  const desktopLayouts = useMemo(() => createCollageLayouts(DESKTOP_CARD_COUNT, false), []);
-  const mobileLayouts = useMemo(() => createCollageLayouts(MOBILE_CARD_COUNT, true), []);
+  const desktopItems = useMemo(() => buildCollageItems(items, DESKTOP_CARD_COUNT, visitSeed + 101), [items, visitSeed]);
+  const mobileItems = useMemo(() => buildCollageItems(items, MOBILE_CARD_COUNT, visitSeed + 202), [items, visitSeed]);
+  const desktopLayouts = useMemo(() => createCollageLayouts(DESKTOP_CARD_COUNT, false, visitSeed + 303), [visitSeed]);
+  const mobileLayouts = useMemo(() => createCollageLayouts(MOBILE_CARD_COUNT, true, visitSeed + 404), [visitSeed]);
   const hoveredDesktopItem = hoveredDesktopIndex === null ? null : desktopItems[hoveredDesktopIndex] || null;
   const hoveredDesktopLayout = hoveredDesktopIndex === null ? null : desktopLayouts[hoveredDesktopIndex] || null;
   const selectedItems = selectedPool === "mobile" ? mobileItems : desktopItems;
