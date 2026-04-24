@@ -19,6 +19,7 @@ import {
   readConsultLeads,
   readCustomerEvents,
   summarizeCustomerBehavior,
+  timestampOf,
 } from "../../../utils/customerBehavior.js";
 import {
   REMOTE_BEHAVIOR_CACHE_EVENT,
@@ -139,9 +140,10 @@ function dayLabel(ts = Date.now()) {
 }
 
 function isInWindow(ts = 0, days = 14) {
+  const time = timestampOf(ts, 0);
   const end = startOfDay(Date.now()) + 86_400_000;
   const start = end - days * 86_400_000;
-  return ts >= start && ts < end;
+  return time >= start && time < end;
 }
 
 function buildTrend(events = [], leads = [], periodDays = 14) {
@@ -169,7 +171,7 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
   }
 
   events.forEach((event) => {
-    const ts = Number(event.ts || 0);
+    const ts = timestampOf(event.ts, 0);
     if (!isInWindow(ts, periodDays)) return;
     const row = byKey.get(dayKey(ts));
     if (!row) return;
@@ -183,7 +185,7 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
   });
 
   leads.forEach((lead) => {
-    const ts = Number(lead.ts || 0);
+    const ts = timestampOf(lead.ts, 0);
     if (!isInWindow(ts, periodDays)) return;
     const row = byKey.get(dayKey(ts));
     if (!row) return;
@@ -192,10 +194,6 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
   });
 
   return rows;
-}
-
-function countInWindow(rows = [], periodDays = 14) {
-  return rows.filter((row) => isInWindow(Number(row.ts || 0), periodDays)).length;
 }
 
 function buildMix(summary, periodEvents = [], periodLeads = []) {
@@ -221,12 +219,89 @@ function buildMix(summary, periodEvents = [], periodLeads = []) {
   ].filter((item) => item.value > 0);
 }
 
+function buildActionInsights(summary = {}, sourceRows = [], campaignRows = []) {
+  const totals = summary.totals || {};
+  const insights = [];
+  const topZero = summary.topZeroSearches?.[0];
+  const lowOpen = (summary.topProducts || []).find((row) => row.impression >= 5 && row.detailRate < 0.08);
+  const lowContact = (summary.topProducts || []).find((row) => row.detail >= 3 && row.contactRate < 0.18);
+  const sourceWinner = sourceRows.find((row) => row.leads > 0 || row.contacts > 0);
+  const campaignWinner = campaignRows.find((row) => row.leads > 0);
+
+  if (topZero) {
+    insights.push({
+      tone: "amber",
+      title: `Bổ sung mẫu cho "${topZero.label}"`,
+      detail: `${format(topZero.count)} lượt tìm không có kết quả. Nên thêm mẫu/tag hoặc đổi tên sản phẩm cho khớp nhu cầu này.`,
+    });
+  }
+
+  if (lowOpen) {
+    insights.push({
+      tone: "blue",
+      title: `Tối ưu ảnh/tên: ${lowOpen.name}`,
+      detail: `${format(lowOpen.impression)} lượt hiển thị nhưng chỉ ${formatPercent(lowOpen.detailRate)} mở detail. Nên đổi ảnh đại diện, tiêu đề hoặc đưa mẫu khác lên trước.`,
+    });
+  }
+
+  if (lowContact) {
+    insights.push({
+      tone: "rose",
+      title: `Tăng CTA cho ${lowContact.name}`,
+      detail: `${format(lowContact.detail)} lượt mở detail nhưng chỉ ${formatPercent(lowContact.contactRate)} liên hệ. Kiểm tra giá, size, mô tả và nút Messenger.`,
+    });
+  }
+
+  if (totals.consultAbandons > 0) {
+    insights.push({
+      tone: "violet",
+      title: "Form tư vấn đang bị bỏ ngang",
+      detail: `${format(totals.consultAbandons)} lượt bỏ form, tỷ lệ ${rate(totals.consultAbandons, Math.max(totals.consultStarts, 1))} từ người đã nhập. Nên rút gọn field hoặc đẩy Messenger rõ hơn.`,
+    });
+  }
+
+  if (campaignWinner) {
+    insights.push({
+      tone: "emerald",
+      title: `Campaign có lead: ${campaignWinner.name}`,
+      detail: `${format(campaignWinner.leads)} lead, ${format(campaignWinner.contacts)} liên hệ. Có thể nhân ngân sách nếu đơn thực tế tốt.`,
+    });
+  } else if (sourceWinner) {
+    insights.push({
+      tone: "emerald",
+      title: `Nguồn đang có tín hiệu: ${sourceWinner.name}`,
+      detail: `${format(sourceWinner.contacts)} liên hệ, ${format(sourceWinner.leads)} lead. Nên soi lại nội dung/campaign từ nguồn này.`,
+    });
+  }
+
+  if (!insights.length) {
+    insights.push({
+      tone: "neutral",
+      title: "Chưa đủ tín hiệu để kết luận",
+      detail: "Cần thêm lượt xem, tìm kiếm, liên hệ và lead trong kỳ đang chọn để dashboard đưa ra gợi ý chắc hơn.",
+    });
+  }
+
+  return insights.slice(0, 4);
+}
+
 function buildHourly(events = []) {
   const rows = Array.from({ length: 24 }, (_, hour) => ({ hour, label: `${String(hour).padStart(2, "0")}h`, value: 0 }));
+  const usefulTypes = new Set([
+    "page_view",
+    "search_submit",
+    "search_zero_result",
+    "detail_open",
+    "messenger_click",
+    "contact_entry_click",
+    "consult_form_open",
+    "consult_form_start",
+    "consult_submit",
+  ]);
   events.forEach((event) => {
-    const ts = Number(event.ts || 0);
+    const ts = timestampOf(event.ts, 0);
     if (!isInWindow(ts, 30)) return;
-    if (!["page_view", "search_results_view", "detail_open", "messenger_click", "contact_entry_click", "consult_submit"].includes(event.type)) return;
+    if (!usefulTypes.has(event.type)) return;
     rows[new Date(ts).getHours()].value += 1;
   });
   const max = Math.max(1, ...rows.map((row) => row.value));
@@ -325,7 +400,23 @@ function normalizeRankRows(rows = [], limit = 8, labelMap = null) {
 }
 
 function attributionSourceOf(item = {}) {
-  return readField(item, ["last_touch_source", "first_touch_source", "source"]) || "direct";
+  const source = readField(item, ["last_touch_source", "first_touch_source"]);
+  if (source) return source;
+
+  const referrer = readField(item, ["last_touch_referrer", "first_touch_referrer", "referrer"]);
+  if (referrer) {
+    try {
+      const host = new URL(referrer).hostname.replace(/^www\./, "").toLowerCase();
+      if (host.includes("facebook") || host.includes("fb.")) return "facebook";
+      if (host.includes("instagram")) return "instagram";
+      if (host.includes("google")) return "google";
+      if (host.includes("tiktok")) return "tiktok";
+      if (host.includes("zalo")) return "zalo";
+      if (host && !host.includes("halleybakery")) return host;
+    } catch {}
+  }
+
+  return "direct";
 }
 
 function attributionCampaignOf(item = {}) {
@@ -354,7 +445,7 @@ function buildAttributionRows(events = [], leads = [], mode = "source", limit = 
   const ensure = (key, name) => {
     const clean = String(key || "").trim();
     if (!clean) return null;
-    const current = rows.get(clean) || { key: clean, name, signal: 0, contacts: 0, leads: 0 };
+    const current = rows.get(clean) || { key: clean, name, visits: 0, details: 0, contacts: 0, leads: 0, score: 0, leadRate: 0 };
     rows.set(clean, current);
     return current;
   };
@@ -364,13 +455,20 @@ function buildAttributionRows(events = [], leads = [], mode = "source", limit = 
     const row = ensure(key, mode === "campaign" ? key : attributionLabelOf(key));
     if (!row) return;
 
-    if (event.type === "page_view") row.signal += 1;
-    if (event.type === "detail_open") row.signal += 2;
-    if (event.type === "messenger_click" || event.type === "contact_entry_click") {
-      row.signal += 4;
-      row.contacts += 1;
+    if (event.type === "page_view") {
+      row.visits += 1;
+      row.score += 1;
     }
-    if (event.type === "consult_submit") row.signal += 6;
+    if (event.type === "search_submit") row.score += 1;
+    if (event.type === "detail_open") {
+      row.details += 1;
+      row.score += 3;
+    }
+    if (event.type === "messenger_click" || event.type === "contact_entry_click") {
+      row.contacts += 1;
+      row.score += 6;
+    }
+    if (event.type === "consult_submit") row.score += 8;
   });
 
   leads.forEach((lead) => {
@@ -378,10 +476,12 @@ function buildAttributionRows(events = [], leads = [], mode = "source", limit = 
     const row = ensure(key, mode === "campaign" ? key : attributionLabelOf(key));
     if (!row) return;
     row.leads += 1;
+    row.score += 12;
   });
 
   return [...rows.values()]
-    .sort((a, b) => b.leads - a.leads || b.contacts - a.contacts || b.signal - a.signal || a.name.localeCompare(b.name, "vi"))
+    .map((row) => ({ ...row, leadRate: row.contacts ? row.leads / row.contacts : row.leads ? 1 : 0 }))
+    .sort((a, b) => b.leads - a.leads || b.contacts - a.contacts || b.score - a.score || a.name.localeCompare(b.name, "vi"))
     .slice(0, limit);
 }
 
@@ -490,6 +590,28 @@ function Funnel({ rows = [] }) {
   );
 }
 
+function InsightList({ rows = [] }) {
+  const tones = {
+    amber: "border-amber-400/25 bg-amber-400/8 text-amber-200",
+    blue: "border-blue-400/25 bg-blue-400/8 text-blue-200",
+    rose: "border-rose-400/25 bg-rose-400/8 text-rose-200",
+    violet: "border-violet-400/25 bg-violet-400/8 text-violet-200",
+    emerald: "border-emerald-400/25 bg-emerald-400/8 text-emerald-200",
+    neutral: "border-slate-700 bg-slate-950/60 text-slate-200",
+  };
+
+  return (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      {rows.map((row, index) => (
+        <div key={`${row.title}-${index}`} className={cn("rounded-2xl border p-4", tones[row.tone] || tones.neutral)}>
+          <div className="text-sm font-semibold text-white">{row.title}</div>
+          <div className="mt-2 text-sm leading-6 text-slate-300">{row.detail}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function RankList({ rows = [], empty = "Chưa có tín hiệu" }) {
   if (!rows.length) return <Empty className="!py-10" title={empty} hint="Chưa đủ dữ liệu để xếp hạng." />;
   const max = Math.max(1, ...rows.map((row) => row.value));
@@ -525,7 +647,7 @@ function AttributionList({ rows = [], empty = "Chưa có nguồn nổi bật" })
             <div className="min-w-0">
               <div className="truncate font-medium text-white">{row.name}</div>
               <div className="mt-1 text-xs text-slate-500">
-                {format(row.contacts)} liên hệ • {format(row.signal)} tín hiệu
+                {format(row.visits)} vào web • {format(row.contacts)} liên hệ • {formatPercent(row.leadRate)} lead/liên hệ
               </div>
             </div>
             <div className="text-right">
@@ -927,8 +1049,8 @@ export default function AnalyticsPanel() {
   const events = useMemo(() => filterBusinessEvents(mergedEvents), [mergedEvents]);
   const leads = useMemo(() => mergeLeads(remote.leads || [], localLeads), [remote.leads, localLeads]);
 
-  const periodEvents = useMemo(() => events.filter((event) => isInWindow(Number(event.ts || 0), periodDays)), [events, periodDays]);
-  const periodLeads = useMemo(() => leads.filter((lead) => isInWindow(Number(lead.ts || 0), periodDays)), [leads, periodDays]);
+  const periodEvents = useMemo(() => events.filter((event) => isInWindow(event.ts, periodDays)), [events, periodDays]);
+  const periodLeads = useMemo(() => leads.filter((lead) => isInWindow(lead.ts, periodDays)), [leads, periodDays]);
   const periodSummary = useMemo(() => summarizeCustomerBehavior(products, { events: periodEvents, leads: periodLeads }), [products, periodEvents, periodLeads]);
   const trend = useMemo(() => buildTrend(events, leads, periodDays), [events, leads, periodDays]);
   const mix = useMemo(() => buildMix(periodSummary, periodEvents, periodLeads), [periodSummary, periodEvents, periodLeads]);
@@ -936,10 +1058,12 @@ export default function AnalyticsPanel() {
   const funnel = useMemo(() => buildFunnel(periodSummary), [periodSummary]);
   const categoryLabels = useMemo(() => buildCategoryLabelMap(menu, categoryConfig), [menu, categoryConfig]);
   const searchRows = useMemo(() => normalizeRankRows(periodSummary.topSearches), [periodSummary.topSearches]);
+  const zeroSearchRows = useMemo(() => normalizeRankRows(periodSummary.topZeroSearches), [periodSummary.topZeroSearches]);
   const tagRows = useMemo(() => normalizeRankRows(periodSummary.topTags), [periodSummary.topTags]);
   const categoryRows = useMemo(() => normalizeRankRows(periodSummary.topCategories, 8, categoryLabels), [periodSummary.topCategories, categoryLabels]);
   const sourceRows = useMemo(() => buildAttributionRows(periodEvents, periodLeads, "source"), [periodEvents, periodLeads]);
   const campaignRows = useMemo(() => buildAttributionRows(periodEvents, periodLeads, "campaign"), [periodEvents, periodLeads]);
+  const actionInsights = useMemo(() => buildActionInsights(periodSummary, sourceRows, campaignRows), [periodSummary, sourceRows, campaignRows]);
 
   useEffect(() => {
     const refresh = () => setTick((value) => value + 1);
@@ -1042,9 +1166,13 @@ export default function AnalyticsPanel() {
         <MetricCard label="Copy link" value={periodSummary.totals.shares} meta={`${format(periodSummary.totals.favoritesPageOpens)} lượt mở yêu thích`} tone="blue" />
       </div>
 
+      <Section title="Gợi ý hành động" description="Ưu tiên việc nên làm từ dữ liệu tracking trong kỳ đang chọn." compact>
+        <InsightList rows={actionInsights} />
+      </Section>
+
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,0.75fr)]">
         <Section title="Xu hướng hành vi" description={`Diễn biến trong ${periodDays} ngày gần nhất.`} compact>
-          {events.length || leads.length ? (
+          {periodEvents.length || periodLeads.length ? (
             <div className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
@@ -1116,9 +1244,12 @@ export default function AnalyticsPanel() {
         </Section>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
         <Section title="Từ khóa được tìm nhiều" compact>
           <RankList rows={searchRows} empty="Chưa có từ khóa nổi bật" />
+        </Section>
+        <Section title="Từ khóa 0 kết quả" compact>
+          <RankList rows={zeroSearchRows} empty="Chưa có search 0 kết quả" />
         </Section>
         <Section title="Nguồn vào web" compact>
           <AttributionList rows={sourceRows} empty="Chưa có nguồn rõ ràng" />

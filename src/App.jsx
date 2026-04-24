@@ -42,7 +42,7 @@ import {
 } from "./utils/customerBehavior.js";
 import { submitConsultLead } from "./services/consult.js";
 import { ensureAttributionContext } from "./services/attribution.js";
-import { initTelemetry, queueTelemetryEvent, trackPageView } from "./services/telemetry.js";
+import { initTelemetry, isTrackingSuppressed, queueTelemetryEvent, trackPageView } from "./services/telemetry.js";
 
 /* ---------------- helpers ---------------- */
 
@@ -655,6 +655,7 @@ export default function App() {
   useEffect(() => {
     if (telemetryStartedRef.current) return undefined;
     telemetryStartedRef.current = true;
+    if (isTrackingSuppressed()) return undefined;
     ensureAttributionContext();
     return initTelemetry();
   }, []);

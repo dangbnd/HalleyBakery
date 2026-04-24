@@ -17,6 +17,7 @@ import {
   readConsultLeads,
   readCustomerEvents,
   summarizeCustomerBehavior,
+  timestampOf,
 } from "../../../utils/customerBehavior.js";
 import { loadRemoteCustomerBehavior, mergeEvents, mergeLeads } from "../../../services/remoteBehavior.js";
 import { getConfig, KEYS } from "../../../utils/config.js";
@@ -99,9 +100,10 @@ function dayLabel(ts = Date.now()) {
 }
 
 function isInWindow(ts = 0, days = 14, offsetDays = 0) {
+  const time = timestampOf(ts, 0);
   const end = startOfDay(Date.now()) - offsetDays * 86_400_000 + 86_400_000;
   const start = end - days * 86_400_000;
-  return ts >= start && ts < end;
+  return time >= start && time < end;
 }
 
 function tagsOf(value) {
@@ -170,8 +172,9 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
   }
 
   events.forEach((event) => {
-    if (!isInWindow(Number(event.ts || 0), periodDays)) return;
-    const row = byKey.get(dayKey(event.ts));
+    const ts = timestampOf(event.ts, 0);
+    if (!isInWindow(ts, periodDays)) return;
+    const row = byKey.get(dayKey(ts));
     if (!row) return;
     row.total += 1;
     if (event.type === "page_view") row["Vào web"] += 1;
@@ -182,8 +185,9 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
   });
 
   leads.forEach((lead) => {
-    if (!isInWindow(Number(lead.ts || 0), periodDays)) return;
-    const row = byKey.get(dayKey(lead.ts));
+    const ts = timestampOf(lead.ts, 0);
+    if (!isInWindow(ts, periodDays)) return;
+    const row = byKey.get(dayKey(ts));
     if (row) row["Lead"] += 1;
   });
 
@@ -191,11 +195,11 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
 }
 
 function countEvents(events = [], periodDays = 14, predicate = () => true, offsetDays = 0) {
-  return events.filter((event) => isInWindow(Number(event.ts || 0), periodDays, offsetDays) && predicate(event)).length;
+  return events.filter((event) => isInWindow(event.ts, periodDays, offsetDays) && predicate(event)).length;
 }
 
 function countLeads(leads = [], periodDays = 14, offsetDays = 0) {
-  return leads.filter((lead) => isInWindow(Number(lead.ts || 0), periodDays, offsetDays)).length;
+  return leads.filter((lead) => isInWindow(lead.ts, periodDays, offsetDays)).length;
 }
 
 function calcDelta(current = 0, previous = 0) {
@@ -405,7 +409,7 @@ function buildHourHeat(events = []) {
     "consult_form_start",
   ]);
   events.forEach((event) => {
-    const ts = Number(event.ts || 0);
+    const ts = timestampOf(event.ts, 0);
     if (!isInWindow(ts, 30)) return;
     if (!usefulTypes.has(event.type)) return;
     buckets[new Date(ts).getHours()].value += 1;

@@ -2,6 +2,7 @@ import { getConfig } from "../utils/config.js";
 import { buildProductChatLink, buildProductLink } from "../utils/chatLink.js";
 import { productSnapshot, saveConsultLead } from "../utils/customerBehavior.js";
 import { getAttributionContext, getCurrentPageContext } from "./attribution.js";
+import { isTrackingSuppressed } from "./telemetry.js";
 
 const clean = (value = "") => String(value || "").trim();
 
@@ -91,6 +92,18 @@ export async function submitConsultLead({ product, form = {} } = {}) {
     leadId,
     productLink: chatTarget.productLink || buildProductLink(product),
   });
+
+  if (isTrackingSuppressed()) {
+    return {
+      ok: true,
+      local: false,
+      remoteOk: false,
+      remoteSkipped: true,
+      trackingSkipped: true,
+      lead: null,
+      chatTarget,
+    };
+  }
 
   const localLead = saveConsultLead({
     ...row,

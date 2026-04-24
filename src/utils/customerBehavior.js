@@ -1,5 +1,5 @@
 import { readLS, removeLS, writeLS } from "../utils.js";
-import { queueTelemetryEvent } from "../services/telemetry.js";
+import { isTrackingSuppressed, queueTelemetryEvent } from "../services/telemetry.js";
 import { firstImg } from "./img.js";
 import { pidOf } from "./pid.js";
 
@@ -66,6 +66,14 @@ const toArray = (value) => {
     .filter(Boolean);
 };
 
+export function timestampOf(value, fallback = Date.now()) {
+  if (value instanceof Date) return value.getTime();
+  const n = Number(value);
+  if (Number.isFinite(n) && n > 0) return n;
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 const minPriceOf = (product = {}) => {
   const vals = [];
   if (Array.isArray(product?.pricing?.table)) {
@@ -122,6 +130,8 @@ export function filterReportEvents(events = []) {
 }
 
 export function recordCustomerEvent(type, payload = {}) {
+  if (isTrackingSuppressed()) return null;
+
   const eventType = String(type || "").trim();
   if (!eventType) return null;
 
@@ -221,7 +231,7 @@ export function getRecentProducts(products = []) {
 }
 
 export function saveConsultLead(lead = {}) {
-  const entry = { id: lead.id || uid(), ts: lead.ts || Date.now(), ...lead };
+  const entry = { id: lead.id || uid(), ...lead, ts: timestampOf(lead.ts || Date.now()) };
   const list = readLS(CUSTOMER_CONSULT_LEADS_KEY, []);
   const next = [entry, ...(Array.isArray(list) ? list : [])].slice(0, MAX_LEADS);
   writeLS(CUSTOMER_CONSULT_LEADS_KEY, next);
@@ -231,7 +241,10 @@ export function saveConsultLead(lead = {}) {
 
 export function readConsultLeads() {
   const list = readLS(CUSTOMER_CONSULT_LEADS_KEY, []);
-  return Array.isArray(list) ? list : [];
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((lead) => ({ ...lead, ts: timestampOf(lead?.ts || lead?.created_at || lead?.timestamp, 0) }))
+    .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
 }
 
 export function clearCustomerBehavior() {
@@ -279,10 +292,14 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
   const rawEvents = Array.isArray(source.events) ? source.events : readCustomerEvents();
   const events = filterBusinessEvents(rawEvents);
   const errorEvents = (Array.isArray(rawEvents) ? rawEvents : []).filter(isErrorEvent);
-  const leads = Array.isArray(source.leads) ? source.leads : readConsultLeads();
+  const rawLeads = Array.isArray(source.leads) ? source.leads : readConsultLeads();
+  const leads = rawLeads
+    .map((lead) => ({ ...lead, ts: timestampOf(lead?.ts || lead?.created_at || lead?.timestamp, 0) }))
+    .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
   const catalog = new Map((products || []).map((p) => [pidOf(p), productSnapshot(p)]));
   const byProduct = new Map();
   const searches = new Map();
+  const zeroSearches = new Map();
   const tags = new Map();
   const categories = new Map();
 
@@ -339,7 +356,10 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
       totals.searchSuggestionClicks += 1;
       if (event.query) bumpCounter(searches, event.query.toLowerCase(), event.query);
     }
-    if (event.type === "search_zero_result") totals.zeroResultSearches += 1;
+    if (event.type === "search_zero_result") {
+      totals.zeroResultSearches += 1;
+      if (event.query) bumpCounter(zeroSearches, event.query.toLowerCase(), event.query);
+    }
     if (event.type === "search_results_view") totals.searchResultViews += 1;
     if (event.type === "search_submit") {
       totals.searchSubmits += 1;
@@ -366,12 +386,28 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
       stat.messenger += 1;
     } else if (event.type === "favorite_add") {
       stat.favorite += 1;
-    } else if (event.type === "consult_submit") {
-      stat.consult += 1;
     }
 
     if (snap.category) bumpCounter(categories, snap.category, snap.category);
     for (const tag of snap.tags || []) bumpCounter(tags, String(tag).toLowerCase(), tag);
+  }
+
+  for (const lead of leads) {
+    const product = lead.product && typeof lead.product === "object"
+      ? lead.product
+      : {
+          pid: lead.product_pid,
+          id: lead.product_id,
+          name: lead.product_name,
+          category: lead.category,
+          tags: lead.tags,
+        };
+    const snap = product?.pid || product?.id || product?.name
+      ? { ...(catalog.get(product.pid) || {}), ...productSnapshot(product), ...product }
+      : null;
+    if (!snap?.pid) continue;
+    const stat = productStat(byProduct, snap);
+    if (stat) stat.consult += 1;
   }
 
   for (const stat of byProduct.values()) {
@@ -417,6 +453,7 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
     totals,
     topProducts: [...byProduct.values()].sort(productSort),
     topSearches: [...searches.values()].sort(byCount),
+    topZeroSearches: [...zeroSearches.values()].sort(byCount),
     topTags: [...tags.values()].sort(byCount),
     topCategories: [...categories.values()].sort(byCount),
     recentEvents: events.filter((event) => recentEventTypes.has(event.type)).slice(0, 50),

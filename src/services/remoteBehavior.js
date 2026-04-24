@@ -190,7 +190,7 @@ function dedupeById(rows = []) {
     seen.add(key);
     out.push(row);
   }
-  return out.sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
+  return out.sort((a, b) => parseTs(b.ts, 0) - parseTs(a.ts, 0));
 }
 
 export function mergeEvents(...groups) {

@@ -5,6 +5,7 @@ import { ensureAttributionContext, getAttributionContext } from "./attribution.j
 const VISITOR_ID_KEY = "hb_visitor_id_v1";
 const SESSION_ID_KEY = "hb_session_id_v1";
 const SESSION_STARTED_KEY = "hb_session_started_at_v1";
+export const TRACKING_OPT_OUT_KEY = "hb_tracking_opt_out_v1";
 const QUEUE_LIMIT = 120;
 const BATCH_LIMIT = 40;
 const FLUSH_DELAY_MS = 1600;
@@ -74,15 +75,56 @@ function writeStorage(storage, key, value) {
   } catch {}
 }
 
+function truthy(value = "") {
+  return ["1", "true", "yes", "y", "on", "staff"].includes(String(value || "").trim().toLowerCase());
+}
+
+function falsy(value = "") {
+  return ["0", "false", "no", "n", "off", "customer"].includes(String(value || "").trim().toLowerCase());
+}
+
+export function syncTrackingOptOutFromUrl() {
+  if (typeof window === "undefined") return false;
+  try {
+    const params = new URLSearchParams(window.location.search || "");
+    const staff = params.get("hb_staff") ?? params.get("staff") ?? params.get("staff_mode");
+    const tracking = params.get("tracking");
+
+    if (truthy(staff) || String(tracking || "").trim().toLowerCase() === "off") {
+      writeStorage(window.localStorage, TRACKING_OPT_OUT_KEY, "1");
+      queue = [];
+      if (flushTimer) {
+        window.clearTimeout(flushTimer);
+        flushTimer = 0;
+      }
+      return true;
+    }
+    if (falsy(staff) || String(tracking || "").trim().toLowerCase() === "on") {
+      window.localStorage?.removeItem(TRACKING_OPT_OUT_KEY);
+      return false;
+    }
+  } catch {}
+  return readStorage(window.localStorage, TRACKING_OPT_OUT_KEY) === "1";
+}
+
+export function isTrackingOptedOut() {
+  if (typeof window === "undefined") return false;
+  return syncTrackingOptOutFromUrl();
+}
+
 export function isAdminRuntime() {
   if (typeof window === "undefined") return false;
   const host = window.location.hostname.toLowerCase();
-  return host.startsWith("admin.") || window.location.pathname.startsWith("/admin");
+  return host.startsWith("admin.") || window.location.pathname.startsWith("/admin") || window.location.hash === "#admin";
 }
 
 export function isTelemetryEnabled() {
   const raw = getConfig(KEYS.ENABLE_VISITOR_TRACKING, "true");
   return parseBooleanLike(raw, true);
+}
+
+export function isTrackingSuppressed() {
+  return isAdminRuntime() || !isTelemetryEnabled() || isTrackingOptedOut();
 }
 
 function getWebAppUrl() {
@@ -180,7 +222,7 @@ function scheduleFlush() {
 
 export function queueTelemetryEvent(typeOrEvent, payload = {}) {
   if (typeof window === "undefined") return null;
-  if (isAdminRuntime() || !isTelemetryEnabled()) return null;
+  if (isTrackingSuppressed()) return null;
 
   const event =
     typeof typeOrEvent === "string"
@@ -197,7 +239,7 @@ export function queueTelemetryEvent(typeOrEvent, payload = {}) {
 
 export async function flushTelemetry({ beacon = false } = {}) {
   if (typeof window === "undefined") return { ok: false, skipped: true };
-  if (!queue.length || isAdminRuntime() || !isTelemetryEnabled()) return { ok: true, skipped: true };
+  if (!queue.length || isTrackingSuppressed()) return { ok: true, skipped: true };
 
   const webApp = getWebAppUrl();
   if (!webApp) {
@@ -266,7 +308,7 @@ export function trackReactError(error, info = {}, name = "react") {
 }
 
 export function trackPageView(meta = {}) {
-  if (typeof window === "undefined" || isAdminRuntime()) return;
+  if (typeof window === "undefined" || isTrackingSuppressed()) return;
   const key = `${window.location.pathname}${window.location.search}${window.location.hash}:${meta.route || ""}`;
   if (key === lastPageKey) return;
   lastPageKey = key;
@@ -289,7 +331,7 @@ export function trackPageView(meta = {}) {
 }
 
 export function initTelemetry() {
-  if (typeof window === "undefined" || initialized || isAdminRuntime()) return () => {};
+  if (typeof window === "undefined" || initialized || isTrackingSuppressed()) return () => {};
   initialized = true;
   ensureAttributionContext();
 
