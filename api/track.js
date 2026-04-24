@@ -1,33 +1,21 @@
 const UNKNOWN_ACTION_RE =
   /no action|unknown action|unknown op|invalid action|unsupported action|action not supported|missing action|missing op|no handler|no function/i;
+const PRODUCT_IMPRESSION_LIST_LIMIT = 6;
 
 const ALLOWED_EVENT_TYPES = new Set([
   "session_start",
   "page_view",
   "search_submit",
-  "search_suggestion_click",
   "search_results_view",
   "search_zero_result",
   "category_results_view",
   "detail_open",
   "product_impression",
-  "size_select",
-  "favorite_add",
-  "favorite_remove",
   "messenger_click",
   "contact_entry_click",
-  "consult_form_open",
-  "consult_form_start",
-  "consult_form_abandon",
   "consult_submit",
   "category_click",
   "tag_click",
-  "favorites_page_open",
-  "share_copy",
-  "resource_error",
-  "js_error",
-  "react_error",
-  "unhandled_rejection",
 ]);
 
 const EVENT_HEADERS = [
@@ -267,6 +255,76 @@ function productField(event = {}, field = "") {
   return "";
 }
 
+function isAllowedVolumeEvent(event = {}) {
+  if (event.type === "product_impression") {
+    const pos = Number(event.list_position);
+    return !Number.isFinite(pos) || pos <= PRODUCT_IMPRESSION_LIST_LIMIT;
+  }
+
+  return true;
+}
+
+function compactMeta(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value.slice(0, 500);
+  try {
+    return JSON.stringify(value).slice(0, 500);
+  } catch {
+    return String(value).slice(0, 500);
+  }
+}
+
+function eventUniqueKey(event = {}) {
+  const type = s(event.type);
+  const pid = productField(event, "pid");
+
+  if (type === "product_impression" && pid) {
+    return [
+      type,
+      event.session_id,
+      event.page_type,
+      event.list_id || event.list_name || event.section,
+      pid,
+    ].join("|");
+  }
+
+  if (type === "detail_open" && pid) {
+    return [
+      type,
+      event.session_id,
+      pid,
+      event.source,
+      event.page_path,
+    ].join("|");
+  }
+
+  if (type === "category_results_view" || type === "search_results_view" || type === "search_zero_result") {
+    return [
+      type,
+      event.session_id,
+      event.page_path,
+      event.route,
+      event.query,
+      event.category,
+      event.list_id || event.list_name,
+      compactMeta(event.meta),
+    ].join("|");
+  }
+
+  return event.id ? `id:${event.id}` : "";
+}
+
+function uniqueEvents(rows = []) {
+  const seen = new Set();
+  return rows.filter((row) => {
+    const key = eventUniqueKey(row);
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function normalizeEvent(input = {}) {
   const now = Date.now();
   const tsMs = Number(input.ts_ms || input.ts || now);
@@ -357,7 +415,12 @@ function authPayload(token = "") {
 }
 
 async function trackEvents({ webApp = "", events = [] } = {}) {
-  const rows = events.map(normalizeEvent).filter((event) => event.type && ALLOWED_EVENT_TYPES.has(event.type));
+  const rows = uniqueEvents(
+    events
+      .map(normalizeEvent)
+      .filter((event) => event.type && ALLOWED_EVENT_TYPES.has(event.type))
+      .filter(isAllowedVolumeEvent)
+  );
   if (!rows.length) return { ok: true, accepted: 0, inserted: 0 };
 
   try {

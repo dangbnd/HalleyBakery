@@ -9,6 +9,7 @@ import { queueTelemetryEvent } from "../services/telemetry.js";
 import { productSnapshot } from "../utils/customerBehavior.js";
 
 const IMPRESSION_STORAGE_KEY = "hb_seen_product_impressions_v1";
+const IMPRESSION_LIST_LIMIT = 6;
 const impressionSeen = new Set();
 let impressionLoaded = false;
 
@@ -35,11 +36,13 @@ function persistSeenImpressions() {
 }
 
 function shouldTrackImpression(trackingContext = {}) {
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") return false;
+
   const pageType = String(trackingContext.pageType || "").trim().toLowerCase();
   if (!["search", "category", "favorites"].includes(pageType)) return false;
 
   const index = Number(trackingContext.index);
-  if (Number.isFinite(index) && index >= 12) return false;
+  if (Number.isFinite(index) && index > IMPRESSION_LIST_LIMIT) return false;
 
   return true;
 }

@@ -9,40 +9,46 @@ export const TRACKING_OPT_OUT_KEY = "hb_tracking_opt_out_v1";
 const QUEUE_LIMIT = 120;
 const BATCH_LIMIT = 40;
 const FLUSH_DELAY_MS = 1600;
+const RECENT_DEDUPE_LIMIT = 240;
+const PRODUCT_IMPRESSION_RATE_LIMIT = { windowMs: 60000, max: 24 };
+const EVENT_RATE_LIMITS = {
+  product_impression: PRODUCT_IMPRESSION_RATE_LIMIT,
+  category_results_view: { windowMs: 60000, max: 10 },
+  search_results_view: { windowMs: 60000, max: 10 },
+  search_zero_result: { windowMs: 60000, max: 10 },
+  detail_open: { windowMs: 60000, max: 30 },
+};
+const EVENT_DEDUPE_TTL_MS = {
+  product_impression: 6 * 60 * 60 * 1000,
+  category_results_view: 2 * 60 * 1000,
+  search_results_view: 45 * 1000,
+  search_zero_result: 45 * 1000,
+  detail_open: 3500,
+};
 
 let queue = [];
 let flushTimer = 0;
+let flushing = false;
 let initialized = false;
 let cleanupFns = [];
 let lastPageKey = "";
+const recentEventKeys = new Map();
+const rateBuckets = new Map();
 
 const IMPORTANT_EVENT_TYPES = new Set([
   "session_start",
   "page_view",
   "search_submit",
-  "search_suggestion_click",
   "search_results_view",
   "search_zero_result",
   "category_results_view",
   "detail_open",
   "product_impression",
-  "size_select",
-  "favorite_add",
-  "favorite_remove",
   "messenger_click",
   "contact_entry_click",
-  "consult_form_open",
-  "consult_form_start",
-  "consult_form_abandon",
   "consult_submit",
   "category_click",
   "tag_click",
-  "favorites_page_open",
-  "share_copy",
-  "resource_error",
-  "js_error",
-  "react_error",
-  "unhandled_rejection",
 ]);
 
 function s(value) {
@@ -231,6 +237,108 @@ function commonContext() {
   };
 }
 
+function productKey(event = {}) {
+  const product = event.product && typeof event.product === "object" ? event.product : {};
+  return s(product.pid || event.product_pid || product.id || event.product_id);
+}
+
+function stableMetaKey(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value.slice(0, 500);
+  try {
+    return JSON.stringify(value).slice(0, 500);
+  } catch {
+    return String(value).slice(0, 500);
+  }
+}
+
+function eventDedupeKey(event = {}) {
+  const type = s(event.type);
+  if (!EVENT_DEDUPE_TTL_MS[type]) return "";
+
+  if (type === "product_impression") {
+    const pid = productKey(event);
+    if (!pid) return "";
+    return [
+      type,
+      event.session_id || "",
+      event.page_type || "",
+      event.list_id || event.list_name || event.section || "",
+      pid,
+    ].join("|");
+  }
+
+  if (type === "detail_open") {
+    const pid = productKey(event);
+    if (!pid) return "";
+    return [
+      type,
+      event.session_id || "",
+      pid,
+      event.source || "",
+      event.page_path || "",
+    ].join("|");
+  }
+
+  return [
+    type,
+    event.session_id || "",
+    event.page_path || "",
+    event.route || "",
+    event.query || "",
+    event.category || "",
+    event.list_id || event.list_name || "",
+    stableMetaKey(event.meta),
+  ].join("|");
+}
+
+function pruneRecentEvents(now = Date.now()) {
+  if (recentEventKeys.size <= RECENT_DEDUPE_LIMIT) return;
+  for (const [key, item] of recentEventKeys.entries()) {
+    if (!item || now - item.at > item.ttl) recentEventKeys.delete(key);
+    if (recentEventKeys.size <= RECENT_DEDUPE_LIMIT) return;
+  }
+  while (recentEventKeys.size > RECENT_DEDUPE_LIMIT) {
+    const oldest = recentEventKeys.keys().next().value;
+    if (!oldest) break;
+    recentEventKeys.delete(oldest);
+  }
+}
+
+function shouldDropDuplicateEvent(event = {}) {
+  const type = s(event.type);
+  const ttl = EVENT_DEDUPE_TTL_MS[type];
+  if (!ttl) return false;
+
+  const key = eventDedupeKey(event);
+  if (!key) return false;
+
+  const now = Number(event.ts || Date.now()) || Date.now();
+  const prev = recentEventKeys.get(key);
+  if (prev && now - prev.at < ttl) return true;
+
+  recentEventKeys.set(key, { at: now, ttl });
+  pruneRecentEvents(now);
+  return false;
+}
+
+function shouldDropRateLimitedEvent(event = {}) {
+  const type = s(event.type);
+  const config = EVENT_RATE_LIMITS[type];
+  if (!config) return false;
+
+  const now = Number(event.ts || Date.now()) || Date.now();
+  const bucket = rateBuckets.get(type);
+  if (!bucket || now - bucket.startedAt >= config.windowMs) {
+    rateBuckets.set(type, { startedAt: now, count: 1 });
+    return false;
+  }
+
+  if (bucket.count >= config.max) return true;
+  bucket.count += 1;
+  return false;
+}
+
 function normalizeEvent(type, payload = {}) {
   const ts = Date.now();
   return {
@@ -262,6 +370,7 @@ export function queueTelemetryEvent(typeOrEvent, payload = {}) {
       : normalizeEvent(typeOrEvent?.type || "event", { ...typeOrEvent, ...payload });
 
   if (!IMPORTANT_EVENT_TYPES.has(event.type)) return null;
+  if (shouldDropDuplicateEvent(event) || shouldDropRateLimitedEvent(event)) return null;
 
   queue.push(event);
   if (queue.length > QUEUE_LIMIT) queue = queue.slice(-QUEUE_LIMIT);
@@ -272,6 +381,10 @@ export function queueTelemetryEvent(typeOrEvent, payload = {}) {
 export async function flushTelemetry({ beacon = false } = {}) {
   if (typeof window === "undefined") return { ok: false, skipped: true };
   if (!queue.length || isTrackingSuppressed()) return { ok: true, skipped: true };
+  if (flushing) {
+    scheduleFlush();
+    return { ok: true, skipped: true, reason: "flush_in_flight" };
+  }
 
   const webApp = getWebAppUrl();
   if (!webApp) {
@@ -280,18 +393,27 @@ export async function flushTelemetry({ beacon = false } = {}) {
   }
 
   const batch = queue.slice(0, BATCH_LIMIT);
-  const rest = queue.slice(BATCH_LIMIT);
+  queue = queue.slice(BATCH_LIMIT);
   const body = JSON.stringify({ webApp, events: batch });
+  flushing = true;
+
+  const requeueBatch = () => {
+    queue = [...batch, ...queue].slice(0, QUEUE_LIMIT);
+    scheduleFlush();
+  };
 
   if (beacon && navigator.sendBeacon) {
     try {
       const sent = navigator.sendBeacon("/api/track", new Blob([body], { type: "text/plain;charset=utf-8" }));
       if (sent) {
-        queue = rest;
+        flushing = false;
         if (queue.length) scheduleFlush();
         return { ok: true, beacon: true };
       }
     } catch {}
+    flushing = false;
+    requeueBatch();
+    return { ok: false, beacon: true, error: "beacon_rejected" };
   }
 
   try {
@@ -303,14 +425,16 @@ export async function flushTelemetry({ beacon = false } = {}) {
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok || data?.inserted > 0 || data?.accepted > 0) {
-      queue = rest;
+      flushing = false;
       if (queue.length) scheduleFlush();
       return { ok: true, data };
     }
-    scheduleFlush();
+    flushing = false;
+    requeueBatch();
     return { ok: false, data };
   } catch (error) {
-    scheduleFlush();
+    flushing = false;
+    requeueBatch();
     return { ok: false, error: s(error?.message || error) };
   }
 }
@@ -329,14 +453,8 @@ function errorPayload(error, extra = {}) {
 }
 
 export function trackReactError(error, info = {}, name = "react") {
-  queueTelemetryEvent("react_error", errorPayload(error, {
-    source: "react_error_boundary",
-    meta: {
-      boundary: name,
-      componentStack: clip(info?.componentStack || "", 2500),
-    },
-  }));
-  flushTelemetry();
+  // React errors stay in the browser console/ErrorBoundary UI. They are not
+  // written to the customer analytics sheet.
 }
 
 export function trackPageView(meta = {}) {
@@ -374,51 +492,16 @@ export function initTelemetry() {
     },
   });
 
-  const onError = (event) => {
-    const target = event.target;
-    if (target && target !== window) {
-      queueTelemetryEvent("resource_error", {
-        source: "resource",
-        severity: "error",
-        target_tag: target.tagName || "",
-        target_href: target.src || target.href || "",
-        message: `Resource failed: ${target.tagName || "unknown"}`,
-      });
-      flushTelemetry();
-      return;
-    }
-    queueTelemetryEvent("js_error", errorPayload(event.error || event.message, {
-      file: event.filename,
-      line: event.lineno,
-      col: event.colno,
-      stack: event.error?.stack,
-    }));
-    flushTelemetry();
-  };
-
-  const onRejection = (event) => {
-    const reason = event.reason;
-    queueTelemetryEvent("unhandled_rejection", errorPayload(reason, {
-      source: "unhandled_rejection",
-      meta: { reason: clip(typeof reason === "string" ? reason : reason?.message || "", 1000) },
-    }));
-    flushTelemetry();
-  };
-
   const onVisibility = () => {
     if (document.visibilityState === "hidden") flushTelemetry({ beacon: true });
   };
 
   const onPageHide = () => flushTelemetry({ beacon: true });
 
-  window.addEventListener("error", onError, true);
-  window.addEventListener("unhandledrejection", onRejection);
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("pagehide", onPageHide);
 
   cleanupFns = [
-    () => window.removeEventListener("error", onError, true),
-    () => window.removeEventListener("unhandledrejection", onRejection),
     () => document.removeEventListener("visibilitychange", onVisibility),
     () => window.removeEventListener("pagehide", onPageHide),
   ];

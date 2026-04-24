@@ -12,33 +12,19 @@ export const BUSINESS_EVENT_TYPES = new Set([
   "session_start",
   "page_view",
   "search_submit",
-  "search_suggestion_click",
   "search_results_view",
   "search_zero_result",
   "category_results_view",
   "detail_open",
   "product_impression",
-  "size_select",
-  "favorite_add",
-  "favorite_remove",
   "messenger_click",
   "contact_entry_click",
-  "consult_form_open",
-  "consult_form_start",
-  "consult_form_abandon",
   "consult_submit",
   "category_click",
   "tag_click",
-  "favorites_page_open",
-  "share_copy",
 ]);
 
-export const ERROR_EVENT_TYPES = new Set([
-  "resource_error",
-  "js_error",
-  "react_error",
-  "unhandled_rejection",
-]);
+export const ERROR_EVENT_TYPES = new Set();
 
 const MAX_EVENTS = 2000;
 const MAX_RECENTS = 32;
@@ -134,6 +120,7 @@ export function recordCustomerEvent(type, payload = {}) {
 
   const eventType = String(type || "").trim();
   if (!eventType) return null;
+  if (!BUSINESS_EVENT_TYPES.has(eventType)) return null;
 
   const entry = {
     id: uid(),
@@ -285,9 +272,6 @@ function demandSignalWeight(type = "") {
       return 4;
     case "search_submit":
     case "search_zero_result":
-    case "size_select":
-    case "favorite_add":
-    case "share_copy":
       return 3;
     case "category_click":
     case "tag_click":
@@ -349,22 +333,13 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
     searches: 0,
     searchSubmits: 0,
     searchResultViews: 0,
-    searchSuggestionClicks: 0,
     zeroResultSearches: 0,
     categoryResultViews: 0,
     categoryClicks: 0,
     tagClicks: 0,
-    sizeSelects: 0,
-    favoriteAdds: 0,
-    favoriteRemoves: 0,
-    consultOpens: 0,
-    consultStarts: 0,
-    consultAbandons: 0,
     consultSubmits: 0,
     favorites: getFavoriteIds().length,
     consults: leads.length,
-    shares: 0,
-    favoritesPageOpens: 0,
     errors: errorEvents.length,
   };
 
@@ -375,22 +350,10 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
     if (event.type === "detail_open") totals.details += 1;
     if (event.type === "messenger_click" || event.type === "contact_entry_click") totals.messenger += 1;
     if (event.type === "contact_entry_click") totals.contactEntries += 1;
-    if (event.type === "consult_form_open") totals.consultOpens += 1;
-    if (event.type === "consult_form_start") totals.consultStarts += 1;
-    if (event.type === "consult_form_abandon") totals.consultAbandons += 1;
     if (event.type === "consult_submit") totals.consultSubmits += 1;
-    if (event.type === "share_copy") totals.shares += 1;
-    if (event.type === "size_select") totals.sizeSelects += 1;
-    if (event.type === "favorite_add") totals.favoriteAdds += 1;
-    if (event.type === "favorite_remove") totals.favoriteRemoves += 1;
     if (event.type === "category_results_view") totals.categoryResultViews += 1;
     if (event.type === "category_click") totals.categoryClicks += 1;
     if (event.type === "tag_click") totals.tagClicks += 1;
-    if (event.type === "favorites_page_open") totals.favoritesPageOpens += 1;
-    if (event.type === "search_suggestion_click") {
-      totals.searchSuggestionClicks += 1;
-      if (event.query) bumpCounter(searches, event.query.toLowerCase(), event.query);
-    }
     if (event.type === "search_zero_result") {
       totals.zeroResultSearches += 1;
       if (event.query) bumpCounter(zeroSearches, event.query.toLowerCase(), event.query);
@@ -422,8 +385,6 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
       stat.detail += 1;
     } else if (event.type === "messenger_click" || event.type === "contact_entry_click") {
       stat.messenger += 1;
-    } else if (event.type === "favorite_add") {
-      stat.favorite += 1;
     }
 
     if (snap.category) bumpOnce(categories, categorySeen, snap.category, snap.category, demandWeight);
@@ -473,22 +434,14 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
 
   const recentEventTypes = new Set([
     "search_submit",
-    "search_suggestion_click",
+    "search_results_view",
     "detail_open",
-    "size_select",
     "messenger_click",
     "contact_entry_click",
-    "consult_form_open",
-    "consult_form_start",
-    "consult_form_abandon",
     "consult_submit",
     "search_zero_result",
-    "favorite_add",
-    "favorite_remove",
-    "share_copy",
     "category_click",
     "tag_click",
-    "favorites_page_open",
   ]);
 
   return {

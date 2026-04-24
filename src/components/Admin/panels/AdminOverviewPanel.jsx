@@ -164,7 +164,7 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
       "Liên hệ": 0,
       "Tìm kiếm": 0,
       "Lead": 0,
-      "Lỗi": 0,
+      "0 kết quả": 0,
       total: 0,
     };
     rows.push(row);
@@ -181,7 +181,7 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
     if (event.type === "detail_open") row["Xem mẫu"] += 1;
     if (event.type === "messenger_click" || event.type === "contact_entry_click") row["Liên hệ"] += 1;
     if (event.type === "search_submit") row["Tìm kiếm"] += 1;
-    if (event.type === "js_error" || event.type === "react_error" || event.type === "unhandled_rejection" || event.type === "resource_error") row["Lỗi"] += 1;
+    if (event.type === "search_zero_result") row["0 kết quả"] += 1;
   });
 
   leads.forEach((lead) => {
@@ -400,13 +400,15 @@ function buildHourHeat(events = []) {
   const usefulTypes = new Set([
     "page_view",
     "search_submit",
+    "search_results_view",
     "search_zero_result",
+    "category_results_view",
     "detail_open",
     "messenger_click",
     "contact_entry_click",
     "consult_submit",
-    "consult_form_open",
-    "consult_form_start",
+    "category_click",
+    "tag_click",
   ]);
   events.forEach((event) => {
     const ts = timestampOf(event.ts, 0);
@@ -1124,8 +1126,8 @@ export default function AdminOverviewPanel({ onNavigate }) {
   const prevSearches = countEvents(events, periodDays, (event) => event.type === "search_submit", periodDays);
   const currentLeads = countLeads(leads, periodDays);
   const prevLeads = countLeads(leads, periodDays, periodDays);
-  const currentErrors = countEvents(events, periodDays, (event) => event.type === "js_error" || event.type === "react_error" || event.type === "unhandled_rejection" || event.type === "resource_error");
-  const prevErrors = countEvents(events, periodDays, (event) => event.type === "js_error" || event.type === "react_error" || event.type === "unhandled_rejection" || event.type === "resource_error", periodDays);
+  const currentZeroSearches = countEvents(events, periodDays, (event) => event.type === "search_zero_result");
+  const prevZeroSearches = countEvents(events, periodDays, (event) => event.type === "search_zero_result", periodDays);
 
   const tasks = makeTasks({
     health,
@@ -1218,13 +1220,13 @@ export default function AdminOverviewPanel({ onNavigate }) {
           delta={calcDelta(currentLeads, prevLeads)}
         />
         <KpiCard
-          label="Bug / crash"
-          value={currentErrors}
-          meta={`${fmt(behavior.totals?.errors)} lỗi frontend`}
+          label="Search 0 kết quả"
+          value={currentZeroSearches}
+          meta={`${fmt(behavior.totals?.zeroResultSearches)} lượt không có mẫu`}
           color={COLORS.slate}
           sparkData={trend}
-          sparkKey="Lỗi"
-          delta={calcDelta(currentErrors, prevErrors)}
+          sparkKey="0 kết quả"
+          delta={calcDelta(currentZeroSearches, prevZeroSearches)}
         />
       </div>
 
@@ -1257,7 +1259,7 @@ export default function AdminOverviewPanel({ onNavigate }) {
                   <Area type="monotone" dataKey="Liên hệ" stroke={COLORS.rose} strokeWidth={2.5} fill="url(#contactArea)" dot={false} isAnimationActive={false} />
                   <Area type="monotone" dataKey="Lead" stroke={COLORS.emerald} strokeWidth={2} fill="transparent" dot={false} isAnimationActive={false} />
                   <Area type="monotone" dataKey="Tìm kiếm" stroke={COLORS.amber} strokeWidth={2} fill="transparent" dot={false} isAnimationActive={false} />
-                  <Area type="monotone" dataKey="Lỗi" stroke={COLORS.slate} strokeWidth={2} fill="transparent" dot={false} isAnimationActive={false} />
+                  <Area type="monotone" dataKey="0 kết quả" stroke={COLORS.slate} strokeWidth={2} fill="transparent" dot={false} isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>

@@ -81,25 +81,16 @@ const EVENT_LABELS = {
   session_start: "Bắt đầu phiên",
   page_view: "Xem trang",
   search_submit: "Tìm kiếm",
-  search_suggestion_click: "Bấm gợi ý search",
   search_results_view: "Xem kết quả",
   search_zero_result: "Search 0 kết quả",
   category_results_view: "Xem danh mục",
   product_impression: "Hiển thị mẫu",
   detail_open: "Mở detail",
-  size_select: "Chọn size",
   messenger_click: "Liên hệ",
   contact_entry_click: "Bấm liên hệ chung",
-  favorite_add: "Yêu thích",
-  favorite_remove: "Bỏ yêu thích",
-  consult_form_open: "Mở form tư vấn",
-  consult_form_start: "Bắt đầu nhập form",
-  consult_form_abandon: "Bỏ form tư vấn",
   consult_submit: "Gửi tư vấn",
   category_click: "Bấm danh mục",
   tag_click: "Bấm tag",
-  favorites_page_open: "Mở yêu thích",
-  share_copy: "Copy link",
 };
 
 const fmt = new Intl.NumberFormat("vi-VN");
@@ -209,9 +200,8 @@ function buildMix(summary, periodEvents = [], periodLeads = []) {
   const details = Number(totals.details || 0);
   const contacts = Number(totals.messenger || 0);
   const searches = Number(totals.searches || totals.searchSubmits || 0);
-  const favorites = Number(totals.favoriteAdds || 0);
   const consults = Number(totals.consults || periodLeads.length || 0);
-  const shares = Number(totals.shares || 0);
+  const zeroSearches = Number(totals.zeroResultSearches || 0);
 
   return [
     { name: "Vào web", value: pageViews, color: COLORS.cyan },
@@ -219,9 +209,8 @@ function buildMix(summary, periodEvents = [], periodLeads = []) {
     { name: "Mở detail", value: details, color: COLORS.blue },
     { name: "Liên hệ", value: contacts, color: COLORS.rose },
     { name: "Tìm kiếm", value: searches, color: COLORS.amber },
-    { name: "Yêu thích", value: favorites, color: COLORS.violet },
+    { name: "Search 0 kết quả", value: zeroSearches, color: COLORS.violet },
     { name: "Tư vấn", value: consults, color: COLORS.emerald },
-    { name: "Copy link", value: shares, color: COLORS.blue },
   ].filter((item) => item.value > 0);
 }
 
@@ -255,14 +244,6 @@ function buildActionInsights(summary = {}, sourceRows = [], campaignRows = []) {
       tone: "rose",
       title: `Tăng CTA cho ${lowContact.name}`,
       detail: `${format(lowContact.detail)} lượt mở detail nhưng chỉ ${formatPercent(lowContact.contactRate)} liên hệ. Kiểm tra giá, size, mô tả và nút Messenger.`,
-    });
-  }
-
-  if (totals.consultAbandons > 0) {
-    insights.push({
-      tone: "violet",
-      title: "Form tư vấn đang bị bỏ ngang",
-      detail: `${format(totals.consultAbandons)} lượt bỏ form, tỷ lệ ${rate(totals.consultAbandons, Math.max(totals.consultStarts, 1))} từ người đã nhập. Nên rút gọn field hoặc đẩy Messenger rõ hơn.`,
     });
   }
 
@@ -337,15 +318,6 @@ function buildFunnelBottleneck(summary = {}) {
       ready: Number(totals.searches || 0) >= 3 && Number(totals.zeroResultSearches || 0) > 0,
       detail: `${rate(totals.zeroResultSearches, Math.max(totals.searches, 1))} lượt search không ra kết quả.`,
       action: "Bổ sung tag/tên mẫu theo từ khóa khách đang tìm.",
-    },
-    {
-      key: "form",
-      label: "Form tư vấn bị bỏ ngang",
-      tone: "rose",
-      rate: 100 - percentNumber(totals.consultAbandons, Math.max(totals.consultStarts, 1)),
-      ready: Number(totals.consultStarts || 0) >= 2 && Number(totals.consultAbandons || 0) > 0,
-      detail: `${rate(totals.consultAbandons, Math.max(totals.consultStarts, 1))} bỏ form từ người đã bắt đầu nhập.`,
-      action: "Rút field, giữ form ngắn và đặt Messenger là đường chốt chính.",
     },
   ];
 
@@ -627,13 +599,15 @@ function buildHourly(events = []) {
   const usefulTypes = new Set([
     "page_view",
     "search_submit",
+    "search_results_view",
     "search_zero_result",
+    "category_results_view",
     "detail_open",
     "messenger_click",
     "contact_entry_click",
-    "consult_form_open",
-    "consult_form_start",
     "consult_submit",
+    "category_click",
+    "tag_click",
   ]);
   events.forEach((event) => {
     const ts = timestampOf(event.ts, 0);
@@ -825,15 +799,8 @@ function buildAttributionRows(events = [], leads = [], mode = "source", limit = 
 const PRODUCT_SIGNAL_TYPES = new Set([
   "product_impression",
   "detail_open",
-  "size_select",
-  "favorite_add",
-  "favorite_remove",
   "messenger_click",
-  "consult_form_open",
-  "consult_form_start",
-  "consult_form_abandon",
   "consult_submit",
-  "share_copy",
 ]);
 
 function hasProductIdentity(event = {}) {
@@ -1704,20 +1671,17 @@ export default function AnalyticsPanel() {
         </Section>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-8">
+      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-5">
         <MetricCard label="Event trong kỳ" value={totalInPeriod} meta={`${periodDays} ngày gần nhất`} tone="blue" />
         <MetricCard label="Lượt vào web" value={periodSummary.totals.pageViews} meta={`${format(periodSummary.totals.sessions)} session trong kỳ`} tone="neutral" />
         <MetricCard label="Hiển thị mẫu" value={periodSummary.totals.impressions} meta={`${rate(periodSummary.totals.impressions, Math.max(periodSummary.totals.pageViews, 1))} từ vào web`} tone="neutral" />
         <MetricCard label="Mở detail" value={periodSummary.totals.details} meta="Lượt xem chi tiết sản phẩm" tone="violet" />
         <MetricCard label="Liên hệ" value={periodSummary.totals.messenger} meta={`${rate(periodSummary.totals.messenger, periodSummary.totals.details)} từ detail`} tone="rose" />
-        <MetricCard label="Tìm kiếm" value={periodSummary.totals.searches} meta={`${format(periodSummary.totals.searchSuggestionClicks)} bấm gợi ý`} tone="amber" />
+        <MetricCard label="Tìm kiếm" value={periodSummary.totals.searches} meta={`${format(periodSummary.totals.searchResultViews)} lượt xem kết quả`} tone="amber" />
         <MetricCard label="Search 0 kết quả" value={periodSummary.totals.zeroResultSearches} meta={`${rate(periodSummary.totals.zeroResultSearches, Math.max(periodSummary.totals.searches, 1))} trên search`} tone="amber" />
-        <MetricCard label="Chọn size" value={periodSummary.totals.sizeSelects} meta="Nhu cầu size khách đang cân nhắc" tone="neutral" />
-        <MetricCard label="Yêu thích" value={periodSummary.totals.favoriteAdds} meta={`${format(periodSummary.totals.favoriteRemoves)} lượt bỏ yêu thích`} tone="violet" />
-        <MetricCard label="Mở form tư vấn" value={periodSummary.totals.consultOpens} meta={`${rate(periodSummary.totals.consultStarts, Math.max(periodSummary.totals.consultOpens, 1))} bắt đầu nhập`} tone="violet" />
-        <MetricCard label="Bỏ form" value={periodSummary.totals.consultAbandons} meta={`${rate(periodSummary.totals.consultAbandons, Math.max(periodSummary.totals.consultStarts, 1))} từ đã nhập`} tone="rose" />
+        <MetricCard label="Xem danh mục" value={periodSummary.totals.categoryResultViews} meta={`${format(periodSummary.totals.categoryClicks)} bấm danh mục`} tone="neutral" />
+        <MetricCard label="Bấm tag" value={periodSummary.totals.tagClicks} meta="Tín hiệu nhu cầu theo tag" tone="violet" />
         <MetricCard label="Lead tư vấn" value={periodSummary.totals.consults} meta={`${rate(periodSummary.totals.consults, Math.max(periodSummary.totals.messenger, 1))} từ liên hệ`} tone="emerald" />
-        <MetricCard label="Copy link" value={periodSummary.totals.shares} meta={`${format(periodSummary.totals.favoritesPageOpens)} lượt mở yêu thích`} tone="blue" />
       </div>
 
       <Section title="Gợi ý hành động" description="Ưu tiên việc nên làm từ dữ liệu tracking trong kỳ đang chọn." compact>

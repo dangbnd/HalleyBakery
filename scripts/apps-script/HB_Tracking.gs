@@ -11,34 +11,22 @@
 
 var HB_TRACKING_EVENTS_SHEET_ = "Events";
 var HB_TRACKING_CONSULTS_SHEET_ = "Consults";
+var HB_TRACKING_PRODUCT_IMPRESSION_LIST_LIMIT_ = 6;
 
 var HB_TRACKING_ALLOWED_EVENT_TYPES_ = {
   session_start: true,
   page_view: true,
   search_submit: true,
-  search_suggestion_click: true,
   search_results_view: true,
   search_zero_result: true,
   category_results_view: true,
   detail_open: true,
   product_impression: true,
-  size_select: true,
-  favorite_add: true,
-  favorite_remove: true,
   messenger_click: true,
   contact_entry_click: true,
-  consult_form_open: true,
-  consult_form_start: true,
-  consult_form_abandon: true,
   consult_submit: true,
   category_click: true,
   tag_click: true,
-  favorites_page_open: true,
-  share_copy: true,
-  resource_error: true,
-  js_error: true,
-  react_error: true,
-  unhandled_rejection: true,
 };
 
 var HB_TRACKING_EVENT_HEADERS_ = [
@@ -274,11 +262,50 @@ function HB_trackingValue_(row, header) {
   return "";
 }
 
+function HB_trackingRecentIdSet_(sheet, headers, limit) {
+  var ids = {};
+  if (!sheet) return ids;
+
+  var idCol = headers.indexOf("id") + 1;
+  if (idCol < 1) return ids;
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return ids;
+
+  var count = Math.min(Math.max(1, Number(limit || 3000)), lastRow - 1);
+  var start = lastRow - count + 1;
+  var values = sheet.getRange(start, idCol, count, 1).getValues();
+  values.forEach(function (row) {
+    var id = String(row[0] || "").trim();
+    if (id) ids[id] = true;
+  });
+  return ids;
+}
+
+function HB_trackingAllowVolume_(row) {
+  var type = String(HB_trackingValue_(row, "type") || "").trim();
+  if (type !== "product_impression") return true;
+
+  var pos = Number(HB_trackingValue_(row, "list_position"));
+  return !isFinite(pos) || pos <= HB_TRACKING_PRODUCT_IMPRESSION_LIST_LIMIT_;
+}
+
 function HB_trackingAppendRows_(sheet, headers, rows) {
   if (!rows.length) return 0;
+  var recentIds = HB_trackingRecentIdSet_(sheet, headers, 3000);
+  var batchIds = {};
   var filtered = rows.filter(function (row) {
     var type = String(HB_trackingValue_(row, "type") || "").trim();
-    return !!HB_TRACKING_ALLOWED_EVENT_TYPES_[type];
+    if (!HB_TRACKING_ALLOWED_EVENT_TYPES_[type]) return false;
+    if (!HB_trackingAllowVolume_(row)) return false;
+
+    var id = String(HB_trackingValue_(row, "id") || "").trim();
+    if (id) {
+      if (recentIds[id] || batchIds[id]) return false;
+      batchIds[id] = true;
+    }
+
+    return true;
   });
   if (!filtered.length) return 0;
   var values = filtered.map(function (row) {
