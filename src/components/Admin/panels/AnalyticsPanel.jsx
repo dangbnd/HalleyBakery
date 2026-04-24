@@ -123,6 +123,12 @@ function formatPercent(value = 0) {
   return `${Math.round(Number(value || 0) * 100)}%`;
 }
 
+function percentNumber(part = 0, total = 0) {
+  const p = Number(part || 0);
+  const t = Number(total || 0);
+  return t > 0 ? (p / t) * 100 : 0;
+}
+
 function startOfDay(ts = Date.now()) {
   const d = new Date(ts);
   d.setHours(0, 0, 0, 0);
@@ -283,6 +289,293 @@ function buildActionInsights(summary = {}, sourceRows = [], campaignRows = []) {
   }
 
   return insights.slice(0, 4);
+}
+
+function rowName(row = {}, fallback = "Chưa rõ") {
+  return String(row.name || row.label || row.key || row.product_name || row.pid || fallback).trim() || fallback;
+}
+
+function buildFunnelBottleneck(summary = {}) {
+  const totals = summary.totals || {};
+  const checks = [
+    {
+      key: "listing",
+      label: "Ảnh/list chưa kéo mở detail",
+      tone: "amber",
+      rate: percentNumber(totals.details, totals.impressions),
+      ready: Number(totals.impressions || 0) >= 10,
+      detail: `${rate(totals.details, totals.impressions)} mở detail từ hiển thị mẫu.`,
+      action: "Đổi ảnh đại diện, tên mẫu, đưa mẫu mạnh hơn lên đầu list.",
+    },
+    {
+      key: "detail",
+      label: "Detail chưa ra liên hệ",
+      tone: "rose",
+      rate: percentNumber(totals.messenger, totals.details),
+      ready: Number(totals.details || 0) >= 5,
+      detail: `${rate(totals.messenger, totals.details)} liên hệ từ lượt mở detail.`,
+      action: "Làm rõ giá, size, mô tả, feedback và nút Messenger trên detail.",
+    },
+    {
+      key: "lead",
+      label: "Liên hệ chưa thành lead",
+      tone: "violet",
+      rate: percentNumber(totals.consults, totals.messenger),
+      ready: Number(totals.messenger || 0) >= 3,
+      detail: `${rate(totals.consults, totals.messenger)} lead từ người đã liên hệ.`,
+      action: "Chuẩn hóa kịch bản tư vấn, hỏi ngày cần bánh và chốt mẫu nhanh hơn.",
+    },
+    {
+      key: "search",
+      label: "Khách tìm nhưng thiếu kết quả",
+      tone: "amber",
+      rate: 100 - percentNumber(totals.zeroResultSearches, Math.max(totals.searches, 1)),
+      ready: Number(totals.searches || 0) >= 3 && Number(totals.zeroResultSearches || 0) > 0,
+      detail: `${rate(totals.zeroResultSearches, Math.max(totals.searches, 1))} lượt search không ra kết quả.`,
+      action: "Bổ sung tag/tên mẫu theo từ khóa khách đang tìm.",
+    },
+    {
+      key: "form",
+      label: "Form tư vấn bị bỏ ngang",
+      tone: "rose",
+      rate: 100 - percentNumber(totals.consultAbandons, Math.max(totals.consultStarts, 1)),
+      ready: Number(totals.consultStarts || 0) >= 2 && Number(totals.consultAbandons || 0) > 0,
+      detail: `${rate(totals.consultAbandons, Math.max(totals.consultStarts, 1))} bỏ form từ người đã bắt đầu nhập.`,
+      action: "Rút field, giữ form ngắn và đặt Messenger là đường chốt chính.",
+    },
+  ];
+
+  const candidates = checks.filter((item) => item.ready).sort((a, b) => a.rate - b.rate);
+  return candidates[0] || {
+    key: "collect",
+    label: "Cần thêm dữ liệu",
+    tone: "neutral",
+    rate: 0,
+    detail: "Chưa đủ view, search, liên hệ và lead để xác định điểm nghẽn chắc chắn.",
+    action: "Tiếp tục gom tracking khách thật trong vài ngày rồi xem lại.",
+  };
+}
+
+function buildDecisionCards(summary = {}, sourceRows = [], campaignRows = [], categoryRows = [], searchRows = [], zeroSearchRows = []) {
+  const totals = summary.totals || {};
+  const topProduct = (summary.topProducts || []).find((row) => row.consult > 0 || row.messenger > 0 || row.detail > 0) || summary.topProducts?.[0];
+  const topDemand = categoryRows[0] || searchRows[0] || zeroSearchRows[0];
+  const topSource = sourceRows.find((row) => row.leads > 0 || row.contacts > 0) || sourceRows[0];
+  const topCampaign = campaignRows.find((row) => row.leads > 0 || row.contacts > 0);
+  const bottleneck = buildFunnelBottleneck(summary);
+
+  return [
+    {
+      key: "post",
+      tone: "blue",
+      eyebrow: "Bài đăng",
+      title: topDemand ? `Đăng về ${rowName(topDemand)}` : "Đăng album mẫu đang bán",
+      metric: topDemand ? `${format(topDemand.value || topDemand.count)} tín hiệu` : `${format(totals.details)} lượt xem mẫu`,
+      detail: topDemand
+        ? "Dùng làm chủ đề album, caption, reel hoặc bài feedback vì đang có nhu cầu rõ."
+        : "Chưa có nhóm nhu cầu nổi bật, ưu tiên bài tổng hợp mẫu đẹp và feedback thật.",
+    },
+    {
+      key: "ads",
+      tone: "emerald",
+      eyebrow: "Quảng cáo",
+      title: topCampaign ? `Scale ${topCampaign.name}` : topSource ? `Test lại ${topSource.name}` : "Chạy test traffic nhỏ",
+      metric: topCampaign
+        ? `${format(topCampaign.leads)} lead`
+        : topSource
+          ? `${format(topSource.contacts)} liên hệ`
+          : `${format(totals.messenger)} liên hệ`,
+      detail: topCampaign || topSource
+        ? "Nguồn này đã có tín hiệu cuối phễu, nên ưu tiên ngân sách hoặc remake nội dung tương tự."
+        : "Chưa có nguồn thắng rõ, cần gắn UTM cho từng bài/post/ad để đọc campaign sạch hơn.",
+    },
+    {
+      key: "product",
+      tone: "violet",
+      eyebrow: "Kinh doanh",
+      title: topProduct ? `Đẩy ${rowName(topProduct)}` : "Chưa có mẫu thắng rõ",
+      metric: topProduct
+        ? `${format(topProduct.messenger)} liên hệ • ${format(topProduct.consult)} lead`
+        : `${format(totals.consults)} lead`,
+      detail: topProduct
+        ? "Đưa mẫu này lên đầu section, dùng ảnh thật/feedback và chuẩn bị size/giá để tư vấn nhanh."
+        : "Cần thêm khách thật mở detail/liên hệ để xác định mẫu nên nhập/đẩy.",
+    },
+    {
+      key: "bottleneck",
+      tone: bottleneck.tone,
+      eyebrow: "Điểm nghẽn",
+      title: bottleneck.label,
+      metric: bottleneck.detail,
+      detail: bottleneck.action,
+    },
+  ];
+}
+
+function buildPlaybookRows(summary = {}, sourceRows = [], campaignRows = [], categoryRows = [], searchRows = [], zeroSearchRows = []) {
+  const totals = summary.totals || {};
+  const topProduct = (summary.topProducts || []).find((row) => row.consult > 0 || row.messenger > 0) || summary.topProducts?.[0];
+  const hotSearch = searchRows[0];
+  const missingSearch = zeroSearchRows[0];
+  const hotCategory = categoryRows[0];
+  const source = sourceRows.find((row) => row.leads > 0 || row.contacts > 0) || sourceRows[0];
+  const campaign = campaignRows.find((row) => row.leads > 0 || row.contacts > 0);
+  const bottleneck = buildFunnelBottleneck(summary);
+
+  return [
+    {
+      key: "content",
+      title: "Nên đăng gì",
+      action: hotSearch
+        ? `Làm album/reel theo từ khóa "${rowName(hotSearch)}".`
+        : hotCategory
+          ? `Làm bộ sưu tập ${rowName(hotCategory)}.`
+          : "Đăng feedback thật + album mẫu bán chạy.",
+      evidence: hotSearch
+        ? `${format(hotSearch.value)} lượt tìm trong kỳ.`
+        : hotCategory
+          ? `${format(hotCategory.value)} tín hiệu danh mục.`
+          : `${format(totals.details)} lượt mở detail.`,
+    },
+    {
+      key: "ads",
+      title: "Nên quảng cáo gì",
+      action: topProduct ? `Chạy mẫu ${rowName(topProduct)} với ảnh thật và CTA Messenger.` : "Chạy test catalog nhỏ, mỗi ad gắn UTM riêng.",
+      evidence: topProduct
+        ? `${format(topProduct.detail)} detail, ${format(topProduct.messenger)} liên hệ, ${format(topProduct.consult)} lead.`
+        : "Chưa có sản phẩm thắng rõ.",
+    },
+    {
+      key: "business",
+      title: "Nên bổ sung/sửa gì",
+      action: missingSearch ? `Bổ sung mẫu/tag cho "${rowName(missingSearch)}".` : bottleneck.action,
+      evidence: missingSearch ? `${format(missingSearch.value)} lượt tìm 0 kết quả.` : bottleneck.detail,
+    },
+    {
+      key: "reach",
+      title: "Nên tiếp cận ở đâu",
+      action: campaign ? `Nhân nội dung từ campaign ${campaign.name}.` : source ? `Ưu tiên kênh ${source.name}.` : "Chưa scale kênh, trước mắt gắn UTM cho mọi link đăng.",
+      evidence: campaign
+        ? `${format(campaign.contacts)} liên hệ, ${format(campaign.leads)} lead.`
+        : source
+          ? `${format(source.contacts)} liên hệ, ${format(source.leads)} lead.`
+          : "Nguồn/campaign chưa đủ sạch.",
+    },
+  ];
+}
+
+function buildContentPlanRows(summary = {}, categoryRows = [], searchRows = [], zeroSearchRows = [], tagRows = []) {
+  const rows = [];
+  const topProduct = (summary.topProducts || []).find((row) => row.consult > 0 || row.messenger > 0 || row.detail > 0);
+
+  if (zeroSearchRows[0]) {
+    rows.push({
+      type: "Sản phẩm mới",
+      topic: rowName(zeroSearchRows[0]),
+      action: "Đăng bài hỏi nhu cầu hoặc thêm mẫu/tag tương ứng.",
+      evidence: `${format(zeroSearchRows[0].value)} lượt tìm 0 kết quả.`,
+    });
+  }
+  if (searchRows[0]) {
+    rows.push({
+      type: "SEO/Search",
+      topic: rowName(searchRows[0]),
+      action: "Làm album có đúng cụm từ này trong tiêu đề/caption.",
+      evidence: `${format(searchRows[0].value)} lượt tìm.`,
+    });
+  }
+  if (categoryRows[0]) {
+    rows.push({
+      type: "Bộ sưu tập",
+      topic: rowName(categoryRows[0]),
+      action: "Gom 8-12 mẫu cùng nhóm, đẩy lên home và post mạng xã hội.",
+      evidence: `${format(categoryRows[0].value)} tín hiệu danh mục.`,
+    });
+  }
+  if (topProduct) {
+    rows.push({
+      type: "Feedback",
+      topic: rowName(topProduct),
+      action: "Đăng ảnh thật/feedback, ghim CTA đặt bánh qua Messenger.",
+      evidence: `${format(topProduct.messenger)} liên hệ, ${format(topProduct.consult)} lead.`,
+    });
+  }
+  if (tagRows[0]) {
+    rows.push({
+      type: "Tag hot",
+      topic: rowName(tagRows[0]),
+      action: "Tạo carousel theo tag này, dẫn về search/tag tương ứng.",
+      evidence: `${format(tagRows[0].value)} tín hiệu tag.`,
+    });
+  }
+
+  if (!rows.length) {
+    rows.push({
+      type: "Khởi động",
+      topic: "Album mẫu đẹp + feedback",
+      action: "Đăng bài tổng hợp mẫu mạnh nhất hiện có, mỗi link gắn UTM riêng.",
+      evidence: "Chưa đủ dữ liệu để chọn chủ đề hẹp.",
+    });
+  }
+
+  return rows.slice(0, 5);
+}
+
+function buildOpportunityRows(summary = {}, zeroSearchRows = []) {
+  const products = summary.topProducts || [];
+  const rows = [];
+  const scale = products.find((row) => row.consult > 0 || row.messenger >= 2);
+  const lowOpen = products.find((row) => row.impression >= 8 && row.detailRate < 0.08);
+  const lowContact = products.find((row) => row.detail >= 3 && row.contactRate < 0.18);
+
+  if (scale) {
+    rows.push({
+      key: "scale",
+      label: "Đẩy mạnh",
+      tone: "emerald",
+      title: rowName(scale),
+      detail: `${format(scale.detail)} detail, ${format(scale.messenger)} liên hệ, ${format(scale.consult)} lead.`,
+    });
+  }
+  if (lowOpen) {
+    rows.push({
+      key: "listing",
+      label: "Sửa ảnh/tên",
+      tone: "amber",
+      title: rowName(lowOpen),
+      detail: `${format(lowOpen.impression)} hiển thị nhưng ${formatPercent(lowOpen.detailRate)} mở detail.`,
+    });
+  }
+  if (lowContact) {
+    rows.push({
+      key: "detail",
+      label: "Sửa chốt",
+      tone: "rose",
+      title: rowName(lowContact),
+      detail: `${format(lowContact.detail)} detail nhưng ${formatPercent(lowContact.contactRate)} liên hệ/detail.`,
+    });
+  }
+  if (zeroSearchRows[0]) {
+    rows.push({
+      key: "missing",
+      label: "Thiếu nhu cầu",
+      tone: "violet",
+      title: rowName(zeroSearchRows[0]),
+      detail: `${format(zeroSearchRows[0].value)} lượt tìm không có kết quả.`,
+    });
+  }
+
+  if (!rows.length) {
+    rows.push({
+      key: "watch",
+      label: "Theo dõi",
+      tone: "neutral",
+      title: "Chưa có cơ hội rõ",
+      detail: "Cần thêm impression, detail, liên hệ và lead trong kỳ đang chọn.",
+    });
+  }
+
+  return rows.slice(0, 4);
 }
 
 function buildHourly(events = []) {
@@ -542,6 +835,91 @@ function PeriodSwitch({ value, onChange }) {
         >
           {period.label}
         </button>
+      ))}
+    </div>
+  );
+}
+
+function DecisionBoard({ rows = [] }) {
+  const tones = {
+    amber: "border-amber-400/30 bg-amber-400/10",
+    blue: "border-blue-400/30 bg-blue-400/10",
+    rose: "border-rose-400/30 bg-rose-400/10",
+    violet: "border-violet-400/30 bg-violet-400/10",
+    emerald: "border-emerald-400/30 bg-emerald-400/10",
+    neutral: "border-slate-700 bg-slate-950/70",
+  };
+
+  return (
+    <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-4">
+      {rows.map((row) => (
+        <div key={row.key} className={cn("rounded-2xl border p-4", tones[row.tone] || tones.neutral)}>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{row.eyebrow}</div>
+          <div className="mt-2 text-lg font-semibold leading-6 text-white">{row.title}</div>
+          <div className="mt-3 rounded-xl border border-white/10 bg-slate-950/55 px-3 py-2 text-sm font-semibold text-slate-100">
+            {row.metric}
+          </div>
+          <div className="mt-3 text-sm leading-6 text-slate-300">{row.detail}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PlaybookGrid({ rows = [] }) {
+  return (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      {rows.map((row) => (
+        <div key={row.key} className="rounded-2xl border border-slate-800 bg-slate-950/62 p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">{row.title}</div>
+          <div className="mt-2 text-sm font-semibold leading-6 text-white">{row.action}</div>
+          <div className="mt-3 text-xs leading-5 text-slate-500">{row.evidence}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ContentPlan({ rows = [] }) {
+  return (
+    <div className="space-y-3">
+      {rows.map((row, index) => (
+        <div key={`${row.type}-${row.topic}-${index}`} className="rounded-2xl border border-slate-800 bg-slate-950/55 p-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={index === 0 ? "success" : "info"}>{row.type}</Badge>
+                <div className="truncate text-sm font-semibold text-white">{row.topic}</div>
+              </div>
+              <div className="mt-2 text-sm leading-6 text-slate-300">{row.action}</div>
+            </div>
+            <div className="shrink-0 rounded-xl border border-slate-800 bg-slate-900/75 px-3 py-2 text-xs text-slate-400 sm:max-w-[220px]">
+              {row.evidence}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OpportunityList({ rows = [] }) {
+  const variants = {
+    emerald: "success",
+    amber: "warning",
+    rose: "danger",
+    violet: "violet",
+    neutral: "neutral",
+  };
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {rows.map((row) => (
+        <div key={row.key} className="rounded-2xl border border-slate-800 bg-slate-950/55 p-3">
+          <Badge variant={variants[row.tone] || "neutral"}>{row.label}</Badge>
+          <div className="mt-2 line-clamp-2 text-sm font-semibold text-white">{row.title}</div>
+          <div className="mt-2 text-xs leading-5 text-slate-500">{row.detail}</div>
+        </div>
       ))}
     </div>
   );
@@ -1064,6 +1442,22 @@ export default function AnalyticsPanel() {
   const sourceRows = useMemo(() => buildAttributionRows(periodEvents, periodLeads, "source"), [periodEvents, periodLeads]);
   const campaignRows = useMemo(() => buildAttributionRows(periodEvents, periodLeads, "campaign"), [periodEvents, periodLeads]);
   const actionInsights = useMemo(() => buildActionInsights(periodSummary, sourceRows, campaignRows), [periodSummary, sourceRows, campaignRows]);
+  const decisionCards = useMemo(
+    () => buildDecisionCards(periodSummary, sourceRows, campaignRows, categoryRows, searchRows, zeroSearchRows),
+    [periodSummary, sourceRows, campaignRows, categoryRows, searchRows, zeroSearchRows]
+  );
+  const playbookRows = useMemo(
+    () => buildPlaybookRows(periodSummary, sourceRows, campaignRows, categoryRows, searchRows, zeroSearchRows),
+    [periodSummary, sourceRows, campaignRows, categoryRows, searchRows, zeroSearchRows]
+  );
+  const contentPlanRows = useMemo(
+    () => buildContentPlanRows(periodSummary, categoryRows, searchRows, zeroSearchRows, tagRows),
+    [periodSummary, categoryRows, searchRows, zeroSearchRows, tagRows]
+  );
+  const opportunityRows = useMemo(
+    () => buildOpportunityRows(periodSummary, zeroSearchRows),
+    [periodSummary, zeroSearchRows]
+  );
 
   useEffect(() => {
     const refresh = () => setTick((value) => value + 1);
@@ -1149,6 +1543,23 @@ export default function AnalyticsPanel() {
           </>
         }
       />
+
+      <Section title="Kết luận kinh doanh" description="Các quyết định ưu tiên từ dữ liệu tracking trong kỳ đang chọn." compact>
+        <DecisionBoard rows={decisionCards} />
+      </Section>
+
+      <Section title="Phương hướng hành động" description="Tách rõ việc cần làm cho bài đăng, quảng cáo, sản phẩm và kênh tiếp cận." compact>
+        <PlaybookGrid rows={playbookRows} />
+      </Section>
+
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+        <Section title="Kế hoạch nội dung gần nhất" description="Chủ đề nên đăng dựa trên search, danh mục, tag và mẫu có liên hệ." compact>
+          <ContentPlan rows={contentPlanRows} />
+        </Section>
+        <Section title="Cơ hội xử lý nhanh" description="Mẫu nên đẩy, mẫu cần sửa, nhu cầu thiếu hàng hoặc thiếu tag." compact>
+          <OpportunityList rows={opportunityRows} />
+        </Section>
+      </div>
 
       <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-8">
         <MetricCard label="Event trong kỳ" value={totalInPeriod} meta={`${periodDays} ngày gần nhất`} tone="blue" />

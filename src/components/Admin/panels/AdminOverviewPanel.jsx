@@ -961,6 +961,51 @@ function makeTasks({ health, sheetId, gsWebAppUrl, gsToken, driveRootId, googleC
       action: () => onNavigate?.("media", "upload"),
     });
   }
+  const hotProduct = (behavior.topProducts || []).find((row) => row.consult > 0 || row.messenger > 0);
+  const lowOpenProduct = (behavior.topProducts || []).find((row) => row.impression >= 8 && row.detailRate < 0.08);
+  const lowContactProduct = (behavior.topProducts || []).find((row) => row.detail >= 3 && row.contactRate < 0.18);
+  const topZeroSearch = behavior.topZeroSearches?.[0];
+
+  if (hotProduct) {
+    tasks.push({
+      key: "hot-product",
+      level: "Kinh doanh",
+      tone: "success",
+      title: `Đẩy mẫu ${hotProduct.name}`,
+      detail: `${fmt(hotProduct.messenger)} liên hệ, ${fmt(hotProduct.consult)} lead. Nên đưa lên đầu section và dùng làm bài/quảng cáo.`,
+      action: () => onNavigate?.("operations", "analytics"),
+    });
+  }
+  if (topZeroSearch) {
+    tasks.push({
+      key: "zero-search",
+      level: "Nhu cầu thiếu",
+      tone: "warning",
+      title: `Khách tìm "${topZeroSearch.label}" nhưng không có kết quả`,
+      detail: `${fmt(topZeroSearch.count)} lượt search 0 kết quả. Cần thêm tag, đổi tên mẫu hoặc bổ sung sản phẩm.`,
+      action: () => onNavigate?.("operations", "analytics"),
+    });
+  }
+  if (lowOpenProduct) {
+    tasks.push({
+      key: "low-open",
+      level: "Listing",
+      tone: "warning",
+      title: `Sửa ảnh/tên mẫu ${lowOpenProduct.name}`,
+      detail: `${fmt(lowOpenProduct.impression)} hiển thị nhưng chỉ ${pct(lowOpenProduct.detailRate * 100)} mở detail.`,
+      action: () => onNavigate?.("catalog", "products"),
+    });
+  }
+  if (lowContactProduct) {
+    tasks.push({
+      key: "low-contact",
+      level: "Chốt liên hệ",
+      tone: "danger",
+      title: `Detail chưa chốt: ${lowContactProduct.name}`,
+      detail: `${fmt(lowContactProduct.detail)} lượt mở detail nhưng chỉ ${pct(lowContactProduct.contactRate * 100)} liên hệ.`,
+      action: () => onNavigate?.("operations", "analytics"),
+    });
+  }
   if (health.missingImages > 0) {
     tasks.push({
       key: "images",
@@ -987,12 +1032,12 @@ function makeTasks({ health, sheetId, gsWebAppUrl, gsToken, driveRootId, googleC
       level: "Theo dõi",
       tone: "neutral",
       title: "Chưa có tín hiệu hành vi",
-      detail: "Analytics hiện vẫn đọc local browser. Cần gom event về backend/Sheet để xem toàn hệ thống.",
+      detail: "Chưa có business event trong nguồn tracking hiện tại. Cần khách thật vào web hoặc kiểm tra WebApp tracking.",
       action: () => onNavigate?.("operations", "analytics"),
     });
   }
 
-  return tasks.slice(0, 6);
+  return tasks.slice(0, 8);
 }
 
 export default function AdminOverviewPanel({ onNavigate }) {
@@ -1289,7 +1334,7 @@ export default function AdminOverviewPanel({ onNavigate }) {
             <HealthMetric label="Ảnh cần xử lý" value={health.missingImages + health.missingTags} tone="amber" />
           </div>
           <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/62 p-4 text-sm leading-6 text-slate-400">
-            Dashboard hiện đọc dữ liệu khách và audit từ trình duyệt này. Khi gom event về backend/Sheet, các biểu đồ sẽ phản ánh toàn bộ hệ thống.
+            Dashboard đang ưu tiên dữ liệu tracking từ Sheet, có cache local làm dự phòng. Các gợi ý kinh doanh sẽ rõ hơn khi lead được cập nhật trạng thái, doanh thu và lý do mất đơn.
           </div>
         </Section>
 
