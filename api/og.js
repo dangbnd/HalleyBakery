@@ -17,6 +17,8 @@ const SITE_URL = "https://halleybakery.io.vn";
 const DEFAULT_IMAGE = `${SITE_URL}/brand/logo-desktop.png`;
 const DEFAULT_TITLE = "HALLEY BAKERY - Banh sinh nhat & Banh su kien Ha Noi";
 const DEFAULT_DESC = "Dat banh sinh nhat, banh su kien theo yeu cau. Thiet ke doc dao, giao hang tan noi tai Ha Noi.";
+const FORCE_APP_PARAMS = ["hb_staff", "staff", "staff_mode", "tracking", "_app", "app"];
+const STAFF_OPT_OUT_COOKIE = "hb_tracking_opt_out_v1";
 
 /* ===== CACHE ===== */
 let cachedProducts = null;
@@ -270,12 +272,34 @@ function getIndexHtml() {
     return indexHtml;
 }
 
+function urlOf(req) {
+    try {
+        return new URL(req.url || "/", SITE_URL);
+    } catch {
+        return new URL("/", SITE_URL);
+    }
+}
+
+function hasStaffOptOutCookie(req) {
+    const cookie = String(req.headers.cookie || "");
+    return new RegExp(`(?:^|;\\s*)${STAFF_OPT_OUT_COOKIE}=1(?:;|$)`).test(cookie);
+}
+
+function shouldForceAppShell(req) {
+    const url = urlOf(req);
+    return FORCE_APP_PARAMS.some(param => url.searchParams.has(param)) || hasStaffOptOutCookie(req);
+}
+
+function shouldServeCrawlerHtml(req) {
+    const ua = req.headers["user-agent"] || "";
+    if (shouldForceAppShell(req)) return false;
+    return CRAWLERS.test(ua);
+}
+
 /* ===== HANDLER ===== */
 export default async function handler(req, res) {
-    const ua = req.headers["user-agent"] || "";
-
     // User thÃ†Â°Ã¡Â»Âng Ã¢â€ â€™ serve index.html
-    if (!CRAWLERS.test(ua)) {
+    if (!shouldServeCrawlerHtml(req)) {
         const html = getIndexHtml();
         if (html) {
             res.setHeader("Content-Type", "text/html; charset=utf-8");
