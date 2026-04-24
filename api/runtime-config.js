@@ -84,7 +84,9 @@ function parseKeyValueTable(text = "") {
     const key = normalizeCfgKey(row[0] || "");
     if (!key) continue;
     // Runtime config expects key/value in first 2 columns; ignore extra analytics columns.
-    out[key] = String(row[1] ?? "").trim();
+    if (!Object.prototype.hasOwnProperty.call(out, key)) {
+      out[key] = String(row[1] ?? "").trim();
+    }
   }
   return out;
 }

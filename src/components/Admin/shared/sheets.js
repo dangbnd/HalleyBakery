@@ -299,6 +299,7 @@ const RUNTIME_CONFIG_KEYS = [
   KEYS.SHEET_ID,
   KEYS.DRIVE_FOLDER_ID,
   KEYS.FEEDBACK_DRIVE_FOLDER_ID,
+  KEYS.FEEDBACK_IMAGES,
   KEYS.SHEET_GID_CONFIG,
   KEYS.PRODUCT_TABS,
   KEYS.SHEET_GID_PRODUCTS,
@@ -326,7 +327,7 @@ const RUNTIME_CONFIG_KEYS = [
   KEYS.ENABLE_VISITOR_TRACKING,
 ];
 
-const CONFIG_SHEET_CANDIDATES = ["Config", "config", "Cấu hình", "Cau hinh", "Settings", "URL"];
+const CONFIG_SHEET_CANDIDATES = ["URL", "Config", "config", "Cấu hình", "Cau hinh", "Settings"];
 const USER_SHEET_CANDIDATES = ["Users", "User", "user", "Nguoi dung", "Người dùng"];
 
 function normalizeCfgKey(value = "") {
@@ -379,9 +380,16 @@ function isLikelyConfigHeaderIssue(error = null) {
   return /header|column|field|key|value|range|invalid row/i.test(msg);
 }
 
+async function getConfigSheetCandidates() {
+  const sheetId = s(getConfig(KEYS.SHEET_ID, ""));
+  const gid = s(getConfig(KEYS.SHEET_GID_CONFIG, ""));
+  const configuredTitle = await resolveSheetTitleByGid({ sheetId, gid }).catch(() => "");
+  return uniq([configuredTitle, ...CONFIG_SHEET_CANDIDATES]);
+}
+
 async function resolveConfigSheet(options = {}) {
   let lastError = null;
-  for (const sheetName of CONFIG_SHEET_CANDIDATES) {
+  for (const sheetName of await getConfigSheetCandidates()) {
     try {
       const data = await listSheet(sheetName, options);
       if (data?.ok) return { sheetName, rows: pickArray(data, ["rows", "data", "items"]) };
@@ -402,7 +410,7 @@ async function upsertConfigEntries(entries = [], { authToken = "", webappUrl = "
   const byKey = new Map();
   for (const row of Array.isArray(rows) ? rows : []) {
     const cfgKey = extractRowConfigKey(row);
-    if (cfgKey) byKey.set(cfgKey, row);
+    if (cfgKey && !byKey.has(cfgKey)) byKey.set(cfgKey, row);
   }
 
   let inserted = 0;

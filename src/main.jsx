@@ -26,9 +26,12 @@ function Root() {
     (async () => {
       const isAdminDomain = window.location.hostname.startsWith("admin.");
       const timeoutMs = isAdminDomain ? 6000 : 400;
+      const params = new URLSearchParams(window.location.search || "");
+      const forceConfigSync =
+        !isAdminDomain || params.has("hb_config_sync") || params.has("hb_refresh_config");
       try {
         await Promise.race([
-          syncConfigFromRemote(),
+          syncConfigFromRemote({ force: forceConfigSync }),
           new Promise((resolve) => setTimeout(resolve, timeoutMs)),
         ]);
       } catch {}
