@@ -14,6 +14,7 @@ import {
 import { LS, readLS } from "../../../utils.js";
 import {
   CUSTOMER_BEHAVIOR_EVENT,
+  filterBusinessEvents,
   clearCustomerBehavior,
   readConsultLeads,
   readCustomerEvents,
@@ -76,11 +77,15 @@ const CATEGORY_FALLBACK_LABELS = {
 };
 
 const EVENT_LABELS = {
+  search_results_view: "Xem kết quả",
+  search_zero_result: "Search 0 kết quả",
+  category_results_view: "Xem danh mục",
+  product_impression: "Hiển thị mẫu",
   detail_open: "Mở detail",
   messenger_click: "Liên hệ",
   search_submit: "Tìm kiếm",
-  search_query: "Tìm kiếm",
   favorite_add: "Yêu thích",
+  share_copy: "Copy link",
   consult_submit: "Tư vấn",
 };
 
@@ -99,6 +104,10 @@ function format(value = 0) {
 function rate(part = 0, total = 0) {
   if (!total) return "0%";
   return `${Math.round((Number(part || 0) / Number(total || 0)) * 100)}%`;
+}
+
+function formatPercent(value = 0) {
+  return `${Math.round(Number(value || 0) * 100)}%`;
 }
 
 function startOfDay(ts = Date.now()) {
@@ -135,12 +144,12 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
       key,
       label: dayLabel(ts),
       "Vào web": 0,
+      "Hiển thị mẫu": 0,
       "Mở detail": 0,
       "Liên hệ": 0,
       "Tìm kiếm": 0,
-      "Yêu thích": 0,
       "Tư vấn": 0,
-      "Lỗi": 0,
+      "0 kết quả": 0,
       total: 0,
     };
     rows.push(row);
@@ -154,11 +163,11 @@ function buildTrend(events = [], leads = [], periodDays = 14) {
     if (!row) return;
     row.total += 1;
     if (event.type === "page_view") row["Vào web"] += 1;
+    if (event.type === "product_impression") row["Hiển thị mẫu"] += 1;
     if (event.type === "detail_open") row["Mở detail"] += 1;
-    if (event.type === "messenger_click") row["Liên hệ"] += 1;
-    if (event.type === "search_submit" || event.type === "search_query") row["Tìm kiếm"] += 1;
-    if (event.type === "favorite_add") row["Yêu thích"] += 1;
-    if (event.type === "js_error" || event.type === "react_error" || event.type === "unhandled_rejection" || event.type === "resource_error") row["Lỗi"] += 1;
+    if (event.type === "messenger_click" || event.type === "contact_entry_click") row["Liên hệ"] += 1;
+    if (event.type === "search_results_view") row["Tìm kiếm"] += 1;
+    if (event.type === "search_zero_result") row["0 kết quả"] += 1;
   });
 
   leads.forEach((lead) => {
@@ -179,24 +188,23 @@ function countInWindow(rows = [], periodDays = 14) {
 
 function buildMix(summary, periodEvents = [], periodLeads = []) {
   const pageViews = periodEvents.filter((event) => event.type === "page_view").length;
+  const impressions = periodEvents.filter((event) => event.type === "product_impression").length;
   const details = periodEvents.filter((event) => event.type === "detail_open").length;
-  const contacts = periodEvents.filter((event) => event.type === "messenger_click").length;
-  const searches = periodEvents.filter((event) => event.type === "search_submit" || event.type === "search_query").length;
+  const contacts = periodEvents.filter((event) => event.type === "messenger_click" || event.type === "contact_entry_click").length;
+  const searches = periodEvents.filter((event) => event.type === "search_results_view").length;
   const favorites = summary.totals.favorites || periodEvents.filter((event) => event.type === "favorite_add").length;
   const consults = periodLeads.length;
-  const errors = periodEvents.filter((event) => event.type === "js_error" || event.type === "react_error" || event.type === "unhandled_rejection" || event.type === "resource_error").length;
-  const known = pageViews + details + contacts + searches + errors + periodEvents.filter((event) => event.type === "favorite_add").length + periodEvents.filter((event) => event.type === "consult_submit").length;
-  const other = Math.max(0, periodEvents.length - known);
+  const shares = periodEvents.filter((event) => event.type === "share_copy").length;
 
   return [
     { name: "Vào web", value: pageViews, color: COLORS.cyan },
+    { name: "Hiển thị mẫu", value: impressions, color: COLORS.slate },
     { name: "Mở detail", value: details, color: COLORS.blue },
     { name: "Liên hệ", value: contacts, color: COLORS.rose },
     { name: "Tìm kiếm", value: searches, color: COLORS.amber },
     { name: "Yêu thích", value: favorites, color: COLORS.violet },
     { name: "Tư vấn", value: consults, color: COLORS.emerald },
-    { name: "Lỗi", value: errors, color: COLORS.slate },
-    { name: "Khác", value: other, color: COLORS.slate },
+    { name: "Copy link", value: shares, color: COLORS.blue },
   ].filter((item) => item.value > 0);
 }
 
@@ -205,6 +213,7 @@ function buildHourly(events = []) {
   events.forEach((event) => {
     const ts = Number(event.ts || 0);
     if (!isInWindow(ts, 30)) return;
+    if (!["page_view", "search_results_view", "detail_open", "messenger_click", "contact_entry_click", "consult_submit"].includes(event.type)) return;
     rows[new Date(ts).getHours()].value += 1;
   });
   const max = Math.max(1, ...rows.map((row) => row.value));
@@ -302,19 +311,80 @@ function normalizeRankRows(rows = [], limit = 8, labelMap = null) {
   }));
 }
 
+function attributionSourceOf(item = {}) {
+  return readField(item, ["last_touch_source", "first_touch_source", "source"]) || "direct";
+}
+
+function attributionCampaignOf(item = {}) {
+  return readField(item, ["last_touch_campaign", "first_touch_campaign"]) || "Không campaign";
+}
+
+function attributionLabelOf(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "Direct";
+  const labels = {
+    direct: "Direct",
+    facebook: "Facebook",
+    instagram: "Instagram",
+    google: "Google",
+    tiktok: "TikTok",
+    zalo: "Zalo",
+    website: "Website",
+    test: "Test",
+  };
+  return labels[raw.toLowerCase()] || humanizeKey(raw);
+}
+
+function buildAttributionRows(events = [], leads = [], mode = "source", limit = 8) {
+  const rows = new Map();
+
+  const ensure = (key, name) => {
+    const clean = String(key || "").trim();
+    if (!clean) return null;
+    const current = rows.get(clean) || { key: clean, name, signal: 0, contacts: 0, leads: 0 };
+    rows.set(clean, current);
+    return current;
+  };
+
+  events.forEach((event) => {
+    const key = mode === "campaign" ? attributionCampaignOf(event) : attributionSourceOf(event);
+    const row = ensure(key, mode === "campaign" ? key : attributionLabelOf(key));
+    if (!row) return;
+
+    if (event.type === "page_view") row.signal += 1;
+    if (event.type === "detail_open") row.signal += 2;
+    if (event.type === "messenger_click" || event.type === "contact_entry_click") {
+      row.signal += 4;
+      row.contacts += 1;
+    }
+    if (event.type === "consult_submit") row.signal += 6;
+  });
+
+  leads.forEach((lead) => {
+    const key = mode === "campaign" ? attributionCampaignOf(lead) : attributionSourceOf(lead);
+    const row = ensure(key, mode === "campaign" ? key : attributionLabelOf(key));
+    if (!row) return;
+    row.leads += 1;
+  });
+
+  return [...rows.values()]
+    .sort((a, b) => b.leads - a.leads || b.contacts - a.contacts || b.signal - a.signal || a.name.localeCompare(b.name, "vi"))
+    .slice(0, limit);
+}
+
 function buildFunnel(summary) {
   const pageViews = Number(summary.totals.pageViews || 0);
+  const impressions = Number(summary.totals.impressions || 0);
   const views = Number(summary.totals.details || 0);
   const contacts = Number(summary.totals.messenger || 0);
   const leads = Number(summary.totals.consults || 0);
-  const searches = Number(summary.totals.searches || 0);
-  const max = Math.max(1, pageViews, views, contacts, leads, searches);
+  const max = Math.max(1, pageViews, impressions, views, contacts, leads);
 
   return [
     { label: "Vào web", value: pageViews, meta: "phiên/page view", color: COLORS.cyan, width: (pageViews / max) * 100 },
-    { label: "Mở detail", value: views, meta: `${rate(views, pageViews)} từ vào web`, color: COLORS.blue, width: (views / max) * 100 },
-    { label: "Tìm kiếm", value: searches, meta: `${rate(searches, views)} so với detail`, color: COLORS.amber, width: (searches / max) * 100 },
-    { label: "Liên hệ", value: contacts, meta: `${rate(contacts, views)} chuyển sang chat`, color: COLORS.rose, width: (contacts / max) * 100 },
+    { label: "Hiển thị mẫu", value: impressions, meta: `${rate(impressions, pageViews)} từ vào web`, color: COLORS.slate, width: (impressions / max) * 100 },
+    { label: "Mở detail", value: views, meta: `${rate(views, impressions)} từ hiển thị`, color: COLORS.blue, width: (views / max) * 100 },
+    { label: "Liên hệ", value: contacts, meta: `${rate(contacts, views)} từ detail`, color: COLORS.rose, width: (contacts / max) * 100 },
     { label: "Tư vấn", value: leads, meta: `${rate(leads, Math.max(contacts, 1))} từ liên hệ`, color: COLORS.emerald, width: (leads / max) * 100 },
   ];
 }
@@ -424,6 +494,31 @@ function RankList({ rows = [], empty = "Chưa có tín hiệu" }) {
               className="h-full rounded-full bg-gradient-to-r from-blue-400 via-cyan-300 to-emerald-300"
               style={{ width: `${Math.max(4, (row.value / max) * 100)}%` }}
             />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AttributionList({ rows = [], empty = "Chưa có nguồn nổi bật" }) {
+  if (!rows.length) return <Empty className="!py-10" title={empty} hint="Cần thêm event và lead mới để xếp hạng." />;
+
+  return (
+    <div className="space-y-3">
+      {rows.map((row, index) => (
+        <div key={`${row.key}-${index}`} className="rounded-2xl border border-slate-800 bg-slate-950/55 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="truncate font-medium text-white">{row.name}</div>
+              <div className="mt-1 text-xs text-slate-500">
+                {format(row.contacts)} liên hệ • {format(row.signal)} tín hiệu
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-lg font-semibold text-emerald-300">{format(row.leads)}</div>
+              <div className="text-[10px] uppercase tracking-[0.14em] text-slate-600">lead</div>
+            </div>
           </div>
         </div>
       ))}
@@ -606,7 +701,7 @@ function ActivityRhythm({ rows = [] }) {
 
 function ProductTable({ rows = [], categoryLabels = new Map() }) {
   return (
-    <Section title="Mẫu đang được quan tâm" description="Xếp theo điểm quan tâm từ detail, liên hệ, yêu thích và tư vấn." compact className="min-w-0">
+    <Section title="Mẫu đang được quan tâm" description="Ưu tiên theo impression, detail, liên hệ và lead thực tế." compact className="min-w-0">
       {!rows.length ? (
         <Empty className="!py-10" title="Chưa có tín hiệu sản phẩm" hint="Khi khách mở detail, bấm Messenger hoặc gửi tư vấn, danh sách này sẽ được cập nhật." />
       ) : (
@@ -629,7 +724,11 @@ function ProductTable({ rows = [], categoryLabels = new Map() }) {
                   <div className="text-[10px] uppercase tracking-[0.14em] text-slate-600">điểm</div>
                 </div>
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="mt-3 grid grid-cols-4 gap-2 text-center text-xs">
+                <div className="rounded-xl border border-slate-800 bg-slate-900/65 px-2 py-2">
+                  <div className="font-semibold text-white">{format(row.impression)}</div>
+                  <div className="mt-0.5 text-slate-500">Hiển thị</div>
+                </div>
                 <div className="rounded-xl border border-slate-800 bg-slate-900/65 px-2 py-2">
                   <div className="font-semibold text-white">{format(row.detail)}</div>
                   <div className="mt-0.5 text-slate-500">Detail</div>
@@ -643,17 +742,25 @@ function ProductTable({ rows = [], categoryLabels = new Map() }) {
                   <div className="mt-0.5 text-slate-500">Tư vấn</div>
                 </div>
               </div>
+              <div className="mt-2 grid grid-cols-3 gap-2 text-center text-[11px] text-slate-400">
+                <div>{formatPercent(row.detailRate)} mở/hiển thị</div>
+                <div>{formatPercent(row.contactRate)} chat/detail</div>
+                <div>{formatPercent(row.leadRate)} lead/chat</div>
+              </div>
             </div>
           ))}
         </div>
         <div className="hidden max-w-full overflow-x-auto md:block">
-          <table className="w-full min-w-[720px] text-sm">
+          <table className="w-full min-w-[920px] text-sm">
             <thead>
               <tr className="border-b border-slate-800 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                 <th className="py-3 pr-3">Mẫu</th>
+                <th className="py-3 text-right">Hiển thị</th>
                 <th className="py-3 text-right">Detail</th>
                 <th className="py-3 text-right">Liên hệ</th>
                 <th className="py-3 text-right">Tư vấn</th>
+                <th className="py-3 text-right">Mở/hiển thị</th>
+                <th className="py-3 text-right">Chat/detail</th>
                 <th className="py-3 text-right">Điểm</th>
               </tr>
             </thead>
@@ -675,9 +782,12 @@ function ProductTable({ rows = [], categoryLabels = new Map() }) {
                       </div>
                     </div>
                   </td>
+                  <td className="py-3 text-right text-slate-300">{format(row.impression)}</td>
                   <td className="py-3 text-right text-slate-300">{format(row.detail)}</td>
                   <td className="py-3 text-right text-slate-300">{format(row.messenger)}</td>
                   <td className="py-3 text-right text-slate-300">{format(row.consult)}</td>
+                  <td className="py-3 text-right text-slate-300">{formatPercent(row.detailRate)}</td>
+                  <td className="py-3 text-right text-slate-300">{formatPercent(row.contactRate)}</td>
                   <td className="py-3 text-right font-semibold text-rose-300">{format(row.score)}</td>
                 </tr>
               ))}
@@ -800,7 +910,8 @@ export default function AnalyticsPanel() {
   }, [tick]);
   const localEvents = useMemo(() => readCustomerEvents(), [tick]);
   const localLeads = useMemo(() => readConsultLeads(), [tick]);
-  const events = useMemo(() => mergeEvents(remote.events || [], localEvents), [remote.events, localEvents]);
+  const mergedEvents = useMemo(() => mergeEvents(remote.events || [], localEvents), [remote.events, localEvents]);
+  const events = useMemo(() => filterBusinessEvents(mergedEvents), [mergedEvents]);
   const leads = useMemo(() => mergeLeads(remote.leads || [], localLeads), [remote.leads, localLeads]);
   const summary = useMemo(() => summarizeCustomerBehavior(products, { events, leads }), [products, events, leads]);
 
@@ -814,6 +925,8 @@ export default function AnalyticsPanel() {
   const searchRows = useMemo(() => normalizeRankRows(summary.topSearches), [summary.topSearches]);
   const tagRows = useMemo(() => normalizeRankRows(summary.topTags), [summary.topTags]);
   const categoryRows = useMemo(() => normalizeRankRows(summary.topCategories, 8, categoryLabels), [summary.topCategories, categoryLabels]);
+  const sourceRows = useMemo(() => buildAttributionRows(periodEvents, periodLeads, "source"), [periodEvents, periodLeads]);
+  const campaignRows = useMemo(() => buildAttributionRows(periodEvents, periodLeads, "campaign"), [periodEvents, periodLeads]);
 
   useEffect(() => {
     const refresh = () => setTick((value) => value + 1);
@@ -860,7 +973,7 @@ export default function AnalyticsPanel() {
     };
   }, []);
 
-  const totalInPeriod = countInWindow(events, periodDays) + countInWindow(leads, periodDays);
+  const totalInPeriod = periodEvents.length + periodLeads.length;
   const sourceLabel = remote.loading
     ? "Đang tải remote"
     : remote.ok
@@ -893,20 +1006,22 @@ export default function AnalyticsPanel() {
         chips={
           <>
             <Badge variant={remote.ok ? "success" : remote.loading ? "info" : "warning"}>{sourceLabel}</Badge>
-            <Badge variant="info">{format(events.length)} event</Badge>
+            <Badge variant="info">{format(events.length)} business event</Badge>
             <Badge variant="success">{format(leads.length)} lead</Badge>
             {remote.error ? <Badge variant="warning">{remote.error}</Badge> : null}
           </>
         }
       />
 
-      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-6">
+      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-8">
         <MetricCard label="Event trong kỳ" value={totalInPeriod} meta={`${periodDays} ngày gần nhất`} tone="blue" />
         <MetricCard label="Lượt vào web" value={summary.totals.pageViews} meta={`${format(summary.totals.sessions)} session đã ghi`} tone="neutral" />
+        <MetricCard label="Hiển thị mẫu" value={summary.totals.impressions} meta={`${rate(summary.totals.impressions, Math.max(summary.totals.pageViews, 1))} từ vào web`} tone="neutral" />
         <MetricCard label="Mở detail" value={summary.totals.details} meta="Lượt xem chi tiết sản phẩm" tone="violet" />
         <MetricCard label="Liên hệ" value={summary.totals.messenger} meta={`${rate(summary.totals.messenger, summary.totals.details)} từ detail`} tone="rose" />
         <MetricCard label="Tìm kiếm" value={summary.totals.searches} meta="Truy vấn search đã ghi" tone="amber" />
-        <MetricCard label="Bug/crash" value={summary.totals.errors} meta={`${format(summary.totals.resourceErrors)} lỗi tài nguyên`} tone="rose" />
+        <MetricCard label="Search 0 kết quả" value={summary.totals.zeroResultSearches} meta={`${rate(summary.totals.zeroResultSearches, Math.max(summary.totals.searches, 1))} trên search`} tone="amber" />
+        <MetricCard label="Mở form tư vấn" value={summary.totals.consultOpens} meta={`${rate(summary.totals.consultStarts, Math.max(summary.totals.consultOpens, 1))} bắt đầu nhập`} tone="violet" />
         <MetricCard label="Lead tư vấn" value={summary.totals.consults} meta={`${rate(summary.totals.consults, Math.max(summary.totals.messenger, 1))} từ liên hệ`} tone="emerald" />
       </div>
 
@@ -927,11 +1042,12 @@ export default function AnalyticsPanel() {
                   <YAxis stroke="#64748b" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} allowDecimals={false} />
                   <Tooltip content={<ChartTooltip />} />
                   <Area type="monotone" dataKey="Vào web" stroke={COLORS.cyan} strokeWidth={2.4} fill="transparent" dot={false} isAnimationActive={false} />
+                  <Area type="monotone" dataKey="Hiển thị mẫu" stroke={COLORS.slate} strokeWidth={2} fill="transparent" dot={false} isAnimationActive={false} />
                   <Area type="monotone" dataKey="Mở detail" stroke={COLORS.blue} strokeWidth={2.5} fill="url(#analyticsDetailArea)" dot={false} isAnimationActive={false} />
                   <Area type="monotone" dataKey="Liên hệ" stroke={COLORS.rose} strokeWidth={2.2} fill="transparent" dot={false} isAnimationActive={false} />
                   <Area type="monotone" dataKey="Tìm kiếm" stroke={COLORS.amber} strokeWidth={2.2} fill="transparent" dot={false} isAnimationActive={false} />
                   <Area type="monotone" dataKey="Tư vấn" stroke={COLORS.emerald} strokeWidth={2.2} fill="transparent" dot={false} isAnimationActive={false} />
-                  <Area type="monotone" dataKey="Lỗi" stroke={COLORS.slate} strokeWidth={2.2} fill="transparent" dot={false} isAnimationActive={false} />
+                  <Area type="monotone" dataKey="0 kết quả" stroke={COLORS.amber} strokeWidth={1.8} fill="transparent" dot={false} isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -987,10 +1103,19 @@ export default function AnalyticsPanel() {
         <Section title="Từ khóa được tìm nhiều" compact>
           <RankList rows={searchRows} empty="Chưa có từ khóa nổi bật" />
         </Section>
+        <Section title="Nguồn vào web" compact>
+          <AttributionList rows={sourceRows} empty="Chưa có nguồn rõ ràng" />
+        </Section>
+        <Section title="Campaign tạo lead" compact>
+          <AttributionList rows={campaignRows} empty="Chưa có campaign nổi bật" />
+        </Section>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Section title="Tag đang hot" compact>
           <RankList rows={tagRows} empty="Chưa có tag nổi bật" />
         </Section>
-        <Section title="Nhịp tương tác theo giờ" description="Giờ cao điểm và phân bổ event local trong 30 ngày." compact>
+        <Section title="Nhịp tương tác theo giờ" description="Giờ cao điểm của các event business trong 30 ngày." compact>
           <ActivityRhythm rows={hourly} />
         </Section>
       </div>

@@ -18,7 +18,6 @@ let lastPageKey = "";
 const IMPORTANT_EVENT_TYPES = new Set([
   "session_start",
   "page_view",
-  "search_query",
   "search_submit",
   "search_suggestion_click",
   "search_results_view",

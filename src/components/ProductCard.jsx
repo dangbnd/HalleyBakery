@@ -34,6 +34,16 @@ function persistSeenImpressions() {
   } catch {}
 }
 
+function shouldTrackImpression(trackingContext = {}) {
+  const pageType = String(trackingContext.pageType || "").trim().toLowerCase();
+  if (!["search", "category", "favorites"].includes(pageType)) return false;
+
+  const index = Number(trackingContext.index);
+  if (Number.isFinite(index) && index >= 12) return false;
+
+  return true;
+}
+
 function MessengerIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
@@ -121,6 +131,7 @@ export default function ProductCard({
     prefetchImage(cdn(srcBase, { w: 960, q: 62 }));
     const snap = productSnapshot(p);
     if (!snap) return;
+    if (!shouldTrackImpression(trackingContext)) return;
 
     loadSeenImpressions();
 

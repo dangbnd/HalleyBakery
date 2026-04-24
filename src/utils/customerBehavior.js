@@ -8,6 +8,30 @@ export const CUSTOMER_FAVORITES_KEY = "hb_favorite_products_v1";
 export const CUSTOMER_RECENTS_KEY = "hb_recent_products_v1";
 export const CUSTOMER_CONSULT_LEADS_KEY = "hb_consult_leads_v1";
 export const CUSTOMER_BEHAVIOR_EVENT = "hb:customer-behavior-changed";
+export const BUSINESS_EVENT_TYPES = new Set([
+  "session_start",
+  "page_view",
+  "search_submit",
+  "search_suggestion_click",
+  "search_results_view",
+  "search_zero_result",
+  "category_results_view",
+  "detail_open",
+  "product_impression",
+  "size_select",
+  "favorite_add",
+  "favorite_remove",
+  "messenger_click",
+  "contact_entry_click",
+  "consult_form_open",
+  "consult_form_start",
+  "consult_form_abandon",
+  "consult_submit",
+  "category_click",
+  "tag_click",
+  "favorites_page_open",
+  "share_copy",
+]);
 
 const MAX_EVENTS = 2000;
 const MAX_RECENTS = 32;
@@ -72,6 +96,14 @@ export function productSnapshot(product = {}) {
 export function readCustomerEvents() {
   const list = readLS(CUSTOMER_EVENT_KEY, []);
   return Array.isArray(list) ? list : [];
+}
+
+export function isBusinessEvent(event = {}) {
+  return BUSINESS_EVENT_TYPES.has(String(event?.type || "").trim());
+}
+
+export function filterBusinessEvents(events = []) {
+  return (Array.isArray(events) ? events : []).filter(isBusinessEvent);
 }
 
 export function recordCustomerEvent(type, payload = {}) {
@@ -210,11 +242,15 @@ function productStat(map, snap) {
     name: snap.name || snap.pid,
     category: snap.category || "",
     image: snap.image || "",
+    impression: 0,
     detail: 0,
     messenger: 0,
     favorite: 0,
     consult: 0,
     total: 0,
+    detailRate: 0,
+    contactRate: 0,
+    leadRate: 0,
     score: 0,
   };
   if (snap.name) cur.name = snap.name;
@@ -225,7 +261,8 @@ function productStat(map, snap) {
 }
 
 export function summarizeCustomerBehavior(products = [], source = {}) {
-  const events = Array.isArray(source.events) ? source.events : readCustomerEvents();
+  const rawEvents = Array.isArray(source.events) ? source.events : readCustomerEvents();
+  const events = filterBusinessEvents(rawEvents);
   const leads = Array.isArray(source.leads) ? source.leads : readConsultLeads();
   const catalog = new Map((products || []).map((p) => [pidOf(p), productSnapshot(p)]));
   const byProduct = new Map();
@@ -237,31 +274,32 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
     events: events.length,
     pageViews: 0,
     sessions: 0,
-    clicks: 0,
+    impressions: 0,
     details: 0,
     messenger: 0,
     searches: 0,
+    zeroResultSearches: 0,
+    consultOpens: 0,
+    consultStarts: 0,
     favorites: getFavoriteIds().length,
     consults: leads.length,
-    errors: 0,
-    resourceErrors: 0,
+    shares: 0,
   };
 
   for (const event of events) {
     if (event.type === "page_view") totals.pageViews += 1;
     if (event.type === "session_start") totals.sessions += 1;
-    if (event.type === "ui_click") totals.clicks += 1;
-    if (event.type === "js_error" || event.type === "react_error" || event.type === "unhandled_rejection") totals.errors += 1;
-    if (event.type === "resource_error") {
-      totals.errors += 1;
-      totals.resourceErrors += 1;
-    }
-
-    const snap = event.product?.pid ? { ...(catalog.get(event.product.pid) || {}), ...event.product } : null;
-    if (event.query && (event.type === "search_submit" || event.type === "search_query")) {
+    if (event.type === "product_impression") totals.impressions += 1;
+    if (event.type === "consult_form_open") totals.consultOpens += 1;
+    if (event.type === "consult_form_start") totals.consultStarts += 1;
+    if (event.type === "share_copy") totals.shares += 1;
+    if (event.type === "search_zero_result") totals.zeroResultSearches += 1;
+    if (event.type === "search_results_view" && event.query) {
       totals.searches += 1;
       bumpCounter(searches, event.query.toLowerCase(), event.query);
     }
+
+    const snap = event.product?.pid ? { ...(catalog.get(event.product.pid) || {}), ...event.product } : null;
     if (event.tag) bumpCounter(tags, event.tag.toLowerCase(), event.tag);
     if (event.category) bumpCounter(categories, event.category, event.category);
 
@@ -270,12 +308,14 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
     if (!stat) continue;
 
     stat.total += 1;
-    if (event.type === "detail_open") {
+    if (event.type === "product_impression") {
+      stat.impression += 1;
+    } else if (event.type === "detail_open") {
       stat.detail += 1;
       totals.details += 1;
-    } else if (event.type === "messenger_click") {
-      stat.messenger += 1;
+    } else if (event.type === "messenger_click" || event.type === "contact_entry_click") {
       totals.messenger += 1;
+      if (event.type === "messenger_click") stat.messenger += 1;
     } else if (event.type === "favorite_add") {
       stat.favorite += 1;
     } else if (event.type === "consult_submit") {
@@ -287,11 +327,34 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
   }
 
   for (const stat of byProduct.values()) {
-    stat.score = stat.detail * 2 + stat.messenger * 4 + stat.favorite * 2 + stat.consult * 5 + stat.total;
+    stat.detailRate = stat.impression ? stat.detail / stat.impression : 0;
+    stat.contactRate = stat.detail ? stat.messenger / stat.detail : 0;
+    stat.leadRate = stat.messenger ? stat.consult / stat.messenger : 0;
+    stat.score =
+      stat.detail * 3 +
+      stat.messenger * 6 +
+      stat.consult * 10 +
+      stat.favorite * 2 +
+      Math.min(stat.impression, stat.detail);
   }
 
   const byCount = (a, b) => b.count - a.count || String(a.label).localeCompare(String(b.label), "vi");
-  const productSort = (a, b) => b.score - a.score || b.messenger - a.messenger || b.detail - a.detail;
+  const productSort = (a, b) =>
+    b.score - a.score ||
+    b.consult - a.consult ||
+    b.messenger - a.messenger ||
+    b.detail - a.detail;
+
+  const recentEventTypes = new Set([
+    "detail_open",
+    "messenger_click",
+    "consult_submit",
+    "search_zero_result",
+    "favorite_add",
+    "share_copy",
+    "category_click",
+    "tag_click",
+  ]);
 
   return {
     totals,
@@ -299,7 +362,7 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
     topSearches: [...searches.values()].sort(byCount),
     topTags: [...tags.values()].sort(byCount),
     topCategories: [...categories.values()].sort(byCount),
-    recentEvents: events.slice(0, 50),
+    recentEvents: events.filter((event) => recentEventTypes.has(event.type)).slice(0, 50),
     recentLeads: leads.slice(0, 50),
   };
 }
