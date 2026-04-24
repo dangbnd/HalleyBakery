@@ -1,6 +1,11 @@
 const UNKNOWN_ACTION_RE =
   /no action|unknown action|unknown op|invalid action|unsupported action|action not supported|missing action|missing op|no handler|no function/i;
 const PRODUCT_IMPRESSION_LIST_LIMIT = 6;
+const GPS_REVERSE_GEOCODE_URL = "https://nominatim.openstreetmap.org/reverse";
+const GPS_REVERSE_GEOCODE_TIMEOUT_MS = 2500;
+const GPS_REVERSE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const GPS_REVERSE_CACHE_LIMIT = 120;
+const gpsReverseCache = new Map();
 
 const ALLOWED_EVENT_TYPES = new Set([
   "session_start",
@@ -22,6 +27,10 @@ const EVENT_HEADERS = [
   "id",
   "ip_address",
   "address",
+  "gps_latitude",
+  "gps_longitude",
+  "gps_accuracy_m",
+  "location_source",
   "ts",
   "ts_ms",
   "type",
@@ -105,6 +114,13 @@ function clip(value = "", max = 500) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+function firstNonBlank(...values) {
+  for (const value of values) {
+    if (value != null && value !== "") return value;
+  }
+  return "";
+}
+
 function json(res, status, body) {
   res.status(status).setHeader("Content-Type", "application/json; charset=utf-8");
   res.send(JSON.stringify(body));
@@ -167,6 +183,122 @@ function cleanGeoValue(value = "") {
   } catch {
     return raw.replace(/\+/g, " ").trim();
   }
+}
+
+function numberOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function gpsCoordsFromEvent(event = {}) {
+  const lat = numberOrNull(firstNonBlank(event.gps_latitude, event.latitude, event.lat));
+  const lon = numberOrNull(firstNonBlank(event.gps_longitude, event.longitude, event.lng, event.lon));
+  if (lat == null || lon == null) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return { lat, lon };
+}
+
+function gpsReverseCacheKey(coords = {}) {
+  return `${Number(coords.lat).toFixed(5)},${Number(coords.lon).toFixed(5)}`;
+}
+
+function pruneGpsReverseCache(now = Date.now()) {
+  for (const [key, item] of gpsReverseCache.entries()) {
+    if (!item || now - item.at > GPS_REVERSE_CACHE_TTL_MS) gpsReverseCache.delete(key);
+  }
+  while (gpsReverseCache.size > GPS_REVERSE_CACHE_LIMIT) {
+    const oldest = gpsReverseCache.keys().next().value;
+    if (!oldest) break;
+    gpsReverseCache.delete(oldest);
+  }
+}
+
+function formatReverseGeocodeAddress(data = {}) {
+  const display = clip(data.display_name || data.name, 240);
+  if (display) return display;
+
+  const address = data.address && typeof data.address === "object" ? data.address : {};
+  const parts = [
+    address.house_number,
+    address.road || address.pedestrian || address.footway,
+    address.suburb || address.neighbourhood || address.quarter,
+    address.city_district || address.district || address.county,
+    address.city || address.town || address.village,
+    address.state,
+    address.country,
+  ].map(s).filter(Boolean);
+  return clip([...new Set(parts)].join(", "), 240);
+}
+
+async function reverseGeocodeGps(coords = {}) {
+  const key = gpsReverseCacheKey(coords);
+  const now = Date.now();
+  const cached = gpsReverseCache.get(key);
+  if (cached && now - cached.at <= GPS_REVERSE_CACHE_TTL_MS) return cached.address || "";
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GPS_REVERSE_GEOCODE_TIMEOUT_MS);
+
+  try {
+    const url = new URL(GPS_REVERSE_GEOCODE_URL);
+    url.searchParams.set("format", "jsonv2");
+    url.searchParams.set("lat", String(coords.lat));
+    url.searchParams.set("lon", String(coords.lon));
+    url.searchParams.set("zoom", "18");
+    url.searchParams.set("addressdetails", "1");
+    url.searchParams.set("accept-language", "vi,en");
+
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        Referer: "https://halleybakery.io.vn/",
+        "User-Agent": "HalleyBakeryTracking/1.0 (https://halleybakery.io.vn)",
+      },
+    });
+    if (!res.ok) return "";
+
+    const data = await res.json().catch(() => ({}));
+    const address = formatReverseGeocodeAddress(data);
+    gpsReverseCache.set(key, { at: now, address });
+    pruneGpsReverseCache(now);
+    return address;
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function enrichEventsWithGpsAddress(events = []) {
+  const lookups = new Map();
+  events.forEach((event) => {
+    if (s(event.address)) return;
+    const coords = gpsCoordsFromEvent(event);
+    if (!coords) return;
+    const key = gpsReverseCacheKey(coords);
+    if (!lookups.has(key)) lookups.set(key, reverseGeocodeGps(coords));
+  });
+
+  if (!lookups.size) return events;
+
+  const addresses = {};
+  await Promise.all([...lookups.entries()].map(async ([key, promise]) => {
+    addresses[key] = await promise;
+  }));
+
+  return events.map((event) => {
+    if (s(event.address)) return event;
+    const coords = gpsCoordsFromEvent(event);
+    if (!coords) return event;
+    const address = addresses[gpsReverseCacheKey(coords)];
+    if (!address) return event;
+    return {
+      ...event,
+      address,
+      location_source: s(event.location_source) || "browser_gps",
+    };
+  });
 }
 
 function clientIpFromRequest(req) {
@@ -395,6 +527,10 @@ function normalizeEvent(input = {}) {
     id: s(input.id) || uid(),
     ip_address: clip(input.ip_address || input.ip || input.client_ip, 80),
     address: clip(input.address || input.ip_address_location || input.location, 240),
+    gps_latitude: numberOrBlank(firstNonBlank(input.gps_latitude, input.latitude, input.lat)),
+    gps_longitude: numberOrBlank(firstNonBlank(input.gps_longitude, input.longitude, input.lng, input.lon)),
+    gps_accuracy_m: numberOrBlank(firstNonBlank(input.gps_accuracy_m, input.accuracy_m, input.accuracy)),
+    location_source: clip(input.location_source, 80),
     ts: input.ts_iso || new Date(at).toISOString(),
     ts_ms: at,
     type: clip(input.type || "event", 80),
@@ -598,13 +734,20 @@ export default async function handler(req, res) {
 
     const events = Array.isArray(body.events) ? body.events : body.event ? [body.event] : [];
     const ipAddress = clientIpFromRequest(req);
-    const address = clientAddressFromRequest(req);
+    const requestAddress = clientAddressFromRequest(req);
+    const eventsWithRequestContext = events.map((event) => ({
+      ...event,
+      ip_address: s(event?.ip_address || event?.ip || event?.client_ip) || ipAddress,
+      address: s(event?.address || event?.ip_address_location || event?.location),
+      location_source: s(event?.location_source),
+    }));
+    const gpsEnrichedEvents = await enrichEventsWithGpsAddress(eventsWithRequestContext);
     const data = await trackEvents({
       webApp,
-      events: events.map((event) => ({
+      events: gpsEnrichedEvents.map((event) => ({
         ...event,
-        ip_address: s(event?.ip_address || event?.ip || event?.client_ip) || ipAddress,
-        address: s(event?.address || event?.ip_address_location || event?.location) || address,
+        address: s(event.address) || requestAddress,
+        location_source: s(event.location_source) || (requestAddress ? "ip_header" : ""),
       })),
     });
     return json(res, data.ok ? 200 : 202, data);

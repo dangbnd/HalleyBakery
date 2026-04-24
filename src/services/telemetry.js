@@ -25,6 +25,10 @@ const EVENT_DEDUPE_TTL_MS = {
   search_zero_result: 45 * 1000,
   detail_open: 3500,
 };
+const GPS_LOCATION_CACHE_KEY = "hb_tracking_gps_location_v1";
+const GPS_LOCATION_STATUS_KEY = "hb_tracking_gps_status_v1";
+const GPS_LOCATION_REQUESTED_SESSION_KEY = "hb_tracking_gps_requested_session_v1";
+const GPS_LOCATION_CACHE_TTL_MS = 30 * 60 * 1000;
 
 let queue = [];
 let flushTimer = 0;
@@ -34,6 +38,9 @@ let cleanupFns = [];
 let lastPageKey = "";
 const recentEventKeys = new Map();
 const rateBuckets = new Map();
+let gpsContext = {};
+let gpsRequestStarted = false;
+let gpsLocationEventQueued = false;
 
 const IMPORTANT_EVENT_TYPES = new Set([
   "session_start",
@@ -216,6 +223,163 @@ function viewportLabel() {
   }
 }
 
+function finiteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : "";
+}
+
+function roundCoord(value) {
+  const n = finiteNumber(value);
+  return n === "" ? "" : Number(n.toFixed(6));
+}
+
+function fillMissing(value, fallback) {
+  return value == null || value === "" ? fallback : value;
+}
+
+function hasGpsCoords(ctx = {}) {
+  return ctx.gps_latitude !== "" && ctx.gps_latitude != null && ctx.gps_longitude !== "" && ctx.gps_longitude != null;
+}
+
+function normalizeGpsContext(ctx = {}) {
+  const next = {
+    gps_latitude: roundCoord(ctx.gps_latitude ?? ctx.latitude ?? ctx.lat),
+    gps_longitude: roundCoord(ctx.gps_longitude ?? ctx.longitude ?? ctx.lng ?? ctx.lon),
+    gps_accuracy_m: finiteNumber(ctx.gps_accuracy_m ?? ctx.accuracy ?? ctx.accuracy_m),
+    location_source: clip(ctx.location_source || "browser_gps", 80),
+  };
+  if (next.gps_accuracy_m !== "") next.gps_accuracy_m = Math.round(next.gps_accuracy_m);
+  return hasGpsCoords(next) ? next : {};
+}
+
+function setGpsContext(ctx = {}) {
+  const next = normalizeGpsContext(ctx);
+  if (!hasGpsCoords(next)) return false;
+
+  gpsContext = next;
+  queue = queue.map((event) => ({
+    ...event,
+    gps_latitude: fillMissing(event.gps_latitude, next.gps_latitude),
+    gps_longitude: fillMissing(event.gps_longitude, next.gps_longitude),
+    gps_accuracy_m: fillMissing(event.gps_accuracy_m, next.gps_accuracy_m),
+    location_source: fillMissing(event.location_source, next.location_source),
+  }));
+  return true;
+}
+
+function readCachedGpsContext() {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = readStorage(window.localStorage, GPS_LOCATION_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || Date.now() - Number(parsed.at || 0) > GPS_LOCATION_CACHE_TTL_MS) return {};
+    return normalizeGpsContext(parsed.context || parsed);
+  } catch {
+    return {};
+  }
+}
+
+function writeCachedGpsContext(ctx = {}) {
+  if (typeof window === "undefined" || !hasGpsCoords(ctx)) return;
+  try {
+    writeStorage(window.localStorage, GPS_LOCATION_CACHE_KEY, JSON.stringify({ at: Date.now(), context: ctx }));
+  } catch {}
+}
+
+function hydrateGpsContextFromCache() {
+  const cached = readCachedGpsContext();
+  return setGpsContext(cached);
+}
+
+function secureGeolocationAllowed() {
+  if (typeof window === "undefined") return false;
+  const host = String(window.location.hostname || "").toLowerCase();
+  return window.isSecureContext || host === "localhost" || host === "127.0.0.1";
+}
+
+async function geolocationPermissionState() {
+  try {
+    if (!navigator.permissions?.query) return "";
+    const status = await navigator.permissions.query({ name: "geolocation" });
+    return String(status?.state || "");
+  } catch {
+    return "";
+  }
+}
+
+function getBrowserGpsPosition() {
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: GPS_LOCATION_CACHE_TTL_MS,
+    });
+  });
+}
+
+function gpsContextFromPosition(position) {
+  const coords = position?.coords || {};
+  return normalizeGpsContext({
+    gps_latitude: coords.latitude,
+    gps_longitude: coords.longitude,
+    gps_accuracy_m: coords.accuracy,
+    location_source: "browser_gps",
+  });
+}
+
+function queueGpsLocationEvent(ctx = {}) {
+  if (gpsLocationEventQueued || !hasGpsCoords(ctx)) return;
+  gpsLocationEventQueued = true;
+  queueTelemetryEvent("page_view", {
+    source: "browser_gps",
+    page_type: "location_permission",
+    content_group: "location",
+    section: "browser_gps",
+    gps_latitude: ctx.gps_latitude,
+    gps_longitude: ctx.gps_longitude,
+    gps_accuracy_m: ctx.gps_accuracy_m,
+    location_source: ctx.location_source,
+    meta: {
+      location_permission: "granted",
+      gps_accuracy_m: ctx.gps_accuracy_m,
+    },
+  });
+  flushTelemetry();
+}
+
+async function requestBrowserGpsLocation() {
+  if (typeof window === "undefined" || gpsRequestStarted || isTrackingSuppressed()) return;
+  if (!navigator.geolocation || !secureGeolocationAllowed()) return;
+
+  const sessionId = getSessionId();
+  if (readStorage(window.sessionStorage, GPS_LOCATION_REQUESTED_SESSION_KEY) === sessionId) return;
+  if (hasGpsCoords(gpsContext) || hydrateGpsContextFromCache()) return;
+
+  const storedStatus = readStorage(window.localStorage, GPS_LOCATION_STATUS_KEY);
+  const permission = await geolocationPermissionState();
+  if (permission === "denied" || (!permission && storedStatus === "denied")) return;
+
+  writeStorage(window.sessionStorage, GPS_LOCATION_REQUESTED_SESSION_KEY, sessionId);
+  gpsRequestStarted = true;
+
+  try {
+    const position = await getBrowserGpsPosition();
+    const ctx = gpsContextFromPosition(position);
+    if (setGpsContext(ctx)) {
+      writeStorage(window.localStorage, GPS_LOCATION_STATUS_KEY, "granted");
+      writeCachedGpsContext(ctx);
+      queueGpsLocationEvent(ctx);
+    }
+  } catch (error) {
+    if (Number(error?.code) === 1) {
+      writeStorage(window.localStorage, GPS_LOCATION_STATUS_KEY, "denied");
+    }
+  } finally {
+    gpsRequestStarted = false;
+  }
+}
+
 function commonContext() {
   if (typeof window === "undefined") return {};
   return {
@@ -233,6 +397,7 @@ function commonContext() {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
     connection: connectionLabel(),
     app_host: window.location.host,
+    ...gpsContext,
     ...getAttributionContext(),
   };
 }
@@ -484,6 +649,7 @@ export function initTelemetry() {
   if (typeof window === "undefined" || initialized || isTrackingSuppressed()) return () => {};
   initialized = true;
   ensureAttributionContext();
+  hydrateGpsContextFromCache();
 
   queueTelemetryEvent("session_start", {
     source: "telemetry",
@@ -491,6 +657,7 @@ export function initTelemetry() {
       startedAt: readStorage(window.sessionStorage, SESSION_STARTED_KEY),
     },
   });
+  requestBrowserGpsLocation();
 
   const onVisibility = () => {
     if (document.visibilityState === "hidden") flushTelemetry({ beacon: true });

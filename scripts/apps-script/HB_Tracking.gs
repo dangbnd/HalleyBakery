@@ -33,6 +33,10 @@ var HB_TRACKING_EVENT_HEADERS_ = [
   "id",
   "ip_address",
   "address",
+  "gps_latitude",
+  "gps_longitude",
+  "gps_accuracy_m",
+  "location_source",
   "ts",
   "ts_ms",
   "type",
@@ -204,28 +208,22 @@ function HB_trackingHeaderIndex_(headers, name) {
 function HB_trackingEnsureHeaderPositions_(sheet, current, headers) {
   if (!sheet || headers[0] !== "id") return current;
 
-  var idCol = HB_trackingHeaderIndex_(current, "id");
-  if (!idCol) return current;
+  var anchorCol = HB_trackingHeaderIndex_(current, "id");
+  if (!anchorCol) return current;
 
-  if (headers[1] === "ip_address") {
-    var ipCol = HB_trackingHeaderIndex_(current, "ip_address");
-    if (!ipCol) {
-      sheet.insertColumnAfter(idCol);
-      sheet.getRange(1, idCol + 1).setValue("ip_address");
-      var lastColAfterIp = Math.max(sheet.getLastColumn(), headers.length, 1);
-      current = sheet.getRange(1, 1, 1, lastColAfterIp).getValues()[0];
-      ipCol = idCol + 1;
-    }
+  for (var i = 1; i < headers.length; i++) {
+    var header = headers[i];
+    if (header === "ts") break;
 
-    if (headers[2] === "address") {
-      var addressCol = HB_trackingHeaderIndex_(current, "address");
-      if (!addressCol) {
-        sheet.insertColumnAfter(ipCol);
-        sheet.getRange(1, ipCol + 1).setValue("address");
-        var lastColAfterAddress = Math.max(sheet.getLastColumn(), headers.length, 1);
-        current = sheet.getRange(1, 1, 1, lastColAfterAddress).getValues()[0];
-      }
+    var col = HB_trackingHeaderIndex_(current, header);
+    if (!col) {
+      sheet.insertColumnAfter(anchorCol);
+      sheet.getRange(1, anchorCol + 1).setValue(header);
+      var lastColAfterInsert = Math.max(sheet.getLastColumn(), headers.length, 1);
+      current = sheet.getRange(1, 1, 1, lastColAfterInsert).getValues()[0];
+      col = anchorCol + 1;
     }
+    anchorCol = col;
   }
 
   var lastCol = Math.max(sheet.getLastColumn(), headers.length, 1);
