@@ -104,6 +104,8 @@ const EVENT_HEADERS = [
   "app_host",
 ];
 
+const TRACKING_OPT_OUT_KEY = "hb_tracking_opt_out_v1";
+
 function s(value) {
   return value == null ? "" : String(value).trim();
 }
@@ -124,6 +126,23 @@ function responseMessage(data = {}) {
 
 function isUnknownAction(data) {
   return UNKNOWN_ACTION_RE.test(responseMessage(data).toLowerCase());
+}
+
+function cookieValue(cookieHeader = "", key = "") {
+  const prefix = `${encodeURIComponent(key)}=`;
+  return String(cookieHeader || "")
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix))
+    ?.slice(prefix.length) || "";
+}
+
+function isStaffOptOutRequest(req) {
+  try {
+    return decodeURIComponent(cookieValue(req.headers?.cookie || "", TRACKING_OPT_OUT_KEY)) === "1";
+  } catch {
+    return cookieValue(req.headers?.cookie || "", TRACKING_OPT_OUT_KEY) === "1";
+  }
 }
 
 function isAllowedWebApp(url = "") {
@@ -444,6 +463,10 @@ export default async function handler(req, res) {
         limit: Number(body.limit || q.limit || 5000),
       });
       return json(res, data.ok ? 200 : 502, data);
+    }
+
+    if (isStaffOptOutRequest(req)) {
+      return json(res, 200, { ok: true, accepted: 0, inserted: 0, ignored: true, reason: "staff_opt_out" });
     }
 
     const events = Array.isArray(body.events) ? body.events : body.event ? [body.event] : [];

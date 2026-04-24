@@ -75,6 +75,36 @@ function writeStorage(storage, key, value) {
   } catch {}
 }
 
+function readCookie(key) {
+  if (typeof document === "undefined") return "";
+  try {
+    const prefix = `${encodeURIComponent(key)}=`;
+    const item = String(document.cookie || "")
+      .split(";")
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(prefix));
+    return item ? decodeURIComponent(item.slice(prefix.length)) : "";
+  } catch {
+    return "";
+  }
+}
+
+function writeCookie(key, value, maxAge = 31536000) {
+  if (typeof document === "undefined") return;
+  try {
+    const secure = window.location.protocol === "https:" ? "; Secure" : "";
+    const host = String(window.location.hostname || "").toLowerCase();
+    const domain = host === "halleybakery.io.vn" || host.endsWith(".halleybakery.io.vn")
+      ? "; Domain=.halleybakery.io.vn"
+      : "";
+    document.cookie = `${encodeURIComponent(key)}=${encodeURIComponent(value)}; Max-Age=${maxAge}; Path=/; SameSite=Lax${secure}${domain}`;
+  } catch {}
+}
+
+function clearCookie(key) {
+  writeCookie(key, "", 0);
+}
+
 function truthy(value = "") {
   return ["1", "true", "yes", "y", "on", "staff"].includes(String(value || "").trim().toLowerCase());
 }
@@ -92,6 +122,7 @@ export function syncTrackingOptOutFromUrl() {
 
     if (truthy(staff) || String(tracking || "").trim().toLowerCase() === "off") {
       writeStorage(window.localStorage, TRACKING_OPT_OUT_KEY, "1");
+      writeCookie(TRACKING_OPT_OUT_KEY, "1");
       queue = [];
       if (flushTimer) {
         window.clearTimeout(flushTimer);
@@ -101,10 +132,11 @@ export function syncTrackingOptOutFromUrl() {
     }
     if (falsy(staff) || String(tracking || "").trim().toLowerCase() === "on") {
       window.localStorage?.removeItem(TRACKING_OPT_OUT_KEY);
+      clearCookie(TRACKING_OPT_OUT_KEY);
       return false;
     }
   } catch {}
-  return readStorage(window.localStorage, TRACKING_OPT_OUT_KEY) === "1";
+  return readStorage(window.localStorage, TRACKING_OPT_OUT_KEY) === "1" || readCookie(TRACKING_OPT_OUT_KEY) === "1";
 }
 
 export function isTrackingOptedOut() {
