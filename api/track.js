@@ -20,6 +20,7 @@ const ALLOWED_EVENT_TYPES = new Set([
 
 const EVENT_HEADERS = [
   "id",
+  "ip_address",
   "ts",
   "ts_ms",
   "type",
@@ -142,6 +143,33 @@ function isAllowedWebApp(url = "") {
   } catch {
     return false;
   }
+}
+
+function headerValue(headers = {}, name = "") {
+  const value = headers?.[name] ?? headers?.[name.toLowerCase()] ?? headers?.[name.toUpperCase()];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function cleanIpAddress(value = "") {
+  const first = String(value || "").split(",")[0].trim();
+  if (!first || first.toLowerCase() === "unknown") return "";
+  if (first.startsWith("[") && first.includes("]")) return first.slice(1, first.indexOf("]"));
+  if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(first)) return first.replace(/:\d+$/, "");
+  return first;
+}
+
+function clientIpFromRequest(req) {
+  const headers = req.headers || {};
+  return cleanIpAddress(
+    headerValue(headers, "x-forwarded-for") ||
+    headerValue(headers, "x-vercel-forwarded-for") ||
+    headerValue(headers, "x-real-ip") ||
+    headerValue(headers, "cf-connecting-ip") ||
+    headerValue(headers, "true-client-ip") ||
+    req.socket?.remoteAddress ||
+    req.connection?.remoteAddress ||
+    ""
+  );
 }
 
 async function parseRequestBody(req) {
@@ -331,6 +359,7 @@ function normalizeEvent(input = {}) {
   const at = Number.isFinite(tsMs) ? tsMs : now;
   return {
     id: s(input.id) || uid(),
+    ip_address: clip(input.ip_address || input.ip || input.client_ip, 80),
     ts: input.ts_iso || new Date(at).toISOString(),
     ts_ms: at,
     type: clip(input.type || "event", 80),
@@ -533,7 +562,14 @@ export default async function handler(req, res) {
     }
 
     const events = Array.isArray(body.events) ? body.events : body.event ? [body.event] : [];
-    const data = await trackEvents({ webApp, events });
+    const ipAddress = clientIpFromRequest(req);
+    const data = await trackEvents({
+      webApp,
+      events: events.map((event) => ({
+        ...event,
+        ip_address: s(event?.ip_address || event?.ip || event?.client_ip) || ipAddress,
+      })),
+    });
     return json(res, data.ok ? 200 : 202, data);
   } catch (error) {
     return json(res, 500, { ok: false, error: s(error?.message || "track_failed") });

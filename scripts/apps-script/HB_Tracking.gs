@@ -31,6 +31,7 @@ var HB_TRACKING_ALLOWED_EVENT_TYPES_ = {
 
 var HB_TRACKING_EVENT_HEADERS_ = [
   "id",
+  "ip_address",
   "ts",
   "ts_ms",
   "type",
@@ -191,6 +192,28 @@ function HB_tryHandleTrackingActions_(req) {
   return null;
 }
 
+function HB_trackingHeaderIndex_(headers, name) {
+  var target = String(name || "").trim().toLowerCase();
+  for (var i = 0; i < headers.length; i++) {
+    if (String(headers[i] || "").trim().toLowerCase() === target) return i + 1;
+  }
+  return 0;
+}
+
+function HB_trackingEnsureHeaderPositions_(sheet, current, headers) {
+  if (!sheet || headers[0] !== "id" || headers[1] !== "ip_address") return current;
+
+  var idCol = HB_trackingHeaderIndex_(current, "id");
+  var ipCol = HB_trackingHeaderIndex_(current, "ip_address");
+  if (!idCol || ipCol) return current;
+
+  sheet.insertColumnAfter(idCol);
+  sheet.getRange(1, idCol + 1).setValue("ip_address");
+
+  var lastCol = Math.max(sheet.getLastColumn(), headers.length, 1);
+  return sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+}
+
 function HB_trackingEnsureSheet_(name, headers) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(name);
@@ -204,6 +227,8 @@ function HB_trackingEnsureSheet_(name, headers) {
     sheet.setFrozenRows(1);
     return sheet;
   }
+
+  current = HB_trackingEnsureHeaderPositions_(sheet, current, headers);
 
   var existing = {};
   current.forEach(function (cell) {
