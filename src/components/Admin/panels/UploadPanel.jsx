@@ -70,6 +70,40 @@ function readFeedbackLibrary() {
   return parseFeedbackImagesConfig(getConfig(KEYS.FEEDBACK_IMAGES, ""));
 }
 
+function isFeedbackDriveImage(file = {}) {
+  const mimeType = s(file?.mimeType || file?.type).toLowerCase();
+  const name = s(file?.name || file?.fileName || file?.title);
+  return mimeType.startsWith("image/") || /\.(avif|gif|jpe?g|png|webp)$/i.test(name);
+}
+
+function toFeedbackRecordFromDriveFile(file = {}) {
+  const id = s(file?.id || file?.fileId || file?.driveId);
+  if (!id) return null;
+  return {
+    id,
+    image: buildDriveImageUrl(id),
+    url: s(file?.url || file?.webViewLink || file?.fileUrl) || `https://drive.google.com/file/d/${id}/view`,
+    name: s(file?.name || file?.fileName || file?.title || "Feedback khach hang"),
+    uploadedAt: s(file?.modifiedTime || file?.createdTime || file?.uploadedAt) || new Date().toISOString(),
+  };
+}
+
+function sortFeedbackDriveRecords(a = {}, b = {}) {
+  const at = Date.parse(s(a.uploadedAt));
+  const bt = Date.parse(s(b.uploadedAt));
+  if (Number.isFinite(at) && Number.isFinite(bt) && at !== bt) return at - bt;
+  return s(a.name).localeCompare(s(b.name), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function mergeFeedbackLibrary(existing = [], incoming = []) {
+  let next = Array.isArray(existing) ? existing : [];
+  const ordered = [...incoming].filter(Boolean).sort(sortFeedbackDriveRecords);
+  for (const record of ordered) {
+    next = upsertFeedbackImageRecord(next, record);
+  }
+  return next;
+}
+
 // Đọc keys từ ai_gemini_keys localStorage (do AITagsPanel quản lý)
 function readAllGeminiKeys() {
   const multi = getGeminiKeys();
@@ -394,6 +428,8 @@ export default function UploadPanel({ canEdit = true }) {
   const itemsRef = useRef(items);
   const [bulkAiRunning, setBulkAiRunning] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
+  const [feedbackSyncing, setFeedbackSyncing] = useState(false);
+  const [feedbackSyncResult, setFeedbackSyncResult] = useState(null);
   
   // Settings & OAuth state
   const [showSettings, setShowSettings] = useState(false);
@@ -698,19 +734,11 @@ export default function UploadPanel({ canEdit = true }) {
     }
   };
 
-  const persistFeedbackAsset = useCallback(async (item, out) => {
-    const nextRecord = {
-      id: s(out?.id),
-      image: buildDriveImageUrl(out?.id),
-      url: s(out?.url || out?.downloadUrl),
-      name: s(item?.name || out?.name || "Feedback khach hang"),
-      uploadedAt: new Date().toISOString(),
-    };
-    const nextLibrary = upsertFeedbackImageRecord(readFeedbackLibrary(), nextRecord);
+  const saveFeedbackLibrary = useCallback(async (nextLibrary) => {
     const serialized = serializeFeedbackImagesConfig(nextLibrary);
 
     setConfig(KEYS.FEEDBACK_IMAGES, serialized);
-    setFeedbackLibrary(nextLibrary);
+    setFeedbackLibrary(parseFeedbackImagesConfig(serialized));
 
     try {
       await saveConfigEntriesToSheet([{ key: KEYS.FEEDBACK_IMAGES, value: serialized }], { webappUrl: cfg.gsWebappUrl });
@@ -721,6 +749,66 @@ export default function UploadPanel({ canEdit = true }) {
       window.dispatchEvent(new Event("hb:config-changed"));
     }
   }, [cfg.gsWebappUrl]);
+
+  const persistFeedbackAsset = useCallback(async (item, out) => {
+    const nextRecord = {
+      id: s(out?.id),
+      image: buildDriveImageUrl(out?.id),
+      url: s(out?.url || out?.downloadUrl),
+      name: s(item?.name || out?.name || "Feedback khach hang"),
+      uploadedAt: new Date().toISOString(),
+    };
+    const nextLibrary = upsertFeedbackImageRecord(readFeedbackLibrary(), nextRecord);
+    await saveFeedbackLibrary(nextLibrary);
+  }, [saveFeedbackLibrary]);
+
+  const syncFeedbackFolder = useCallback(async () => {
+    if (!canEdit || feedbackSyncing) return;
+    if (!cfg.feedbackDriveFolderId) {
+      setFeedbackSyncResult({
+        tone: "warning",
+        title: "Thiếu thư mục feedback",
+        message: "Cần cấu hình Feedback Drive Folder ID trước khi đồng bộ.",
+      });
+      return;
+    }
+
+    setFeedbackSyncing(true);
+    setFeedbackSyncResult(null);
+    try {
+      const files = await listDriveFileHashes({ rootFolderId: cfg.feedbackDriveFolderId });
+      const records = files
+        .filter(isFeedbackDriveImage)
+        .map(toFeedbackRecordFromDriveFile)
+        .filter(Boolean);
+
+      const current = readFeedbackLibrary();
+      const beforeKeys = new Set(current.map((item) => s(item.id || item.image)).filter(Boolean));
+      const nextLibrary = mergeFeedbackLibrary(current, records);
+      const addedCount = records.filter((item) => !beforeKeys.has(s(item.id || item.image))).length;
+
+      await saveFeedbackLibrary(nextLibrary);
+      setFeedbackSyncResult({
+        tone: "success",
+        title: "Đã đồng bộ folder feedback",
+        message: `Tìm thấy ${records.length} ảnh trong Drive, thêm mới ${addedCount} ảnh. Storefront sẽ đọc danh sách feedback_images mới.`,
+      });
+      audit("upload.feedback_sync", {
+        folderId: cfg.feedbackDriveFolderId,
+        total: records.length,
+        added: addedCount,
+        user: (readLS(LS.AUTH, {}) || {}).username || "?",
+      });
+    } catch (error) {
+      setFeedbackSyncResult({
+        tone: "danger",
+        title: "Không đồng bộ được folder feedback",
+        message: s(error?.message || error || "Lỗi không xác định"),
+      });
+    } finally {
+      setFeedbackSyncing(false);
+    }
+  }, [canEdit, cfg.feedbackDriveFolderId, feedbackSyncing, saveFeedbackLibrary]);
 
   const uploadOne = async (id) => {
     if (!canEdit) return;
@@ -816,6 +904,17 @@ export default function UploadPanel({ canEdit = true }) {
             Mở thư mục feedback
           </a>
         ) : null}
+        {isFeedbackMode && feedbackFolderReady ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={syncFeedbackFolder}
+            loading={feedbackSyncing}
+            disabled={!canEdit}
+          >
+            Đồng bộ folder
+          </Button>
+        ) : null}
       </div>
 
       {!hasItems && (
@@ -860,6 +959,32 @@ export default function UploadPanel({ canEdit = true }) {
         </Callout>
       )}
 
+      {isFeedbackMode && feedbackFolderReady && (
+        <Callout
+          tone="info"
+          title="Upload trực tiếp trong Drive cần đồng bộ"
+          action={
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={syncFeedbackFolder}
+              loading={feedbackSyncing}
+              disabled={!canEdit}
+            >
+              Đồng bộ folder
+            </Button>
+          }
+        >
+          Storefront chỉ đọc danh sách `feedback_images`. Sau khi kéo ảnh vào Drive folder, bấm đồng bộ để ghi các ảnh mới vào danh sách này.
+        </Callout>
+      )}
+
+      {isFeedbackMode && feedbackSyncResult ? (
+        <Callout tone={feedbackSyncResult.tone} title={feedbackSyncResult.title}>
+          {feedbackSyncResult.message}
+        </Callout>
+      ) : null}
+
       {hasItems ? (
         <div className="rounded-xl border border-slate-800 bg-slate-950/75 px-3 py-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -879,6 +1004,17 @@ export default function UploadPanel({ canEdit = true }) {
             <Button variant="ghost" size="sm" onClick={refreshMeta} disabled={!canEdit || metaLoading}>
               {metaLoading ? "Đang tải..." : "Tải Sheet"}
             </Button>
+            {isFeedbackMode && feedbackFolderReady ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={syncFeedbackFolder}
+                loading={feedbackSyncing}
+                disabled={!canEdit}
+              >
+                Đồng bộ folder
+              </Button>
+            ) : null}
             <Button variant="secondary" size="sm" onClick={runAiSelected} disabled={!canEdit || bulkAiRunning || items.length === 0}>
               {bulkAiRunning ? "AI..." : "AI gợi ý"}
             </Button>
@@ -909,6 +1045,17 @@ export default function UploadPanel({ canEdit = true }) {
           <Button variant="ghost" size="sm" onClick={refreshMeta} disabled={!canEdit || metaLoading}>
             {metaLoading ? "Đang tải..." : "Tải Sheet"}
           </Button>
+          {isFeedbackMode && feedbackFolderReady ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={syncFeedbackFolder}
+              loading={feedbackSyncing}
+              disabled={!canEdit}
+            >
+              Đồng bộ folder
+            </Button>
+          ) : null}
           <Button variant="secondary" size="sm" onClick={runAiSelected} disabled={!canEdit || bulkAiRunning || items.length === 0}>
             {bulkAiRunning ? "AI đang chạy..." : "AI gợi ý"}
           </Button>
