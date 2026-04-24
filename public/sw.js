@@ -1,5 +1,5 @@
 // Halley Bakery Service Worker
-const CACHE_NAME = 'halley-v2';
+const CACHE_NAME = 'halley-v3';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -45,6 +45,16 @@ self.addEventListener('fetch', (e) => {
         }
         return res;
       })
-      .catch(() => caches.match(e.request))
+      .catch(async () => {
+        const cached = await caches.match(e.request);
+        if (cached) return cached;
+
+        if (e.request.destination === 'document') {
+          const fallback = await caches.match('/');
+          if (fallback) return fallback;
+        }
+
+        return Response.error();
+      })
   );
 });

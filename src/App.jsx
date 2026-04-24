@@ -41,7 +41,8 @@ import {
   toggleFavoriteProduct,
 } from "./utils/customerBehavior.js";
 import { submitConsultLead } from "./services/consult.js";
-import { initTelemetry, trackPageView } from "./services/telemetry.js";
+import { ensureAttributionContext } from "./services/attribution.js";
+import { initTelemetry, queueTelemetryEvent, trackPageView } from "./services/telemetry.js";
 
 /* ---------------- helpers ---------------- */
 
@@ -583,6 +584,21 @@ function clearProductPath() {
   window.history.replaceState(null, "", u);
 }
 
+function pageTypeForRoute(route = "", hasCustomPage = false) {
+  if (route === "home") return "home";
+  if (route === "search") return "search";
+  if (route === "favorites") return "favorites";
+  if (route === "admin") return "admin";
+  if (hasCustomPage) return "content_page";
+  return "category";
+}
+
+function contentGroupForPageType(pageType = "") {
+  if (pageType === "content_page") return "content";
+  if (pageType === "admin") return "admin";
+  return "catalog";
+}
+
 
 
 export default function App() {
@@ -599,6 +615,8 @@ export default function App() {
   const didInitQuickURLRef = useRef(false);
   const lastTrackedSearchRef = useRef("");
   const lastTrackedUrlProductRef = useRef("");
+  const lastTrackedSearchViewRef = useRef("");
+  const lastTrackedCategoryViewRef = useRef("");
   const [activeCat, setActiveCat] = useState("all");
   const [homeActive, setHomeActive] = useState("all");
   const [filterState, setFilterState] = useState(null);
@@ -638,6 +656,7 @@ export default function App() {
   useEffect(() => {
     if (telemetryStartedRef.current) return undefined;
     telemetryStartedRef.current = true;
+    ensureAttributionContext();
     return initTelemetry();
   }, []);
 
@@ -785,10 +804,13 @@ export default function App() {
   }, [route, q, activeCat, filterState]);
 
   useEffect(() => {
+    const pageType = pageTypeForRoute(route, false);
     trackPageView({
       route,
       query: q,
       category: activeCat,
+      pageType,
+      contentGroup: contentGroupForPageType(pageType),
       source: "app_route",
     });
   }, [route, q, activeCat]);
@@ -833,7 +855,13 @@ export default function App() {
     const key = fold(query);
     if (!key || key === lastTrackedSearchRef.current) return;
     lastTrackedSearchRef.current = key;
-    recordCustomerEvent("search_query", { query, source: "typeahead" });
+    recordCustomerEvent("search_query", {
+      query,
+      source: "typeahead",
+      page_type: "search",
+      content_group: "catalog",
+      section: "typeahead",
+    });
   }, [qDeb]);
 
   /* admin shortcuts */
@@ -859,7 +887,18 @@ export default function App() {
         lastTrackedUrlProductRef.current = pid;
         setRelatedShuffleSeed(randomSeed());
         addRecentProduct(found);
-        recordCustomerEvent("detail_open", { product: found, source: "deep_link" });
+        recordCustomerEvent("detail_open", {
+          product: found,
+          source: "deep_link",
+          category: found?.category || "",
+          page_type: "product_detail",
+          content_group: "catalog",
+          section: "deep_link",
+          list_id: "deep_link",
+          list_name: "deep_link",
+          list_position: 1,
+          results_count: 1,
+        });
       }
     };
 
@@ -1433,6 +1472,16 @@ export default function App() {
     return applyFilters(base);
   }, [route, listForSearch, baseForRoute, filterState]);
 
+  const activeFilterSummary = useMemo(() => ({
+    tags: filterState?.tags ? [...filterState.tags] : [],
+    sizes: filterState?.sizes ? [...filterState.sizes] : [],
+    levels: filterState?.levels ? [...filterState.levels] : [],
+    sort: filterState?.sort || "",
+    priceActive: !!filterState?.priceActive,
+    featured: !!filterState?.featured,
+    inStock: !!filterState?.inStock,
+  }), [filterState]);
+
   const homeMenuReady = homeSectionCats.length > 0 || !dataLoading;
 
   const homeSections = useMemo(() => {
@@ -1493,6 +1542,108 @@ export default function App() {
 
     return [...sameCategoryAndStrong, ...sameCategoryOnly, ...strongCrossCategory];
   }, [quick, products, relatedShuffleSeed]);
+
+  useEffect(() => {
+    if (route !== "search" || dataLoading) return;
+
+    const query = qDeb.trim();
+    const hasFilters =
+      activeFilterSummary.tags.length > 0 ||
+      activeFilterSummary.sizes.length > 0 ||
+      activeFilterSummary.levels.length > 0 ||
+      activeFilterSummary.priceActive ||
+      activeFilterSummary.featured ||
+      activeFilterSummary.inStock ||
+      !!activeFilterSummary.sort;
+    const searchMode = query ? "query" : hasFilters ? "filter" : "browse";
+    const resultsCount = filtered.length;
+    const key = JSON.stringify({
+      route,
+      query,
+      searchMode,
+      resultsCount,
+      tags: activeFilterSummary.tags,
+      sizes: activeFilterSummary.sizes,
+      levels: activeFilterSummary.levels,
+      sort: activeFilterSummary.sort,
+      priceActive: activeFilterSummary.priceActive,
+      featured: activeFilterSummary.featured,
+      inStock: activeFilterSummary.inStock,
+    });
+    if (lastTrackedSearchViewRef.current === key) return;
+    lastTrackedSearchViewRef.current = key;
+
+    queueTelemetryEvent("search_results_view", {
+      source: query ? "search" : "filters",
+      query,
+      page_type: "search",
+      content_group: "catalog",
+      section: "search_results",
+      list_id: query ? `search:${query}` : "search:filters",
+      list_name: "search_results",
+      results_count: resultsCount,
+      zero_results: resultsCount === 0,
+      search_mode: searchMode,
+      category: activeCat !== "all" ? activeCat : "",
+      meta: {
+        filters: activeFilterSummary,
+      },
+    });
+
+    if (resultsCount === 0 && (query || hasFilters)) {
+      queueTelemetryEvent("search_zero_result", {
+        source: query ? "search" : "filters",
+        query,
+        page_type: "search",
+        content_group: "catalog",
+        section: "search_results",
+        list_id: query ? `search:${query}` : "search:filters",
+        list_name: "search_results",
+        results_count: 0,
+        zero_results: true,
+        search_mode: searchMode,
+        category: activeCat !== "all" ? activeCat : "",
+        meta: {
+          filters: activeFilterSummary,
+        },
+      });
+    }
+  }, [route, dataLoading, qDeb, filtered.length, activeFilterSummary, activeCat]);
+
+  useEffect(() => {
+    if (dataLoading || route === "home" || route === "search" || route === "favorites" || route === "admin" || customPage) {
+      return;
+    }
+
+    const key = JSON.stringify({
+      route,
+      resultsCount: filtered.length,
+      tags: activeFilterSummary.tags,
+      sizes: activeFilterSummary.sizes,
+      levels: activeFilterSummary.levels,
+      sort: activeFilterSummary.sort,
+      priceActive: activeFilterSummary.priceActive,
+      featured: activeFilterSummary.featured,
+      inStock: activeFilterSummary.inStock,
+    });
+    if (lastTrackedCategoryViewRef.current === key) return;
+    lastTrackedCategoryViewRef.current = key;
+
+    queueTelemetryEvent("category_results_view", {
+      source: "category_page",
+      category: route,
+      page_type: "category",
+      content_group: "catalog",
+      section: "category_results",
+      list_id: `category:${route}`,
+      list_name: route,
+      results_count: filtered.length,
+      zero_results: filtered.length === 0,
+      meta: {
+        filters: activeFilterSummary,
+      },
+    });
+  }, [route, dataLoading, customPage, filtered.length, activeFilterSummary]);
 
   const getOffset = useCallback(() => {
     const el = catbarRef.current; if (!el) return 0;
@@ -1573,7 +1724,13 @@ export default function App() {
 
   function handlePickCategory(key, source = "category_bar") {
     resetSearchAndFilters();
-    recordCustomerEvent("category_click", { category: key, source });
+    recordCustomerEvent("category_click", {
+      category: key,
+      source,
+      page_type: route === "home" ? "home" : "category",
+      content_group: "catalog",
+      section: route === "home" ? "home_category_bar" : "category_bar",
+    });
     if (route === "home") {
       if (key === "all") { scrollTop(); setHomeActive("all"); const u = new URL(location.href); u.hash = ""; history.replaceState(null, "", u); }
       else { setActiveCat(key); setRoute(key); const u = new URL(location.href); u.hash = ""; history.replaceState(null, "", u); }
@@ -1721,10 +1878,23 @@ export default function App() {
 
   const openQuick = useCallback((p, source = "card") => {
     if (!p) return;
+    const context = typeof source === "object" ? source : { source };
     setQuick(p);
     setRelatedShuffleSeed(randomSeed());
     addRecentProduct(p);
-    recordCustomerEvent("detail_open", { product: p, source });
+    recordCustomerEvent("detail_open", {
+      product: p,
+      source: context.source || "card",
+      category: context.category || p?.category || "",
+      page_type: context.pageType || "product_detail",
+      content_group: context.contentGroup || "catalog",
+      section: context.section || "",
+      list_id: context.listId || "",
+      list_name: context.listName || "",
+      list_position: context.listPosition,
+      results_count: context.resultsCount,
+      meta: context.meta,
+    });
     setProductPath(p);
   }, []);
   const closeQuick = useCallback(() => {
@@ -1746,28 +1916,53 @@ export default function App() {
     setBehaviorTick((n) => n + 1);
   }, []);
 
-  const handleMessengerClick = useCallback((p, target) => {
+  const handleMessengerClick = useCallback((p, target, context = {}) => {
     recordCustomerEvent("messenger_click", {
       product: p,
       channel: target?.channel || "messenger",
       href: target?.href || "",
-      source: "messenger_button",
+      source: context.source || "messenger_button",
+      category: context.category || p?.category || "",
+      page_type: context.pageType || "",
+      content_group: context.contentGroup || "",
+      section: context.section || "",
+      list_id: context.listId || "",
+      list_name: context.listName || "",
+      list_position: context.listPosition,
+      results_count: context.resultsCount,
     });
   }, []);
 
   const handleConsultSubmit = useCallback(async (product, form) => {
-    const result = await submitConsultLead({ product, form });
-    recordCustomerEvent("consult_submit", { product, source: "consult_form", meta: { remoteOk: !!result?.remoteOk } });
+    const result = await submitConsultLead({ product, form: { ...form, route } });
+    recordCustomerEvent("consult_submit", {
+      product,
+      source: "consult_form",
+      category: product?.category || "",
+      page_type: "product_detail",
+      content_group: "catalog",
+      section: "consult_form",
+      status: result?.remoteOk ? "remote_ok" : "local_only",
+      meta: { remoteOk: !!result?.remoteOk },
+    });
     setBehaviorTick((n) => n + 1);
     return result;
-  }, []);
+  }, [route]);
 
   /* click tag từ QuickView */
   const handlePickTagFromQuickView = useCallback((tag) => {
     const raw = String(tag || "").trim();
     const slug = tagKey(raw);
     if (!slug) return;
-    recordCustomerEvent("tag_click", { tag: raw, product: quick, source: "quick_view" });
+    recordCustomerEvent("tag_click", {
+      tag: raw,
+      product: quick,
+      source: "quick_view",
+      category: quick?.category || "",
+      page_type: "product_detail",
+      content_group: "catalog",
+      section: "quick_view",
+    });
     setQ("");
     setFilterState((st) => {
       const prev = st || {};
@@ -1808,7 +2003,15 @@ export default function App() {
 
   const handleSearchSubmit = useCallback((qq) => {
     const query = String(qq || "").trim();
-    if (query) recordCustomerEvent("search_submit", { query, source: "header" });
+    if (query) {
+      recordCustomerEvent("search_submit", {
+        query,
+        source: "header",
+        page_type: "search",
+        content_group: "catalog",
+        section: "header_search",
+      });
+    }
     setRoute(query ? "search" : activeCat !== "all" ? activeCat : "all");
   }, [activeCat]);
 
@@ -1818,7 +2021,12 @@ export default function App() {
     setFilterState(null);
     setFiltersResetKey((k) => k + 1);
     setRoute("favorites");
-    recordCustomerEvent("favorites_page_open", { source: "favorite_shelf" });
+    recordCustomerEvent("favorites_page_open", {
+      source: "favorite_shelf",
+      page_type: "favorites",
+      content_group: "catalog",
+      section: "favorite_shelf",
+    });
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
   }, []);
 
@@ -1863,12 +2071,21 @@ export default function App() {
             {list.length > 0 ? (
               <ProductList
                 products={list}
-                onImageClick={openQuick}
-                filter={filterState}
-                isFavorite={isFavorite}
-                onFavoriteToggle={handleFavoriteToggle}
-                onMessengerClick={handleMessengerClick}
-              />
+              onImageClick={openQuick}
+              filter={filterState}
+              isFavorite={isFavorite}
+              onFavoriteToggle={handleFavoriteToggle}
+              onMessengerClick={handleMessengerClick}
+              trackingContext={{
+                source: "favorites_page",
+                openSource: "favorites_page",
+                pageType: "favorites",
+                contentGroup: "catalog",
+                section: "favorites_page",
+                listId: "favorites_page",
+                listName: "favorites_page",
+              }}
+            />
             ) : (
               <div className="py-16 text-center text-gray-400 text-sm">Không có mẫu yêu thích khớp bộ lọc.</div>
             )}
@@ -1909,6 +2126,15 @@ export default function App() {
               isFavorite={isFavorite}
               onFavoriteToggle={handleFavoriteToggle}
               onMessengerClick={handleMessengerClick}
+              trackingContext={{
+                source: "search_results",
+                openSource: "search_results",
+                pageType: "search",
+                contentGroup: "catalog",
+                section: "search_results",
+                listId: qDeb.trim() ? `search:${qDeb.trim()}` : "search:filters",
+                listName: "search_results",
+              }}
             />
           ) : dataLoading ? (
             <LoadingSkeleton count={4} message="Đang tìm kiếm sản phẩm…" />
@@ -1928,7 +2154,19 @@ export default function App() {
             products={products}
             interval={2000}
             fbUrls={fbUrls}
-            onBannerClick={(p) => openQuick(p, "hero")}
+            onBannerClick={(p) =>
+              openQuick(p, {
+                source: "hero",
+                pageType: "home",
+                contentGroup: "catalog",
+                section: "hero",
+                listId: "home:hero",
+                listName: "hero",
+                listPosition: 1,
+                resultsCount: 1,
+                category: p?.category || "",
+              })
+            }
           />
         )}
         {isHome && (
@@ -1936,7 +2174,17 @@ export default function App() {
             entries={DATA.socialProof}
             products={products}
             categoryTitleMap={categoryTitleMap}
-            onProductClick={(p) => openQuick(p, "social_proof")}
+            onProductClick={(p) =>
+              openQuick(p, {
+                source: "social_proof",
+                pageType: "home",
+                contentGroup: "catalog",
+                section: "social_proof",
+                listId: "home:social_proof",
+                listName: "social_proof",
+                category: p?.category || "",
+              })
+            }
           />
         )}
         {showCatBar ? CatBar : null}
@@ -1946,20 +2194,38 @@ export default function App() {
             <ProductShelf
               title="Mẫu yêu thích"
               products={favoriteProducts}
-              onProductClick={(p) => openQuick(p, "favorite_shelf")}
+              onProductClick={(p, context) => openQuick(p, context)}
               isFavorite={isFavorite}
               onFavoriteToggle={handleFavoriteToggle}
               onMessengerClick={handleMessengerClick}
               actionLabel={favoriteProducts.length > 4 ? "Xem tất cả" : ""}
               onAction={favoriteProducts.length > 4 ? openFavoritesPage : undefined}
+              trackingContext={{
+                source: "favorite_shelf",
+                openSource: "favorite_shelf",
+                pageType: "home",
+                contentGroup: "catalog",
+                section: "favorite_shelf",
+                listId: "home:favorite_shelf",
+                listName: "favorite_shelf",
+              }}
             />
             <ProductShelf
               title="Đã xem gần đây"
               products={recentProducts}
-              onProductClick={(p) => openQuick(p, "recent_shelf")}
+              onProductClick={(p, context) => openQuick(p, context)}
               isFavorite={isFavorite}
               onFavoriteToggle={handleFavoriteToggle}
               onMessengerClick={handleMessengerClick}
+              trackingContext={{
+                source: "recent_shelf",
+                openSource: "recent_shelf",
+                pageType: "home",
+                contentGroup: "catalog",
+                section: "recent_shelf",
+                listId: "home:recent_shelf",
+                listName: "recent_shelf",
+              }}
             />
             {(() => {
               const sections = homeSections.map(({ key, title, items }) => {
@@ -1975,6 +2241,16 @@ export default function App() {
                       isFavorite={isFavorite}
                       onFavoriteToggle={handleFavoriteToggle}
                       onMessengerClick={handleMessengerClick}
+                      trackingContext={{
+                        source: "home_section",
+                        openSource: "home_section",
+                        pageType: "home",
+                        contentGroup: "catalog",
+                        section: key,
+                        listId: `home:${key}`,
+                        listName: key,
+                        category: key,
+                      }}
                     />
                   </div>
                 );
@@ -1994,14 +2270,24 @@ export default function App() {
             />
             <ActiveFilters filterState={filterState} clearTag={clearTag} masterTags={tags} />
             {list.length > 0 ? (
-              <ProductList
-                products={list}
-                onImageClick={openQuick}
-                filter={filterState}
-                isFavorite={isFavorite}
-                onFavoriteToggle={handleFavoriteToggle}
-                onMessengerClick={handleMessengerClick}
-              />
+            <ProductList
+              products={list}
+              onImageClick={openQuick}
+              filter={filterState}
+              isFavorite={isFavorite}
+              onFavoriteToggle={handleFavoriteToggle}
+              onMessengerClick={handleMessengerClick}
+              trackingContext={{
+                source: "category_results",
+                openSource: "category_results",
+                pageType: "category",
+                contentGroup: "catalog",
+                section: route,
+                listId: `category:${route}`,
+                listName: route,
+                category: route,
+              }}
+            />
             ) : dataLoading ? (
               <LoadingSkeleton count={8} message="Đang tải sản phẩm…" />
             ) : (
@@ -2051,7 +2337,17 @@ export default function App() {
             onPickCategory={(key) => handlePickCategory(key, "quick_view")}
             categoryLabel={categoryTitleMap[quick?.category] || quick?.category || ""}
             relatedProducts={relatedProducts}
-            onRelatedPick={(p) => openQuick(p, "related")}
+            onRelatedPick={(p) =>
+              openQuick(p, {
+                source: "related",
+                pageType: "product_detail",
+                contentGroup: "catalog",
+                section: "related_products",
+                listId: quick ? `related:${pidOf(quick)}` : "related",
+                listName: "related_products",
+                category: p?.category || "",
+              })
+            }
             isFavorite={isFavorite(quick)}
             onFavoriteToggle={handleFavoriteToggle}
             onMessengerClick={handleMessengerClick}

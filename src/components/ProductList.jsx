@@ -13,6 +13,7 @@ export default function ProductList({
   isFavorite,
   onFavoriteToggle,
   onMessengerClick,
+  trackingContext = {},
 }) {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const sentinelRef = useRef(null);
@@ -57,7 +58,7 @@ export default function ProductList({
   return (
     <>
       <div ref={gridRef} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        {visible.map((p) => (
+        {visible.map((p, index) => (
           <div key={pidOf(p)} data-card>
             <ProductCard
               p={p}
@@ -66,6 +67,12 @@ export default function ProductList({
               isFavorite={isFavorite?.(p)}
               onFavoriteToggle={onFavoriteToggle}
               onMessengerClick={onMessengerClick}
+              trackingContext={{
+                ...trackingContext,
+                index: index + 1,
+                resultsCount: products.length,
+                category: trackingContext.category || p?.category || "",
+              }}
             />
           </div>
         ))}

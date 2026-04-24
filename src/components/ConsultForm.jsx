@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { openChatTarget } from "../utils/chatLink.js";
+import { queueTelemetryEvent } from "../services/telemetry.js";
+import { productSnapshot } from "../utils/customerBehavior.js";
 
 const todayIso = () => {
   const d = new Date();
@@ -78,6 +80,9 @@ export default function ConsultForm({ product, onSubmit }) {
   const [dateOpen, setDateOpen] = useState(false);
   const [viewMonth, setViewMonth] = useState(monthStart(parseIsoDate(todayIso()) || new Date()));
   const datePickerRef = useRef(null);
+  const startedRef = useRef(false);
+  const submittedRef = useRef(false);
+  const dirtyFieldsRef = useRef(new Set());
 
   const phoneOk = useMemo(() => form.phone.replace(/\D/g, "").length >= 9, [form.phone]);
   const canSubmit = phoneOk && !busy;
@@ -85,7 +90,23 @@ export default function ConsultForm({ product, onSubmit }) {
   const canGoPrevMonth = viewMonth.getTime() > monthStart(minDate).getTime();
   const calendarDays = useMemo(() => buildCalendarDays(viewMonth), [viewMonth]);
 
-  const update = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+  const update = (key, value) => {
+    const text = String(value || "").trim();
+    if (text) dirtyFieldsRef.current.add(key);
+    if (!startedRef.current && text) {
+      startedRef.current = true;
+      queueTelemetryEvent("consult_form_start", {
+        product: productSnapshot(product),
+        source: "consult_form",
+        page_type: "product_detail",
+        content_group: "catalog",
+        section: "consult_form",
+        category: product?.category || "",
+        value: key,
+      });
+    }
+    setForm((prev) => ({ ...prev, [key]: value }));
+  };
 
   useEffect(() => {
     if (!dateOpen) return undefined;
@@ -105,6 +126,24 @@ export default function ConsultForm({ product, onSubmit }) {
     };
   }, [dateOpen]);
 
+  useEffect(() => {
+    return () => {
+      if (!startedRef.current || submittedRef.current) return;
+      const filledFields = [...dirtyFieldsRef.current];
+      queueTelemetryEvent("consult_form_abandon", {
+        product: productSnapshot(product),
+        source: "consult_form",
+        status: "abandon",
+        page_type: "product_detail",
+        content_group: "catalog",
+        section: "consult_form",
+        category: product?.category || "",
+        value: filledFields.join(","),
+        meta: { filledFields, fieldCount: filledFields.length },
+      });
+    };
+  }, [product]);
+
   const openDatePicker = () => {
     setViewMonth(monthStart(selectedDate || minDate));
     setDateOpen(true);
@@ -119,6 +158,7 @@ export default function ConsultForm({ product, onSubmit }) {
   const submit = async (event) => {
     event.preventDefault();
     if (!canSubmit) return;
+    submittedRef.current = true;
     setBusy(true);
     setResult(null);
     try {

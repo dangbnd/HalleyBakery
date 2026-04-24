@@ -11,6 +11,7 @@ export default function ProductShelf({
   onMessengerClick,
   actionLabel,
   onAction,
+  trackingContext = {},
 }) {
   const list = (products || []).filter(Boolean).slice(0, limit);
   if (!list.length) return null;
@@ -30,7 +31,7 @@ export default function ProductShelf({
         ) : null}
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        {list.map((p) => (
+        {list.map((p, index) => (
           <ProductCard
             key={pidOf(p)}
             p={p}
@@ -38,6 +39,14 @@ export default function ProductShelf({
             isFavorite={isFavorite?.(p)}
             onFavoriteToggle={onFavoriteToggle}
             onMessengerClick={onMessengerClick}
+            trackingContext={{
+              ...trackingContext,
+              listName: trackingContext.listName || title,
+              section: trackingContext.section || title,
+              index: index + 1,
+              resultsCount: list.length,
+              category: trackingContext.category || p?.category || "",
+            }}
           />
         ))}
       </div>

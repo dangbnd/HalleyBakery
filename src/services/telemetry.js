@@ -1,5 +1,6 @@
 import { KEYS, getConfig } from "../utils/config.js";
 import { parseBooleanLike } from "../utils.js";
+import { ensureAttributionContext, getAttributionContext } from "./attribution.js";
 
 const VISITOR_ID_KEY = "hb_visitor_id_v1";
 const SESSION_ID_KEY = "hb_session_id_v1";
@@ -125,6 +126,7 @@ function commonContext() {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
     connection: connectionLabel(),
     app_host: window.location.host,
+    ...getAttributionContext(),
   };
 }
 
@@ -296,12 +298,28 @@ export function trackPageView(meta = {}) {
   const key = `${window.location.pathname}${window.location.search}${window.location.hash}:${meta.route || ""}`;
   if (key === lastPageKey) return;
   lastPageKey = key;
-  queueTelemetryEvent("page_view", { source: meta.source || "route", route: meta.route || "", meta });
+  queueTelemetryEvent("page_view", {
+    source: meta.source || "route",
+    route: meta.route || "",
+    query: meta.query || "",
+    category: meta.category || "",
+    tag: meta.tag || "",
+    page_type: meta.pageType || "",
+    content_group: meta.contentGroup || "",
+    section: meta.section || "",
+    list_id: meta.listId || "",
+    list_name: meta.listName || "",
+    results_count: meta.resultsCount,
+    zero_results: meta.zeroResults,
+    search_mode: meta.searchMode || "",
+    meta,
+  });
 }
 
 export function initTelemetry() {
   if (typeof window === "undefined" || initialized || isAdminRuntime()) return () => {};
   initialized = true;
+  ensureAttributionContext();
 
   queueTelemetryEvent("session_start", {
     source: "telemetry",

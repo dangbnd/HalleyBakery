@@ -88,12 +88,19 @@ export function recordCustomerEvent(type, payload = {}) {
   const snap = productSnapshot(payload.product);
   if (snap) entry.product = snap;
 
-  ["query", "tag", "category", "channel", "href"].forEach((key) => {
+  ["query", "tag", "category", "channel", "href", "status", "message", "value", "route", "page_type", "content_group", "section", "list_id", "list_name", "search_mode"].forEach((key) => {
     const value = payload[key];
     if (value == null) return;
     const text = String(value).trim();
     if (text) entry[key] = text;
   });
+
+  ["list_position", "results_count"].forEach((key) => {
+    const value = Number(payload[key]);
+    if (Number.isFinite(value)) entry[key] = value;
+  });
+
+  if (typeof payload.zero_results === "boolean") entry.zero_results = payload.zero_results;
 
   if (payload.meta && typeof payload.meta === "object") entry.meta = payload.meta;
 

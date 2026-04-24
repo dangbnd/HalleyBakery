@@ -8,6 +8,8 @@ import { coercePriceBySizeMap } from "../lib/pricing.js";
 import { buildProductChatLink, openChatTarget } from "../utils/chatLink.js";
 import ConsultForm from "./ConsultForm.jsx";
 import { pidOf } from "../utils/pid.js";
+import { queueTelemetryEvent } from "../services/telemetry.js";
+import { productSnapshot } from "../utils/customerBehavior.js";
 
 const onlyDigits = (s) => String(s || "").replace(/[^\d]/g, "");
 const RELATED_PAGE_SIZE = 8;
@@ -194,6 +196,20 @@ export default function ProductQuickView({
     return () => io.disconnect();
   }, [hasMoreRelated, relatedProducts.length, relatedVisibleCount]);
 
+  useEffect(() => {
+    if (!showConsult || !product) return;
+    queueTelemetryEvent("consult_form_open", {
+      product: productSnapshot(product),
+      source: "quick_view",
+      page_type: "product_detail",
+      content_group: "catalog",
+      section: "consult_form",
+      list_id: `product:${pidOf(product)}`,
+      list_name: "product_quick_view",
+      category: product?.category || "",
+    });
+  }, [showConsult, product]);
+
   if (!product) return null;
 
   const copyShareLink = async () => {
@@ -201,6 +217,17 @@ export default function ProductQuickView({
     try {
       await navigator.clipboard.writeText(shareUrl);
       setCopied(true);
+      queueTelemetryEvent("share_copy", {
+        product: productSnapshot(product),
+        source: "quick_view",
+        page_type: "product_detail",
+        content_group: "catalog",
+        section: "share",
+        list_id: `product:${pidOf(product)}`,
+        list_name: "product_quick_view",
+        href: shareUrl,
+        category: product?.category || "",
+      });
       setTimeout(() => setCopied(false), 1400);
     } catch {
       setCopied(false);
@@ -363,7 +390,17 @@ export default function ProductQuickView({
                       <a
                         href={messengerCta.href}
                         onClick={(e) => {
-                          onMessengerClick?.(product, messengerCta);
+                          onMessengerClick?.(product, messengerCta, {
+                            source: "quick_view",
+                            pageType: "product_detail",
+                            contentGroup: "catalog",
+                            section: "quick_view",
+                            listId: `product:${pidOf(product)}`,
+                            listName: "product_quick_view",
+                            listPosition: 1,
+                            resultsCount: 1,
+                            category: product?.category || "",
+                          });
                           openChatTarget(messengerCta, e);
                         }}
                         target="_blank"

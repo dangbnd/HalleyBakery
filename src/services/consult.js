@@ -1,6 +1,7 @@
 import { getConfig } from "../utils/config.js";
 import { buildProductChatLink, buildProductLink } from "../utils/chatLink.js";
 import { productSnapshot, saveConsultLead } from "../utils/customerBehavior.js";
+import { getAttributionContext, getCurrentPageContext } from "./attribution.js";
 
 const clean = (value = "") => String(value || "").trim();
 
@@ -25,6 +26,8 @@ export function buildConsultChatTarget({ product, form = {} } = {}) {
 
 function buildLeadRow({ product, form = {}, leadId, productLink }) {
   const snap = productSnapshot(product) || {};
+  const attribution = getAttributionContext();
+  const page = getCurrentPageContext(form.route || "");
   return {
     id: leadId,
     ts: new Date().toISOString(),
@@ -41,6 +44,16 @@ function buildLeadRow({ product, form = {}, leadId, productLink }) {
     tags: (snap.tags || []).join(", "),
     product_link: productLink || buildProductLink(product),
     source: "website",
+    ...page,
+    ...attribution,
+    lead_status: "",
+    lead_score: "",
+    quote_amount: "",
+    order_value: "",
+    lost_reason: "",
+    sales_note: "",
+    assigned_to: "",
+    closed_at: "",
   };
 }
 

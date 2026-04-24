@@ -5,6 +5,10 @@ import { pickDefaultSize, priceFor, sizeOptions } from "../lib/pricing.js";
 import { cdn, prefetchImage } from "../utils/img.js";
 import { usePrefetchOnView } from "../hooks/usePrefetchOnView.js";
 import { buildProductChatLink, openChatTarget } from "../utils/chatLink.js";
+import { queueTelemetryEvent } from "../services/telemetry.js";
+import { productSnapshot } from "../utils/customerBehavior.js";
+
+const impressionSeen = new Set();
 
 function MessengerIcon() {
   return (
@@ -55,6 +59,7 @@ export default function ProductCard({
   isFavorite = false,
   onFavoriteToggle,
   onMessengerClick,
+  trackingContext = {},
 }) {
   const defaultSel = useMemo(() => pickDefaultSize(p, filter), [p, filter]);
   const [sel, setSel] = useState(defaultSel);
@@ -87,11 +92,38 @@ export default function ProductCard({
   );
 
   const srcBase = getImageUrls(p)[0] || "";
-  const prefetch = useCallback(() => {
+  const trackOnView = useCallback(() => {
     prefetchImage(cdn(srcBase, { w: 480, h: 480, q: 70 }));
     prefetchImage(cdn(srcBase, { w: 960, q: 62 }));
-  }, [srcBase]);
-  const prefetchRef = usePrefetchOnView(prefetch, "600px");
+    const snap = productSnapshot(p);
+    if (!snap) return;
+
+    const pageKey =
+      typeof window === "undefined"
+        ? ""
+        : `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const dedupeKey = [
+      pageKey,
+      trackingContext.listId || trackingContext.listName || trackingContext.section || "catalog",
+      snap.pid,
+    ].join("|");
+    if (impressionSeen.has(dedupeKey)) return;
+    impressionSeen.add(dedupeKey);
+
+    queueTelemetryEvent("product_impression", {
+      product: snap,
+      source: trackingContext.source || "product_list",
+      page_type: trackingContext.pageType || "",
+      content_group: trackingContext.contentGroup || "",
+      section: trackingContext.section || "",
+      list_id: trackingContext.listId || "",
+      list_name: trackingContext.listName || "",
+      list_position: trackingContext.index,
+      results_count: trackingContext.resultsCount,
+      category: trackingContext.category || snap.category || "",
+    });
+  }, [p, srcBase, trackingContext]);
+  const prefetchRef = usePrefetchOnView(trackOnView, "600px");
 
   return (
     <article
@@ -104,7 +136,19 @@ export default function ProductCard({
       <button
         type="button"
         className="relative block aspect-[1/1] w-full overflow-hidden"
-        onClick={() => onImageClick?.(p)}
+        onClick={() =>
+          onImageClick?.(p, {
+            source: trackingContext.openSource || trackingContext.source || "card",
+            pageType: trackingContext.pageType || "",
+            contentGroup: trackingContext.contentGroup || "",
+            section: trackingContext.section || "",
+            listId: trackingContext.listId || "",
+            listName: trackingContext.listName || "",
+            listPosition: trackingContext.index,
+            resultsCount: trackingContext.resultsCount,
+            category: trackingContext.category || p?.category || "",
+          })
+        }
         aria-label={p?.name}
       >
         <ProductImage
@@ -144,7 +188,17 @@ export default function ProductCard({
               <a
                 href={messengerCta.href}
                 onClick={(e) => {
-                  onMessengerClick?.(p, messengerCta);
+                  onMessengerClick?.(p, messengerCta, {
+                    source: trackingContext.source || "product_list",
+                    pageType: trackingContext.pageType || "",
+                    contentGroup: trackingContext.contentGroup || "",
+                    section: trackingContext.section || "",
+                    listId: trackingContext.listId || "",
+                    listName: trackingContext.listName || "",
+                    listPosition: trackingContext.index,
+                    resultsCount: trackingContext.resultsCount,
+                    category: trackingContext.category || p?.category || "",
+                  });
                   openChatTarget(messengerCta, e);
                 }}
                 target="_blank"
@@ -171,7 +225,22 @@ export default function ProductCard({
                 <button
                   type="button"
                   key={s.id}
-                  onClick={() => setSel(s.id)}
+                  onClick={() => {
+                    setSel(s.id);
+                    queueTelemetryEvent("size_select", {
+                      product: productSnapshot(p),
+                      source: "product_card",
+                      page_type: trackingContext.pageType || "",
+                      content_group: trackingContext.contentGroup || "",
+                      section: trackingContext.section || "",
+                      list_id: trackingContext.listId || "",
+                      list_name: trackingContext.listName || "",
+                      list_position: trackingContext.index,
+                      results_count: trackingContext.resultsCount,
+                      category: trackingContext.category || p?.category || "",
+                      value: s.label,
+                    });
+                  }}
                   className={
                     "h-6 min-w-0 w-full px-1 rounded-full border text-[10px] sm:text-[11px] leading-none text-center whitespace-nowrap transition " +
                     (active
