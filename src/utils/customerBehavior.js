@@ -263,6 +263,41 @@ function bumpCounter(map, key, label = key, amount = 1) {
   map.set(clean, cur);
 }
 
+function bumpOnce(map, seen, key, label = key, amount = 1) {
+  const clean = String(key || "").trim();
+  if (!clean || Number(amount || 0) <= 0 || seen.has(clean)) return;
+  seen.add(clean);
+  bumpCounter(map, clean, label, amount);
+}
+
+function tagList(value) {
+  return Array.isArray(value) ? value : toArray(value);
+}
+
+function demandSignalWeight(type = "") {
+  switch (String(type || "").trim()) {
+    case "consult_submit":
+      return 10;
+    case "messenger_click":
+    case "contact_entry_click":
+      return 7;
+    case "detail_open":
+      return 4;
+    case "search_submit":
+    case "search_zero_result":
+    case "size_select":
+    case "favorite_add":
+    case "share_copy":
+      return 3;
+    case "category_click":
+    case "tag_click":
+    case "category_results_view":
+      return 2;
+    default:
+      return 0;
+  }
+}
+
 function productStat(map, snap) {
   if (!snap?.pid) return null;
   const cur = map.get(snap.pid) || {
@@ -370,8 +405,11 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
     }
 
     const snap = event.product?.pid ? { ...(catalog.get(event.product.pid) || {}), ...event.product } : null;
-    if (event.tag) bumpCounter(tags, event.tag.toLowerCase(), event.tag);
-    if (event.category) bumpCounter(categories, event.category, event.category);
+    const demandWeight = demandSignalWeight(event.type);
+    const categorySeen = new Set();
+    const tagSeen = new Set();
+    if (event.tag) bumpOnce(tags, tagSeen, event.tag.toLowerCase(), event.tag, demandWeight);
+    if (event.category) bumpOnce(categories, categorySeen, event.category, event.category, demandWeight);
 
     if (!snap?.pid) continue;
     const stat = productStat(byProduct, snap);
@@ -388,8 +426,8 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
       stat.favorite += 1;
     }
 
-    if (snap.category) bumpCounter(categories, snap.category, snap.category);
-    for (const tag of snap.tags || []) bumpCounter(tags, String(tag).toLowerCase(), tag);
+    if (snap.category) bumpOnce(categories, categorySeen, snap.category, snap.category, demandWeight);
+    for (const tag of tagList(snap.tags)) bumpOnce(tags, tagSeen, String(tag).toLowerCase(), tag, demandWeight);
   }
 
   for (const lead of leads) {
@@ -408,6 +446,10 @@ export function summarizeCustomerBehavior(products = [], source = {}) {
     if (!snap?.pid) continue;
     const stat = productStat(byProduct, snap);
     if (stat) stat.consult += 1;
+    const categorySeen = new Set();
+    const tagSeen = new Set();
+    if (snap.category) bumpOnce(categories, categorySeen, snap.category, snap.category, demandSignalWeight("consult_submit"));
+    for (const tag of tagList(snap.tags)) bumpOnce(tags, tagSeen, String(tag).toLowerCase(), tag, demandSignalWeight("consult_submit"));
   }
 
   for (const stat of byProduct.values()) {

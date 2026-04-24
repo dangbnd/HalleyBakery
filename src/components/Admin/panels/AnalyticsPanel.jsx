@@ -822,6 +822,71 @@ function buildAttributionRows(events = [], leads = [], mode = "source", limit = 
     .slice(0, limit);
 }
 
+const PRODUCT_SIGNAL_TYPES = new Set([
+  "product_impression",
+  "detail_open",
+  "size_select",
+  "favorite_add",
+  "favorite_remove",
+  "messenger_click",
+  "consult_form_open",
+  "consult_form_start",
+  "consult_form_abandon",
+  "consult_submit",
+  "share_copy",
+]);
+
+function hasProductIdentity(event = {}) {
+  return !!(event.product?.pid || event.product_pid || event.pid || event.product_id || event.product_name);
+}
+
+function buildTrackingAuditRows(events = [], leads = [], sourceRows = [], campaignRows = []) {
+  const pageViews = events.filter((event) => event.type === "page_view");
+  const productEvents = events.filter((event) => PRODUCT_SIGNAL_TYPES.has(event.type));
+  const productKnown = productEvents.filter(hasProductIdentity).length;
+  const sourceKnown = pageViews.filter((event) => attributionSourceOf(event) !== "direct").length;
+  const campaignKnown = pageViews.filter((event) => !["khongcampaign", "nocampaign"].includes(fingerprint(attributionCampaignOf(event)))).length;
+  const contactCount = events.filter((event) => event.type === "messenger_click" || event.type === "contact_entry_click").length;
+  const leadCount = leads.length;
+  const sourceWithOutcome = sourceRows.filter((row) => Number(row.contacts || 0) > 0 || Number(row.leads || 0) > 0).length;
+  const campaignWithOutcome = campaignRows.filter((row) => Number(row.contacts || 0) > 0 || Number(row.leads || 0) > 0).length;
+
+  return [
+    {
+      key: "source",
+      tone: sourceKnown || !pageViews.length ? "success" : "warning",
+      label: "Nguồn truy cập",
+      value: pageViews.length ? rate(sourceKnown, pageViews.length) : "0%",
+      detail: `${format(sourceKnown)}/${format(pageViews.length)} page view có source khác Direct.`,
+      action: sourceKnown ? "Có thể so sánh kênh đến website." : "Gắn UTM source cho link bạn gửi qua Facebook, Instagram, Zalo.",
+    },
+    {
+      key: "campaign",
+      tone: campaignKnown || !pageViews.length ? "success" : "warning",
+      label: "Campaign/ads",
+      value: pageViews.length ? rate(campaignKnown, pageViews.length) : "0%",
+      detail: `${format(campaignKnown)}/${format(pageViews.length)} page view có campaign.`,
+      action: campaignKnown ? "Có thể so bài/post/ad nào kéo khả năng mua." : "Mỗi bài đăng/quảng cáo nên có utm_campaign riêng.",
+    },
+    {
+      key: "product",
+      tone: productEvents.length && productKnown < productEvents.length ? "warning" : "success",
+      label: "Nhận diện mẫu",
+      value: productEvents.length ? rate(productKnown, productEvents.length) : "0%",
+      detail: `${format(productKnown)}/${format(productEvents.length)} event sản phẩm có mã/tên mẫu.`,
+      action: productKnown === productEvents.length ? "Bảng mẫu đang đọc được ranking." : "Cần đảm bảo event detail/contact/lead luôn gửi product_pid.",
+    },
+    {
+      key: "outcome",
+      tone: contactCount || leadCount ? "success" : "warning",
+      label: "Tín hiệu cuối phễu",
+      value: `${format(contactCount)} / ${format(leadCount)}`,
+      detail: `${format(sourceWithOutcome)} nguồn và ${format(campaignWithOutcome)} campaign có liên hệ/lead.`,
+      action: contactCount || leadCount ? "Có thể ra quyết định thận trọng." : "Chưa nên scale ads, cần thêm liên hệ/lead thật.",
+    },
+  ];
+}
+
 function buildFunnel(summary) {
   const pageViews = Number(summary.totals.pageViews || 0);
   const impressions = Number(summary.totals.impressions || 0);
@@ -963,6 +1028,35 @@ function OpportunityList({ rows = [] }) {
           <Badge variant={variants[row.tone] || "neutral"}>{row.label}</Badge>
           <div className="mt-2 line-clamp-2 text-sm font-semibold text-white">{row.title}</div>
           <div className="mt-2 text-xs leading-5 text-slate-500">{row.detail}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TrackingAudit({ rows = [] }) {
+  const variants = {
+    success: "success",
+    warning: "warning",
+    danger: "danger",
+    neutral: "neutral",
+  };
+
+  return (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      {rows.map((row) => (
+        <div key={row.key} className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{row.label}</div>
+              <div className="mt-2 text-2xl font-semibold text-white">{row.value}</div>
+            </div>
+            <Badge variant={variants[row.tone] || "neutral"}>{row.tone === "success" ? "Ổn" : "Cần sửa"}</Badge>
+          </div>
+          <div className="mt-3 text-xs leading-5 text-slate-400">{row.detail}</div>
+          <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/65 px-3 py-2 text-xs leading-5 text-slate-300">
+            {row.action}
+          </div>
         </div>
       ))}
     </div>
@@ -1485,6 +1579,7 @@ export default function AnalyticsPanel() {
   const categoryRows = useMemo(() => normalizeRankRows(periodSummary.topCategories, 8, categoryLabels), [periodSummary.topCategories, categoryLabels]);
   const sourceRows = useMemo(() => buildAttributionRows(periodEvents, periodLeads, "source"), [periodEvents, periodLeads]);
   const campaignRows = useMemo(() => buildAttributionRows(periodEvents, periodLeads, "campaign"), [periodEvents, periodLeads]);
+  const trackingAuditRows = useMemo(() => buildTrackingAuditRows(periodEvents, periodLeads, sourceRows, campaignRows), [periodEvents, periodLeads, sourceRows, campaignRows]);
   const actionInsights = useMemo(() => buildActionInsights(periodSummary, sourceRows, campaignRows), [periodSummary, sourceRows, campaignRows]);
   const decisionCards = useMemo(
     () => buildDecisionCards(periodSummary, sourceRows, campaignRows, categoryRows, searchRows, zeroSearchRows),
@@ -1594,6 +1689,10 @@ export default function AnalyticsPanel() {
 
       <Section title="Phương hướng hành động" description="Tách rõ việc cần làm cho bài đăng, quảng cáo, sản phẩm và kênh tiếp cận." compact>
         <PlaybookGrid rows={playbookRows} />
+      </Section>
+
+      <Section title="Độ tin cậy tracking" description="Kiểm tra nhanh dữ liệu có đủ sạch để ra quyết định về bài đăng, ads, mẫu và nguồn khách hay chưa." compact>
+        <TrackingAudit rows={trackingAuditRows} />
       </Section>
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
