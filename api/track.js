@@ -160,12 +160,15 @@ function cleanIpAddress(value = "") {
 
 function clientIpFromRequest(req) {
   const headers = req.headers || {};
+  // Cloudflare sits in front of the app for the public domain. Prefer its
+  // client-IP headers before generic forwarded headers, otherwise we may log
+  // the Cloudflare edge IP and geolocation will point to a CDN region.
   return cleanIpAddress(
-    headerValue(headers, "x-forwarded-for") ||
-    headerValue(headers, "x-vercel-forwarded-for") ||
-    headerValue(headers, "x-real-ip") ||
     headerValue(headers, "cf-connecting-ip") ||
     headerValue(headers, "true-client-ip") ||
+    headerValue(headers, "x-vercel-forwarded-for") ||
+    headerValue(headers, "x-real-ip") ||
+    headerValue(headers, "x-forwarded-for") ||
     req.socket?.remoteAddress ||
     req.connection?.remoteAddress ||
     ""
