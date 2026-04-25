@@ -548,7 +548,7 @@ export async function flushTelemetry({ beacon = false, force = false } = {}) {
       keepalive: batch.length <= 8,
     });
     const data = await res.json().catch(() => ({}));
-    if (res.ok || data?.inserted > 0 || data?.accepted > 0) {
+    if (data?.ok !== false && (res.ok || data?.inserted > 0)) {
       flushing = false;
       if (queue.length) scheduleFlush();
       return { ok: true, data };

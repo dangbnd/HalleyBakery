@@ -891,6 +891,7 @@ async function trackEvents({ webApp = "", events = [] } = {}) {
   if (!rows.length) return { ok: true, accepted: 0, inserted: 0 };
 
   const targetTrackingSheetId = await trackingSheetId({ webApp });
+  let trackingError = "";
 
   try {
     const data = await postToAppsScript(webApp, {
@@ -901,8 +902,9 @@ async function trackEvents({ webApp = "", events = [] } = {}) {
       events: rows,
     });
     if (data?.ok !== false) return { ok: true, accepted: rows.length, inserted: data?.inserted ?? rows.length, mode: "tracking.track", data };
+    trackingError = responseMessage(data) || "tracking.track failed";
   } catch (error) {
-    // Fall through to old generic insert below.
+    trackingError = s(error?.message || error);
   }
 
   let inserted = 0;
@@ -930,7 +932,11 @@ async function trackEvents({ webApp = "", events = [] } = {}) {
     accepted: rows.length,
     inserted,
     mode: "insert",
-    error: inserted ? "" : lastError || "events_sheet_unavailable",
+    error: inserted ? "" : lastError || trackingError || "events_sheet_unavailable",
+    trackingError,
+    hint: inserted || !/sheet not found/i.test(lastError || "")
+      ? ""
+      : "Apps Script Web App deployment is not running HB_Tracking.gs yet. Redeploy the Apps Script Web App after adding the tracking file.",
   };
 }
 
@@ -1040,7 +1046,7 @@ export default async function handler(req, res) {
         };
       }),
     });
-    return json(res, data.ok ? 200 : 202, data);
+    return json(res, data.ok ? 200 : 502, data);
   } catch (error) {
     return json(res, 500, { ok: false, error: s(error?.message || "track_failed") });
   }
