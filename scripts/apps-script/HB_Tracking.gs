@@ -22,6 +22,9 @@ var HB_TRACKING_SHEET_ID_CONFIG_KEYS_ = [
   "events_sheet_id",
   "events_spreadsheet_id",
 ];
+var HB_TRACKING_IP_SUMMARY_SHEET_ = "TrackingIP";
+var HB_TRACKING_IP_SUMMARY_DEFAULT_DAYS_ = 30;
+var HB_TRACKING_IP_SUMMARY_DEFAULT_MAX_ROWS_ = 100000;
 
 var HB_TRACKING_ALLOWED_EVENT_TYPES_ = {
   session_start: true,
@@ -170,6 +173,38 @@ var HB_TRACKING_CONSULT_HEADERS_ = [
   "closed_at",
 ];
 
+var HB_TRACKING_IP_SUMMARY_HEADERS_ = [
+  "ip_address",
+  "address",
+  "location_source",
+  "first_seen",
+  "last_seen",
+  "event_count",
+  "visit_count",
+  "session_count",
+  "visitor_count",
+  "page_view_count",
+  "detail_open_count",
+  "product_impression_count",
+  "search_count",
+  "contact_click_count",
+  "consult_submit_count",
+  "viewed_product_count",
+  "top_product_pid",
+  "top_product_name",
+  "top_product_views",
+  "top_category",
+  "queries",
+  "routes",
+  "user_agents",
+  "last_page_path",
+  "last_referrer",
+  "gps_best_accuracy_m",
+  "gps_latitude",
+  "gps_longitude",
+  "updated_at",
+];
+
 function HB_trackingAction_(req) {
   var action = typeof HB_effectiveAction_ === "function"
     ? HB_effectiveAction_(req || {})
@@ -230,6 +265,17 @@ function HB_tryHandleTrackingActions_(req) {
     action === "eventslist"
   ) {
     return HB_trackingList_(req);
+  }
+
+  if (
+    action === "trackingipsummary" ||
+    action === "trackingip" ||
+    action === "ipsummary" ||
+    action === "iptracking" ||
+    action === "rebuildtrackingip" ||
+    action === "trackingiprebuild"
+  ) {
+    return HB_trackingIpSummary_(req);
   }
 
   if (action === "trackingensure" || action === "ensuretracking") {
@@ -412,11 +458,13 @@ function HB_trackingEnsure_() {
   var todaySheet = HB_trackingTodayEventsSheetName_();
   HB_trackingEnsureSheetIn_(ss, todaySheet, HB_TRACKING_EVENT_HEADERS_);
   HB_trackingEnsureSheetIn_(ss, HB_TRACKING_CONSULTS_SHEET_, HB_TRACKING_CONSULT_HEADERS_);
+  HB_trackingEnsureSummarySheet_(ss);
   return {
     ok: true,
     trackingSpreadsheetId: ss.getId(),
     eventsSheet: todaySheet,
     consultsSheet: HB_TRACKING_CONSULTS_SHEET_,
+    ipSummarySheet: HB_TRACKING_IP_SUMMARY_SHEET_,
   };
 }
 
@@ -439,6 +487,10 @@ function testTrackingPing() {
       app_host: "apps-script",
     }],
   });
+}
+
+function testTrackingIpSummary() {
+  return HB_trackingIpSummary_({ days: HB_TRACKING_IP_SUMMARY_DEFAULT_DAYS_ });
 }
 
 function HB_trackingValue_(row, header) {
@@ -660,6 +712,369 @@ function HB_trackingEventRows_(ss, limit) {
     rows = rows.concat(HB_trackingRows_(sheets[i], remaining));
   }
   return rows.slice(0, max);
+}
+
+function HB_trackingTimestampMs_(row) {
+  var ms = Number(HB_trackingValue_(row, "ts_ms"));
+  if (isFinite(ms) && ms > 0) return ms;
+
+  var ts = String(HB_trackingValue_(row, "ts") || "").trim();
+  if (ts) {
+    var parsed = Date.parse(ts);
+    if (isFinite(parsed) && parsed > 0) return parsed;
+  }
+
+  return 0;
+}
+
+function HB_trackingFormatLocalDateTime_(ms) {
+  if (!ms) return "";
+  return Utilities.formatDate(new Date(ms), HB_TRACKING_TIMEZONE_, "yyyy-MM-dd HH:mm:ss");
+}
+
+function HB_trackingCleanText_(value, maxLen) {
+  var text = String(value == null ? "" : value).replace(/\s+/g, " ").trim();
+  var max = Number(maxLen || 0);
+  if (max > 3 && text.length > max) return text.substring(0, max - 3) + "...";
+  return text;
+}
+
+function HB_trackingObjectSize_(obj) {
+  var count = 0;
+  for (var key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) count++;
+  }
+  return count;
+}
+
+function HB_trackingSetAdd_(obj, key) {
+  var text = HB_trackingCleanText_(key, 180);
+  if (text) obj[text] = true;
+}
+
+function HB_trackingBumpCount_(obj, key, amount) {
+  var text = HB_trackingCleanText_(key, 180);
+  if (!text) return;
+  obj[text] = Number(obj[text] || 0) + Number(amount || 1);
+}
+
+function HB_trackingBumpNamedCount_(obj, key, label, amount) {
+  var text = HB_trackingCleanText_(key, 180);
+  if (!text) return;
+  if (!obj[text]) {
+    obj[text] = {
+      key: text,
+      label: HB_trackingCleanText_(label || text, 180),
+      count: 0,
+    };
+  }
+  obj[text].count += Number(amount || 1);
+  if (label && obj[text].label === text) obj[text].label = HB_trackingCleanText_(label, 180);
+}
+
+function HB_trackingTopNamed_(obj) {
+  var best = null;
+  for (var key in obj) {
+    if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+    var item = obj[key];
+    if (!best || Number(item.count || 0) > Number(best.count || 0)) best = item;
+  }
+  return best;
+}
+
+function HB_trackingTopText_(obj, limit) {
+  var items = [];
+  for (var key in obj) {
+    if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+    var raw = obj[key];
+    var count = typeof raw === "object" && raw !== null ? Number(raw.count || 0) : Number(raw || 0);
+    var label = typeof raw === "object" && raw !== null ? String(raw.label || raw.key || key) : String(key);
+    items.push({ label: label, count: count });
+  }
+
+  items.sort(function (a, b) {
+    if (b.count !== a.count) return b.count - a.count;
+    return String(a.label).localeCompare(String(b.label));
+  });
+
+  return items.slice(0, Math.max(1, Number(limit || 5))).map(function (item) {
+    return item.label + " (" + item.count + ")";
+  }).join(", ");
+}
+
+function HB_trackingIpSummaryEntry_(ip) {
+  return {
+    ip_address: ip,
+    address: "",
+    location_source: "",
+    addressRank: 0,
+    addressTs: 0,
+    firstMs: 0,
+    lastMs: 0,
+    event_count: 0,
+    visit_count: 0,
+    page_view_count: 0,
+    detail_open_count: 0,
+    product_impression_count: 0,
+    search_count: 0,
+    contact_click_count: 0,
+    consult_submit_count: 0,
+    sessions: {},
+    visitors: {},
+    products: {},
+    categories: {},
+    queries: {},
+    routes: {},
+    userAgents: {},
+    last_page_path: "",
+    last_referrer: "",
+    gpsBestAccuracy: null,
+    gps_latitude: "",
+    gps_longitude: "",
+  };
+}
+
+function HB_trackingLocationRank_(source, accuracy, lat, lon) {
+  var text = String(source || "").toLowerCase();
+  var hasCoords = !!(String(lat || "").trim() && String(lon || "").trim());
+  if (hasCoords) {
+    if (isFinite(accuracy) && accuracy <= 200) return 50;
+    if (isFinite(accuracy) && accuracy <= 1000) return 45;
+    return 40;
+  }
+  if (text.indexOf("browser_gps") >= 0) return 35;
+  if (text.indexOf("ip") >= 0) return 20;
+  return 10;
+}
+
+function HB_trackingRememberLocation_(entry, row, tsMs) {
+  var address = HB_trackingCleanText_(HB_trackingValue_(row, "address"), 300);
+  var source = HB_trackingCleanText_(HB_trackingValue_(row, "location_source"), 80);
+  var lat = HB_trackingCleanText_(HB_trackingValue_(row, "gps_latitude"), 40);
+  var lon = HB_trackingCleanText_(HB_trackingValue_(row, "gps_longitude"), 40);
+  var accuracy = Number(HB_trackingValue_(row, "gps_accuracy_m"));
+  var hasCoords = !!(lat && lon);
+  var hasUsefulLocation = !!(address || source || hasCoords);
+  if (!hasUsefulLocation) return;
+
+  var currentAccuracy = Number(entry.gpsBestAccuracy);
+  var hasCurrentAccuracy = entry.gpsBestAccuracy !== null && entry.gpsBestAccuracy !== "" && isFinite(currentAccuracy);
+  if (hasCoords && (
+    !entry.gps_latitude ||
+    !hasCurrentAccuracy ||
+    (isFinite(accuracy) && accuracy < currentAccuracy)
+  )) {
+    if (isFinite(accuracy)) entry.gpsBestAccuracy = accuracy;
+    entry.gps_latitude = lat;
+    entry.gps_longitude = lon;
+  }
+
+  var rank = HB_trackingLocationRank_(source, accuracy, lat, lon);
+  if (!entry.addressRank || rank > entry.addressRank || (rank === entry.addressRank && tsMs >= entry.addressTs)) {
+    if (address) entry.address = address;
+    if (source) entry.location_source = source;
+    entry.addressRank = rank;
+    entry.addressTs = tsMs || entry.addressTs || 0;
+  }
+}
+
+function HB_trackingProductKey_(row) {
+  return HB_trackingCleanText_(
+    HB_trackingValue_(row, "product_pid") ||
+    HB_trackingValue_(row, "product_id") ||
+    HB_trackingValue_(row, "product_name"),
+    180
+  );
+}
+
+function HB_trackingProductLabel_(row) {
+  return HB_trackingCleanText_(
+    HB_trackingValue_(row, "product_name") ||
+    HB_trackingValue_(row, "product_pid") ||
+    HB_trackingValue_(row, "product_id"),
+    180
+  );
+}
+
+function HB_trackingAggregateIpRow_(summary, row) {
+  var ip = HB_trackingCleanText_(HB_trackingValue_(row, "ip_address"), 120);
+  if (!ip) return false;
+
+  var entry = summary[ip];
+  if (!entry) {
+    entry = HB_trackingIpSummaryEntry_(ip);
+    summary[ip] = entry;
+  }
+
+  var tsMs = HB_trackingTimestampMs_(row);
+  if (tsMs && (!entry.firstMs || tsMs < entry.firstMs)) entry.firstMs = tsMs;
+  if (tsMs && (!entry.lastMs || tsMs >= entry.lastMs)) {
+    entry.lastMs = tsMs;
+    entry.last_page_path = HB_trackingCleanText_(
+      HB_trackingValue_(row, "page_path") ||
+      HB_trackingValue_(row, "route") ||
+      HB_trackingValue_(row, "page_url"),
+      240
+    );
+    entry.last_referrer = HB_trackingCleanText_(HB_trackingValue_(row, "referrer"), 240);
+  }
+
+  entry.event_count++;
+  HB_trackingRememberLocation_(entry, row, tsMs);
+
+  var type = HB_trackingCleanText_(HB_trackingValue_(row, "type"), 80);
+  if (type === "session_start" || type === "page_view") entry.visit_count++;
+  if (type === "page_view") entry.page_view_count++;
+  if (type === "detail_open") entry.detail_open_count++;
+  if (type === "product_impression") entry.product_impression_count++;
+  if (type === "search_submit" || type === "search_results_view" || type === "search_zero_result") entry.search_count++;
+  if (type === "messenger_click" || type === "contact_entry_click") entry.contact_click_count++;
+  if (type === "consult_submit") entry.consult_submit_count++;
+
+  HB_trackingSetAdd_(entry.sessions, HB_trackingValue_(row, "session_id"));
+  HB_trackingSetAdd_(entry.visitors, HB_trackingValue_(row, "visitor_id"));
+
+  var isProductView = type === "detail_open" || type === "product_impression";
+  if (isProductView) {
+    HB_trackingBumpNamedCount_(entry.products, HB_trackingProductKey_(row), HB_trackingProductLabel_(row), 1);
+  }
+
+  HB_trackingBumpCount_(entry.categories, HB_trackingValue_(row, "category"), 1);
+  HB_trackingBumpCount_(entry.queries, HB_trackingValue_(row, "query"), 1);
+  HB_trackingBumpCount_(
+    entry.routes,
+    HB_trackingValue_(row, "route") || HB_trackingValue_(row, "page_path"),
+    1
+  );
+  HB_trackingBumpCount_(entry.userAgents, HB_trackingCleanText_(HB_trackingValue_(row, "user_agent"), 120), 1);
+  return true;
+}
+
+function HB_trackingSummaryEventSheets_(ss, req) {
+  var includeAll = !!(req && (req.all || req.all_days || req.include_all));
+  var includeLegacy = includeAll || !!(req && (req.include_legacy || req.legacy));
+  var days = Number(req && (req.days || req.recent_days));
+  if (!isFinite(days) || days <= 0) days = HB_TRACKING_IP_SUMMARY_DEFAULT_DAYS_;
+
+  var sheets = HB_trackingEventSheets_(ss).filter(function (sheet) {
+    if (sheet.getName() === HB_TRACKING_EVENTS_SHEET_) return includeLegacy;
+    return true;
+  });
+  if (includeAll) return sheets;
+
+  var selected = [];
+  for (var i = 0; i < sheets.length && selected.length < days; i++) {
+    selected.push(sheets[i]);
+  }
+  return selected;
+}
+
+function HB_trackingIpSummaryValues_(summary) {
+  var entries = [];
+  for (var ip in summary) {
+    if (Object.prototype.hasOwnProperty.call(summary, ip)) entries.push(summary[ip]);
+  }
+
+  entries.sort(function (a, b) {
+    var bVisits = Number(b.visit_count || b.event_count || 0);
+    var aVisits = Number(a.visit_count || a.event_count || 0);
+    if (bVisits !== aVisits) return bVisits - aVisits;
+    return Number(b.lastMs || 0) - Number(a.lastMs || 0);
+  });
+
+  var updatedAt = HB_trackingFormatLocalDateTime_(Date.now());
+  return entries.map(function (entry) {
+    var topProduct = HB_trackingTopNamed_(entry.products);
+    var topCategory = HB_trackingTopText_(entry.categories, 1).replace(/\s+\(\d+\)$/, "");
+    return [
+      entry.ip_address,
+      entry.address,
+      entry.location_source,
+      HB_trackingFormatLocalDateTime_(entry.firstMs),
+      HB_trackingFormatLocalDateTime_(entry.lastMs),
+      entry.event_count,
+      entry.visit_count,
+      HB_trackingObjectSize_(entry.sessions),
+      HB_trackingObjectSize_(entry.visitors),
+      entry.page_view_count,
+      entry.detail_open_count,
+      entry.product_impression_count,
+      entry.search_count,
+      entry.contact_click_count,
+      entry.consult_submit_count,
+      HB_trackingObjectSize_(entry.products),
+      topProduct ? topProduct.key : "",
+      topProduct ? topProduct.label : "",
+      topProduct ? topProduct.count : "",
+      topCategory,
+      HB_trackingTopText_(entry.queries, 5),
+      HB_trackingTopText_(entry.routes, 5),
+      HB_trackingTopText_(entry.userAgents, 3),
+      entry.last_page_path,
+      entry.last_referrer,
+      entry.gpsBestAccuracy == null ? "" : entry.gpsBestAccuracy,
+      entry.gps_latitude,
+      entry.gps_longitude,
+      updatedAt,
+    ];
+  });
+}
+
+function HB_trackingEnsureSummarySheet_(ss) {
+  var sheet = ss.getSheetByName(HB_TRACKING_IP_SUMMARY_SHEET_);
+  if (!sheet) sheet = ss.insertSheet(HB_TRACKING_IP_SUMMARY_SHEET_);
+  sheet.getRange(1, 1, 1, HB_TRACKING_IP_SUMMARY_HEADERS_.length).setValues([HB_TRACKING_IP_SUMMARY_HEADERS_]);
+  sheet.setFrozenRows(1);
+  return sheet;
+}
+
+function HB_trackingWriteIpSummary_(ss, values) {
+  var sheet = HB_trackingEnsureSummarySheet_(ss);
+  var lastRow = sheet.getLastRow();
+  var lastCol = Math.max(sheet.getLastColumn(), HB_TRACKING_IP_SUMMARY_HEADERS_.length);
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+  }
+  if (values.length) {
+    sheet.getRange(2, 1, values.length, HB_TRACKING_IP_SUMMARY_HEADERS_.length).setValues(values);
+  }
+  return sheet;
+}
+
+function HB_trackingIpSummary_(req) {
+  try {
+    req = req || {};
+    var ss = HB_trackingSpreadsheet_(req);
+    var sheets = HB_trackingSummaryEventSheets_(ss, req);
+    var maxRows = Number(req.max_rows || req.maxRows || req.limit || HB_TRACKING_IP_SUMMARY_DEFAULT_MAX_ROWS_);
+    if (!isFinite(maxRows) || maxRows <= 0) maxRows = HB_TRACKING_IP_SUMMARY_DEFAULT_MAX_ROWS_;
+
+    var summary = {};
+    var processed = 0;
+    for (var i = 0; i < sheets.length && processed < maxRows; i++) {
+      var remaining = maxRows - processed;
+      var rows = HB_trackingRows_(sheets[i], remaining);
+      for (var r = 0; r < rows.length && processed < maxRows; r++) {
+        if (HB_trackingAggregateIpRow_(summary, rows[r])) processed++;
+      }
+    }
+
+    var values = HB_trackingIpSummaryValues_(summary);
+    HB_trackingWriteIpSummary_(ss, values);
+    return {
+      ok: true,
+      trackingSpreadsheetId: ss.getId(),
+      sheet: HB_TRACKING_IP_SUMMARY_SHEET_,
+      rows: values.length,
+      processedEvents: processed,
+      eventSheets: sheets.map(function (sheet) { return sheet.getName(); }),
+      days: req.all || req.all_days || req.include_all ? "all" : Number(req.days || req.recent_days || HB_TRACKING_IP_SUMMARY_DEFAULT_DAYS_),
+      maxRows: maxRows,
+      updatedAt: HB_trackingFormatLocalDateTime_(Date.now()),
+    };
+  } catch (err) {
+    return { ok: false, error: String(err && err.message ? err.message : err) };
+  }
 }
 
 function HB_trackingList_(req) {
