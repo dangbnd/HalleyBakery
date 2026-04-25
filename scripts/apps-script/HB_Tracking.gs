@@ -33,6 +33,13 @@ var HB_TRACKING_ALLOWED_EVENT_TYPES_ = {
   consult_submit: true,
   category_click: true,
   tag_click: true,
+  search_suggestion_click: true,
+  favorite_add: true,
+  favorites_page_open: true,
+  size_select: true,
+  consult_form_open: true,
+  consult_form_start: true,
+  share_copy: true,
 };
 
 var HB_TRACKING_EVENT_HEADERS_ = [

@@ -37,6 +37,13 @@ const ALLOWED_EVENT_TYPES = new Set([
   "consult_submit",
   "category_click",
   "tag_click",
+  "search_suggestion_click",
+  "favorite_add",
+  "favorites_page_open",
+  "size_select",
+  "consult_form_open",
+  "consult_form_start",
+  "share_copy",
 ]);
 
 const EVENT_HEADERS = [
