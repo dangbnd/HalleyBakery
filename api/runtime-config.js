@@ -4,6 +4,12 @@
 const CACHE_TTL_MS = 2 * 1000; // 2 seconds to prevent stale config F5 loops
 const FETCH_TIMEOUT_MS = 7000;
 const CACHE = new Map(); // key => { at, data }
+const SENSITIVE_CONFIG_KEYS = new Set([
+  "ip2location_api_key",
+  "ip2location_key",
+  "ip2location_token",
+  "ip2location_api_token",
+]);
 
 function normalizeSheetId(input = "") {
   const s = String(input || "").trim();
@@ -87,6 +93,15 @@ function parseKeyValueTable(text = "") {
     if (!Object.prototype.hasOwnProperty.call(out, key)) {
       out[key] = String(row[1] ?? "").trim();
     }
+  }
+  return out;
+}
+
+function redactSensitiveConfig(config = {}) {
+  const out = {};
+  for (const [key, value] of Object.entries(config || {})) {
+    if (SENSITIVE_CONFIG_KEYS.has(normalizeCfgKey(key))) continue;
+    out[key] = value;
   }
   return out;
 }
@@ -199,7 +214,7 @@ export default async function handler(req, res) {
     const payload = {
       sheetId,
       gidConfig: loaded.gidConfig || "",
-      config: loaded.config || {},
+      config: redactSensitiveConfig(loaded.config || {}),
       fetchedAt: new Date().toISOString(),
       source: "sheet",
     };

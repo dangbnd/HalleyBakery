@@ -94,6 +94,15 @@ const MANUAL_FIELDS = [
     desc: "true/false để bật/tắt ghi log local.",
     icon: "👀",
   },
+  {
+    key: KEYS.IP2LOCATION_API_KEY,
+    label: "IP2Location API Key",
+    placeholder: "Dan key IP2Location.io",
+    desc: "Dung cho /api/track tra IP ra quan/huyen tot hon. Key luu o tab Config va backend doc server-side.",
+    icon: "IP",
+    type: "password",
+    span: "sm:col-span-2",
+  },
 ];
 
 const AUTO_FIELDS = [

@@ -36,6 +36,7 @@ const KEYS = {
   GEMINI_MODELS_ORDER: "gemini_models_order",
   AI_PROMPT_TEMPLATE: "ai_prompt_template",
   ENABLE_VISITOR_TRACKING: "enable_visitor_tracking",
+  IP2LOCATION_API_KEY: "ip2location_api_key",
   LAST_SYNC_AT: "last_sync_at",
 };
 
@@ -142,6 +143,7 @@ const REMOTE_ALIAS_MAP = {
   [KEYS.GEMINI_MODELS_ORDER]: ["gemini_models_order", "ai_models_order", "models_order", "gemini_models"],
   [KEYS.AI_PROMPT_TEMPLATE]: ["ai_prompt_template", "gemini_prompt_template", "prompt_template", "ai_prompt"],
   [KEYS.ENABLE_VISITOR_TRACKING]: ["enable_visitor_tracking", "visitor_tracking", "track_visitors"],
+  [KEYS.IP2LOCATION_API_KEY]: ["ip2location_api_key", "ip2location_key", "ip2location_token", "ip2location_api_token"],
 };
 
 let remoteSyncPromise = null;

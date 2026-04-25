@@ -12,7 +12,15 @@ const IPWHOIS_LOOKUP_URL = "https://ipwho.is";
 const IP_LOOKUP_TIMEOUT_MS = 2500;
 const IP_LOOKUP_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const IP_LOOKUP_CACHE_LIMIT = 300;
+const TRACKING_CONFIG_CACHE_TTL_MS = 5 * 60 * 1000;
+const IP2LOCATION_API_KEY_CONFIG_ALIASES = [
+  "ip2location_api_key",
+  "ip2location_key",
+  "ip2location_token",
+  "ip2location_api_token",
+];
 const ipLookupCache = new Map();
+const trackingConfigCache = new Map();
 
 const ALLOWED_EVENT_TYPES = new Set([
   "session_start",
@@ -386,12 +394,61 @@ function pruneIpLookupCache(now = Date.now()) {
   }
 }
 
-async function lookupIpLocation(ip = "") {
+function normalizeConfigKey(value = "") {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function pickConfigValue(config = {}, aliases = []) {
+  const normalized = {};
+  for (const [key, value] of Object.entries(config || {})) {
+    normalized[normalizeConfigKey(key)] = s(value);
+  }
+  for (const alias of aliases) {
+    const value = normalized[normalizeConfigKey(alias)];
+    if (value) return value;
+  }
+  return "";
+}
+
+async function loadTrackingConfig(webApp = "") {
+  const key = s(webApp);
+  if (!key) return {};
+
+  const now = Date.now();
+  const cached = trackingConfigCache.get(key);
+  if (cached && now - cached.at <= TRACKING_CONFIG_CACHE_TTL_MS) return cached.config || {};
+
+  try {
+    const data = await postToAppsScript(key, { action: "config.load" });
+    const config = data?.config && typeof data.config === "object" ? data.config : {};
+    trackingConfigCache.set(key, { at: now, config });
+    return config;
+  } catch {
+    trackingConfigCache.set(key, { at: now, config: {} });
+    return {};
+  }
+}
+
+async function ip2LocationApiKey(options = {}) {
+  const envKey = s(process.env.IP2LOCATION_API_KEY);
+  if (envKey) return envKey;
+  const config = await loadTrackingConfig(options.webApp);
+  return pickConfigValue(config, IP2LOCATION_API_KEY_CONFIG_ALIASES);
+}
+
+async function lookupIpLocation(ip = "", options = {}) {
   const clean = cleanIpAddress(ip);
   if (!isPublicIpCandidate(clean)) return null;
 
   const now = Date.now();
-  const cached = ipLookupCache.get(clean);
+  const ip2Key = await ip2LocationApiKey(options);
+  const cacheKey = `${clean}:${ip2Key ? "ip2location_key" : "public"}`;
+  const cached = ipLookupCache.get(cacheKey);
   if (cached && now - cached.at <= IP_LOOKUP_CACHE_TTL_MS) return cached.location || null;
 
   const controller = new AbortController();
@@ -402,8 +459,7 @@ async function lookupIpLocation(ip = "") {
       {
         url: new URL(IP2LOCATION_LOOKUP_URL),
         configure: function (url) {
-          const key = s(process.env.IP2LOCATION_API_KEY);
-          if (key) url.searchParams.set("key", key);
+          if (ip2Key) url.searchParams.set("key", ip2Key);
           url.searchParams.set("ip", clean);
           url.searchParams.set("format", "json");
         },
@@ -457,7 +513,7 @@ async function lookupIpLocation(ip = "") {
       };
       if (!s(location.address)) continue;
 
-      ipLookupCache.set(clean, { at: now, location });
+      ipLookupCache.set(cacheKey, { at: now, location });
       pruneIpLookupCache(now);
       return location;
     }
@@ -930,7 +986,7 @@ export default async function handler(req, res) {
     }));
     const gpsEnrichedEvents = await enrichEventsWithGpsAddress(eventsWithRequestContext);
     const needsIpLookup = gpsEnrichedEvents.some((event) => !s(event.address));
-    const ipLookupLocation = needsIpLookup ? await lookupIpLocation(ipAddress) : null;
+    const ipLookupLocation = needsIpLookup ? await lookupIpLocation(ipAddress, { webApp }) : null;
     const ipLookupAddress = s(ipLookupLocation?.address);
     const data = await trackEvents({
       webApp,
