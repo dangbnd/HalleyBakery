@@ -80,6 +80,14 @@ const MANUAL_FIELDS = [
     span: "sm:col-span-2",
   },
   {
+    key: KEYS.TRACKING_SHEET_ID,
+    label: "Tracking Sheet ID",
+    placeholder: "Dan ID hoac link Google Sheet tracking rieng",
+    desc: "File rieng chi de luu Events theo ngay va Consults. De trong thi tracking fallback ve file hien tai.",
+    icon: "LOG",
+    span: "sm:col-span-2 lg:col-span-3",
+  },
+  {
     key: KEYS.GEMINI_API_KEY,
     label: "Gemini API Keys",
     placeholder: "Chưa cấu hình",

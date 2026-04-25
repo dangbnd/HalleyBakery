@@ -1,4 +1,4 @@
-import { getConfig } from "../utils/config.js";
+import { KEYS, getConfig } from "../utils/config.js";
 import { buildProductChatLink, buildProductLink } from "../utils/chatLink.js";
 import { productSnapshot, saveConsultLead } from "../utils/customerBehavior.js";
 import { getAttributionContext, getCurrentPageContext } from "./attribution.js";
@@ -72,6 +72,7 @@ async function pushLeadToSheet(row) {
       payload: {
         action: "insert",
         sheet: "Consults",
+        trackingSheetId: clean(getConfig(KEYS.TRACKING_SHEET_ID, "")),
         row,
       },
     }),

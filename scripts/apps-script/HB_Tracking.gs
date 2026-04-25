@@ -10,8 +10,18 @@
  */
 
 var HB_TRACKING_EVENTS_SHEET_ = "Events";
+var HB_TRACKING_EVENTS_DAILY_PREFIX_ = "Events_";
 var HB_TRACKING_CONSULTS_SHEET_ = "Consults";
 var HB_TRACKING_PRODUCT_IMPRESSION_LIST_LIMIT_ = 6;
+var HB_TRACKING_TIMEZONE_ = "Asia/Ho_Chi_Minh";
+var HB_TRACKING_SHEET_ID_CONFIG_KEYS_ = [
+  "tracking_sheet_id",
+  "tracking_spreadsheet_id",
+  "telemetry_sheet_id",
+  "telemetry_spreadsheet_id",
+  "events_sheet_id",
+  "events_spreadsheet_id",
+];
 
 var HB_TRACKING_ALLOWED_EVENT_TYPES_ = {
   session_start: true,
@@ -171,6 +181,28 @@ function HB_tryHandleTrackingActions_(req) {
   var action = HB_trackingAction_(req);
   if (!action) return null;
 
+  var sheetName = String((req && (req.sheet || req.sheetName || req.tab || req.name)) || "").trim().toLowerCase();
+  if (
+    sheetName === String(HB_TRACKING_CONSULTS_SHEET_).toLowerCase() &&
+    (
+      action === "insert" ||
+      action === "add" ||
+      action === "append" ||
+      action === "create" ||
+      action === "insertrow" ||
+      action === "appendrow" ||
+      action === "addrow" ||
+      action === "sheetinsert" ||
+      action === "sheetadd" ||
+      action === "sheetappend" ||
+      action === "rowsinsert" ||
+      action === "rowsadd" ||
+      action === "rowsappend"
+    )
+  ) {
+    return HB_trackingConsultInsert_(req);
+  }
+
   if (
     action === "trackingtrack" ||
     action === "telemetrytrack" ||
@@ -179,6 +211,16 @@ function HB_tryHandleTrackingActions_(req) {
     action === "eventinsert"
   ) {
     return HB_trackingTrack_(req);
+  }
+
+  if (
+    action === "trackingconsult" ||
+    action === "telemetryconsult" ||
+    action === "consultinsert" ||
+    action === "leadinsert" ||
+    action === "leadsinsert"
+  ) {
+    return HB_trackingConsultInsert_(req);
   }
 
   if (
@@ -230,8 +272,86 @@ function HB_trackingEnsureHeaderPositions_(sheet, current, headers) {
   return sheet.getRange(1, 1, 1, lastCol).getValues()[0];
 }
 
-function HB_trackingEnsureSheet_(name, headers) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+function HB_trackingSpreadsheetIdFromValue_(value) {
+  var text = String(value || "").trim();
+  if (!text) return "";
+  var match = text.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (match && match[1]) return match[1];
+  return text.replace(/[^a-zA-Z0-9-_]/g, "");
+}
+
+function HB_trackingNormCfgKey_(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function HB_trackingConfigValue_(keys) {
+  var wanted = {};
+  keys.forEach(function (key) {
+    wanted[HB_trackingNormCfgKey_(key)] = true;
+  });
+
+  try {
+    if (typeof HB_loadConfig_ === "function") {
+      var loaded = HB_loadConfig_({});
+      var config = loaded && loaded.config ? loaded.config : {};
+      for (var key in config) {
+        if (wanted[HB_trackingNormCfgKey_(key)]) return config[key];
+      }
+    }
+  } catch (err) {}
+
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var names = ["URL", "Config", "config", "Settings", "Cau hinh"];
+    for (var i = 0; i < names.length; i++) {
+      var sheet = ss.getSheetByName(names[i]);
+      if (!sheet) continue;
+      var values = sheet.getDataRange().getValues();
+      for (var r = 1; r < values.length; r++) {
+        var cfgKey = HB_trackingNormCfgKey_(values[r][0]);
+        if (wanted[cfgKey]) return values[r][1];
+      }
+    }
+  } catch (err2) {}
+
+  return "";
+}
+
+function HB_trackingConfiguredSpreadsheetId_(req) {
+  var raw = req && (
+    req.tracking_sheet_id ||
+    req.trackingSheetId ||
+    req.tracking_spreadsheet_id ||
+    req.trackingSpreadsheetId ||
+    req.telemetry_sheet_id ||
+    req.telemetrySheetId
+  );
+  var id = HB_trackingSpreadsheetIdFromValue_(raw);
+  if (id) return id;
+
+  id = HB_trackingSpreadsheetIdFromValue_(HB_trackingConfigValue_(HB_TRACKING_SHEET_ID_CONFIG_KEYS_));
+  if (id) return id;
+
+  try {
+    var props = PropertiesService.getScriptProperties();
+    id = HB_trackingSpreadsheetIdFromValue_(
+      props.getProperty("HB_TRACKING_SHEET_ID") ||
+      props.getProperty("TRACKING_SHEET_ID") ||
+      props.getProperty("TRACKING_SPREADSHEET_ID")
+    );
+    if (id) return id;
+  } catch (err) {}
+
+  return "";
+}
+
+function HB_trackingSpreadsheet_(req) {
+  var id = HB_trackingConfiguredSpreadsheetId_(req || {});
+  if (!id) return SpreadsheetApp.getActiveSpreadsheet();
+  return SpreadsheetApp.openById(id);
+}
+
+function HB_trackingEnsureSheetIn_(ss, name, headers) {
   var sheet = ss.getSheetByName(name);
   if (!sheet) sheet = ss.insertSheet(name);
 
@@ -260,10 +380,44 @@ function HB_trackingEnsureSheet_(name, headers) {
   return sheet;
 }
 
+function HB_trackingEnsureSheet_(name, headers, req) {
+  return HB_trackingEnsureSheetIn_(HB_trackingSpreadsheet_(req || {}), name, headers);
+}
+
+function HB_trackingDateFromRow_(row) {
+  var ms = Number(HB_trackingValue_(row, "ts_ms"));
+  if (isFinite(ms) && ms > 0) return new Date(ms);
+
+  var ts = String(HB_trackingValue_(row, "ts") || "").trim();
+  if (ts) {
+    var parsed = Date.parse(ts);
+    if (isFinite(parsed)) return new Date(parsed);
+  }
+
+  return new Date();
+}
+
+function HB_trackingDailyEventsSheetName_(row) {
+  return HB_TRACKING_EVENTS_DAILY_PREFIX_ +
+    Utilities.formatDate(HB_trackingDateFromRow_(row || {}), HB_TRACKING_TIMEZONE_, "yyyy-MM-dd");
+}
+
+function HB_trackingTodayEventsSheetName_() {
+  return HB_TRACKING_EVENTS_DAILY_PREFIX_ +
+    Utilities.formatDate(new Date(), HB_TRACKING_TIMEZONE_, "yyyy-MM-dd");
+}
+
 function HB_trackingEnsure_() {
-  HB_trackingEnsureSheet_(HB_TRACKING_EVENTS_SHEET_, HB_TRACKING_EVENT_HEADERS_);
-  HB_trackingEnsureSheet_(HB_TRACKING_CONSULTS_SHEET_, HB_TRACKING_CONSULT_HEADERS_);
-  return { ok: true, eventsSheet: HB_TRACKING_EVENTS_SHEET_, consultsSheet: HB_TRACKING_CONSULTS_SHEET_ };
+  var ss = HB_trackingSpreadsheet_({});
+  var todaySheet = HB_trackingTodayEventsSheetName_();
+  HB_trackingEnsureSheetIn_(ss, todaySheet, HB_TRACKING_EVENT_HEADERS_);
+  HB_trackingEnsureSheetIn_(ss, HB_TRACKING_CONSULTS_SHEET_, HB_TRACKING_CONSULT_HEADERS_);
+  return {
+    ok: true,
+    trackingSpreadsheetId: ss.getId(),
+    eventsSheet: todaySheet,
+    consultsSheet: HB_TRACKING_CONSULTS_SHEET_,
+  };
 }
 
 function testTrackingSetup() {
@@ -366,17 +520,94 @@ function HB_trackingAppendRows_(sheet, headers, rows) {
   return values.length;
 }
 
+function HB_trackingAppendConsultRows_(sheet, headers, rows) {
+  if (!rows.length) return 0;
+  var recentIds = HB_trackingRecentIdSet_(sheet, headers, 3000);
+  var batchIds = {};
+  var filtered = rows.filter(function (row) {
+    var id = String(HB_trackingValue_(row, "id") || "").trim();
+    if (id) {
+      if (recentIds[id] || batchIds[id]) return false;
+      batchIds[id] = true;
+    }
+    return true;
+  });
+  if (!filtered.length) return 0;
+
+  var values = filtered.map(function (row) {
+    return headers.map(function (header) {
+      var value = HB_trackingValue_(row, header);
+      if (typeof value === "object" && value !== null) {
+        try {
+          return JSON.stringify(value);
+        } catch (err) {
+          return String(value);
+        }
+      }
+      return value;
+    });
+  });
+  sheet.getRange(sheet.getLastRow() + 1, 1, values.length, headers.length).setValues(values);
+  return values.length;
+}
+
 function HB_trackingTrack_(req) {
   try {
-    var sheet = HB_trackingEnsureSheet_(HB_TRACKING_EVENTS_SHEET_, HB_TRACKING_EVENT_HEADERS_);
+    var ss = HB_trackingSpreadsheet_(req || {});
     var events = [];
     if (Array.isArray(req.events)) events = req.events;
     else if (req.event) events = [req.event];
     else if (req.row) events = [req.row];
     else if (req.data) events = Array.isArray(req.data) ? req.data : [req.data];
 
-    var inserted = HB_trackingAppendRows_(sheet, HB_TRACKING_EVENT_HEADERS_, events);
-    return { ok: true, accepted: events.length, inserted: inserted, eventsSheet: HB_TRACKING_EVENTS_SHEET_ };
+    var grouped = {};
+    events.forEach(function (event) {
+      var name = HB_trackingDailyEventsSheetName_(event || {});
+      if (!grouped[name]) grouped[name] = [];
+      grouped[name].push(event);
+    });
+
+    var inserted = 0;
+    var eventSheets = [];
+    for (var name in grouped) {
+      var sheet = HB_trackingEnsureSheetIn_(ss, name, HB_TRACKING_EVENT_HEADERS_);
+      var count = HB_trackingAppendRows_(sheet, HB_TRACKING_EVENT_HEADERS_, grouped[name]);
+      inserted += count;
+      eventSheets.push(name);
+    }
+
+    return {
+      ok: true,
+      accepted: events.length,
+      inserted: inserted,
+      trackingSpreadsheetId: ss.getId(),
+      eventsSheet: eventSheets[0] || HB_trackingTodayEventsSheetName_(),
+      eventSheets: eventSheets,
+    };
+  } catch (err) {
+    return { ok: false, error: String(err && err.message ? err.message : err) };
+  }
+}
+
+function HB_trackingConsultInsert_(req) {
+  try {
+    var ss = HB_trackingSpreadsheet_(req || {});
+    var sheet = HB_trackingEnsureSheetIn_(ss, HB_TRACKING_CONSULTS_SHEET_, HB_TRACKING_CONSULT_HEADERS_);
+    var rows = [];
+    if (Array.isArray(req.rows)) rows = req.rows;
+    else if (Array.isArray(req.leads)) rows = req.leads;
+    else if (req.lead) rows = [req.lead];
+    else if (req.row) rows = [req.row];
+    else if (req.data) rows = Array.isArray(req.data) ? req.data : [req.data];
+
+    var inserted = HB_trackingAppendConsultRows_(sheet, HB_TRACKING_CONSULT_HEADERS_, rows);
+    return {
+      ok: true,
+      accepted: rows.length,
+      inserted: inserted,
+      trackingSpreadsheetId: ss.getId(),
+      consultsSheet: HB_TRACKING_CONSULTS_SHEET_,
+    };
   } catch (err) {
     return { ok: false, error: String(err && err.message ? err.message : err) };
   }
@@ -405,17 +636,44 @@ function HB_trackingRows_(sheet, limit) {
   }).reverse();
 }
 
+function HB_trackingEventSheetDateKey_(name) {
+  var text = String(name || "").trim();
+  if (text === HB_TRACKING_EVENTS_SHEET_) return "0000-00-00";
+  var match = text.match(/^Events_(\d{4}-\d{2}-\d{2})$/);
+  return match ? match[1] : "";
+}
+
+function HB_trackingEventSheets_(ss) {
+  return ss.getSheets().filter(function (sheet) {
+    return !!HB_trackingEventSheetDateKey_(sheet.getName());
+  }).sort(function (a, b) {
+    return HB_trackingEventSheetDateKey_(b.getName()).localeCompare(HB_trackingEventSheetDateKey_(a.getName()));
+  });
+}
+
+function HB_trackingEventRows_(ss, limit) {
+  var max = Math.max(1, Number(limit || 5000));
+  var rows = [];
+  var sheets = HB_trackingEventSheets_(ss);
+  for (var i = 0; i < sheets.length && rows.length < max; i++) {
+    var remaining = max - rows.length;
+    rows = rows.concat(HB_trackingRows_(sheets[i], remaining));
+  }
+  return rows.slice(0, max);
+}
+
 function HB_trackingList_(req) {
   try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var ss = HB_trackingSpreadsheet_(req || {});
     var limit = Number(req.limit || 5000);
-    var eventsSheet = ss.getSheetByName(HB_TRACKING_EVENTS_SHEET_);
     var consultsSheet = ss.getSheetByName(HB_TRACKING_CONSULTS_SHEET_);
     return {
       ok: true,
-      events: HB_trackingRows_(eventsSheet, limit),
+      events: HB_trackingEventRows_(ss, limit),
       leads: HB_trackingRows_(consultsSheet, Math.min(limit, 2000)),
-      eventsSheet: HB_TRACKING_EVENTS_SHEET_,
+      trackingSpreadsheetId: ss.getId(),
+      eventsSheet: HB_trackingTodayEventsSheetName_(),
+      eventSheets: HB_trackingEventSheets_(ss).map(function (sheet) { return sheet.getName(); }),
       consultsSheet: HB_TRACKING_CONSULTS_SHEET_,
     };
   } catch (err) {

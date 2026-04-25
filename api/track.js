@@ -19,6 +19,14 @@ const IP2LOCATION_API_KEY_CONFIG_ALIASES = [
   "ip2location_token",
   "ip2location_api_token",
 ];
+const TRACKING_SHEET_ID_CONFIG_ALIASES = [
+  "tracking_sheet_id",
+  "tracking_spreadsheet_id",
+  "telemetry_sheet_id",
+  "telemetry_spreadsheet_id",
+  "events_sheet_id",
+  "events_spreadsheet_id",
+];
 const ipLookupCache = new Map();
 const trackingConfigCache = new Map();
 
@@ -403,6 +411,14 @@ function normalizeConfigKey(value = "") {
     .replace(/^_+|_+$/g, "");
 }
 
+function normalizeSpreadsheetId(value = "") {
+  const text = s(value);
+  if (!text) return "";
+  const match = text.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (match?.[1]) return match[1];
+  return text.replace(/[^a-zA-Z0-9-_]/g, "");
+}
+
 function pickConfigValue(config = {}, aliases = []) {
   const normalized = {};
   for (const [key, value] of Object.entries(config || {})) {
@@ -439,6 +455,13 @@ async function ip2LocationApiKey(options = {}) {
   if (envKey) return envKey;
   const config = await loadTrackingConfig(options.webApp);
   return pickConfigValue(config, IP2LOCATION_API_KEY_CONFIG_ALIASES);
+}
+
+async function trackingSheetId(options = {}) {
+  const envId = normalizeSpreadsheetId(process.env.TRACKING_SHEET_ID || process.env.TRACKING_SPREADSHEET_ID || "");
+  if (envId) return envId;
+  const config = await loadTrackingConfig(options.webApp);
+  return normalizeSpreadsheetId(pickConfigValue(config, TRACKING_SHEET_ID_CONFIG_ALIASES));
 }
 
 async function lookupIpLocation(ip = "", options = {}) {
@@ -867,10 +890,13 @@ async function trackEvents({ webApp = "", events = [] } = {}) {
   );
   if (!rows.length) return { ok: true, accepted: 0, inserted: 0 };
 
+  const targetTrackingSheetId = await trackingSheetId({ webApp });
+
   try {
     const data = await postToAppsScript(webApp, {
       action: "tracking.track",
       sheet: "Events",
+      trackingSheetId: targetTrackingSheetId,
       headers: EVENT_HEADERS,
       events: rows,
     });
@@ -886,6 +912,7 @@ async function trackEvents({ webApp = "", events = [] } = {}) {
       const data = await postToAppsScript(webApp, {
         action: "insert",
         sheet: "Events",
+        trackingSheetId: targetTrackingSheetId,
         row,
       });
       if (data?.ok === false) {
@@ -909,10 +936,12 @@ async function trackEvents({ webApp = "", events = [] } = {}) {
 
 async function listTelemetry({ webApp = "", authToken = "", limit = 5000 } = {}) {
   const auth = authPayload(authToken);
+  const targetTrackingSheetId = await trackingSheetId({ webApp });
   try {
     const data = await postToAppsScript(webApp, {
       action: "tracking.list",
       sheet: "Events",
+      trackingSheetId: targetTrackingSheetId,
       limit,
       _auth: auth,
     });
@@ -930,7 +959,12 @@ async function listTelemetry({ webApp = "", authToken = "", limit = 5000 } = {})
 
   const result = { ok: false, events: [], leads: [], source: "sheet.list", error: "" };
   try {
-    const data = await postToAppsScript(webApp, { action: "list", sheet: "Events", _auth: auth });
+    const data = await postToAppsScript(webApp, {
+      action: "list",
+      sheet: "Events",
+      trackingSheetId: targetTrackingSheetId,
+      _auth: auth,
+    });
     if (data?.ok !== false) {
       result.ok = true;
       result.events = Array.isArray(data?.rows) ? data.rows : [];
@@ -942,7 +976,12 @@ async function listTelemetry({ webApp = "", authToken = "", limit = 5000 } = {})
   }
 
   try {
-    const data = await postToAppsScript(webApp, { action: "list", sheet: "Consults", _auth: auth });
+    const data = await postToAppsScript(webApp, {
+      action: "list",
+      sheet: "Consults",
+      trackingSheetId: targetTrackingSheetId,
+      _auth: auth,
+    });
     if (data?.ok !== false) result.leads = Array.isArray(data?.rows) ? data.rows : [];
   } catch {}
 
