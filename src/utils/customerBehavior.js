@@ -9,14 +9,8 @@ export const CUSTOMER_RECENTS_KEY = "hb_recent_products_v1";
 export const CUSTOMER_CONSULT_LEADS_KEY = "hb_consult_leads_v1";
 export const CUSTOMER_BEHAVIOR_EVENT = "hb:customer-behavior-changed";
 export const BUSINESS_EVENT_TYPES = new Set([
-  "session_start",
-  "page_view",
   "search_submit",
-  "search_results_view",
-  "search_zero_result",
-  "category_results_view",
   "detail_open",
-  "product_impression",
   "messenger_click",
   "contact_entry_click",
   "consult_submit",

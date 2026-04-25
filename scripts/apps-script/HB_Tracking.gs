@@ -12,7 +12,6 @@
 var HB_TRACKING_EVENTS_SHEET_ = "Events";
 var HB_TRACKING_EVENTS_DAILY_PREFIX_ = "Events_";
 var HB_TRACKING_CONSULTS_SHEET_ = "Consults";
-var HB_TRACKING_PRODUCT_IMPRESSION_LIST_LIMIT_ = 6;
 var HB_TRACKING_TIMEZONE_ = "Asia/Ho_Chi_Minh";
 var HB_TRACKING_SHEET_ID_CONFIG_KEYS_ = [
   "tracking_sheet_id",
@@ -27,14 +26,8 @@ var HB_TRACKING_IP_SUMMARY_DEFAULT_DAYS_ = 30;
 var HB_TRACKING_IP_SUMMARY_DEFAULT_MAX_ROWS_ = 100000;
 
 var HB_TRACKING_ALLOWED_EVENT_TYPES_ = {
-  session_start: true,
-  page_view: true,
   search_submit: true,
-  search_results_view: true,
-  search_zero_result: true,
-  category_results_view: true,
   detail_open: true,
-  product_impression: true,
   messenger_click: true,
   contact_entry_click: true,
   consult_submit: true,
@@ -479,10 +472,11 @@ function testTrackingPing() {
       id: "manual-" + Date.now(),
       ts: new Date().toISOString(),
       ts_ms: Date.now(),
-      type: "session_start",
+      type: "search_submit",
       source: "apps-script",
       severity: "info",
       page_path: "/apps-script-test",
+      query: "manual tracking smoke test",
       message: "Manual tracking smoke test",
       app_host: "apps-script",
     }],
@@ -529,14 +523,6 @@ function HB_trackingRecentIdSet_(sheet, headers, limit) {
   return ids;
 }
 
-function HB_trackingAllowVolume_(row) {
-  var type = String(HB_trackingValue_(row, "type") || "").trim();
-  if (type !== "product_impression") return true;
-
-  var pos = Number(HB_trackingValue_(row, "list_position"));
-  return !isFinite(pos) || pos <= HB_TRACKING_PRODUCT_IMPRESSION_LIST_LIMIT_;
-}
-
 function HB_trackingAppendRows_(sheet, headers, rows) {
   if (!rows.length) return 0;
   var recentIds = HB_trackingRecentIdSet_(sheet, headers, 3000);
@@ -544,7 +530,6 @@ function HB_trackingAppendRows_(sheet, headers, rows) {
   var filtered = rows.filter(function (row) {
     var type = String(HB_trackingValue_(row, "type") || "").trim();
     if (!HB_TRACKING_ALLOWED_EVENT_TYPES_[type]) return false;
-    if (!HB_trackingAllowVolume_(row)) return false;
 
     var id = String(HB_trackingValue_(row, "id") || "").trim();
     if (id) {
@@ -900,6 +885,9 @@ function HB_trackingAggregateIpRow_(summary, row) {
   var ip = HB_trackingCleanText_(HB_trackingValue_(row, "ip_address"), 120);
   if (!ip) return false;
 
+  var type = HB_trackingCleanText_(HB_trackingValue_(row, "type"), 80);
+  if (!HB_TRACKING_ALLOWED_EVENT_TYPES_[type]) return false;
+
   var entry = summary[ip];
   if (!entry) {
     entry = HB_trackingIpSummaryEntry_(ip);
@@ -922,19 +910,17 @@ function HB_trackingAggregateIpRow_(summary, row) {
   entry.event_count++;
   HB_trackingRememberLocation_(entry, row, tsMs);
 
-  var type = HB_trackingCleanText_(HB_trackingValue_(row, "type"), 80);
-  if (type === "session_start" || type === "page_view") entry.visit_count++;
   if (type === "page_view") entry.page_view_count++;
   if (type === "detail_open") entry.detail_open_count++;
   if (type === "product_impression") entry.product_impression_count++;
-  if (type === "search_submit" || type === "search_results_view" || type === "search_zero_result") entry.search_count++;
+  if (type === "search_submit") entry.search_count++;
   if (type === "messenger_click" || type === "contact_entry_click") entry.contact_click_count++;
   if (type === "consult_submit") entry.consult_submit_count++;
 
   HB_trackingSetAdd_(entry.sessions, HB_trackingValue_(row, "session_id"));
   HB_trackingSetAdd_(entry.visitors, HB_trackingValue_(row, "visitor_id"));
 
-  var isProductView = type === "detail_open" || type === "product_impression";
+  var isProductView = type === "detail_open";
   if (isProductView) {
     HB_trackingBumpNamedCount_(entry.products, HB_trackingProductKey_(row), HB_trackingProductLabel_(row), 1);
   }
@@ -976,8 +962,8 @@ function HB_trackingIpSummaryValues_(summary) {
   }
 
   entries.sort(function (a, b) {
-    var bVisits = Number(b.visit_count || b.event_count || 0);
-    var aVisits = Number(a.visit_count || a.event_count || 0);
+    var bVisits = Number(b.visit_count || HB_trackingObjectSize_(b.sessions) || b.event_count || 0);
+    var aVisits = Number(a.visit_count || HB_trackingObjectSize_(a.sessions) || a.event_count || 0);
     if (bVisits !== aVisits) return bVisits - aVisits;
     return Number(b.lastMs || 0) - Number(a.lastMs || 0);
   });
@@ -986,6 +972,8 @@ function HB_trackingIpSummaryValues_(summary) {
   return entries.map(function (entry) {
     var topProduct = HB_trackingTopNamed_(entry.products);
     var topCategory = HB_trackingTopText_(entry.categories, 1).replace(/\s+\(\d+\)$/, "");
+    var sessionCount = HB_trackingObjectSize_(entry.sessions);
+    var visitCount = entry.visit_count || sessionCount;
     return [
       entry.ip_address,
       entry.address,
@@ -993,8 +981,8 @@ function HB_trackingIpSummaryValues_(summary) {
       HB_trackingFormatLocalDateTime_(entry.firstMs),
       HB_trackingFormatLocalDateTime_(entry.lastMs),
       entry.event_count,
-      entry.visit_count,
-      HB_trackingObjectSize_(entry.sessions),
+      visitCount,
+      sessionCount,
       HB_trackingObjectSize_(entry.visitors),
       entry.page_view_count,
       entry.detail_open_count,

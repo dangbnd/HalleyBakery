@@ -8,45 +8,6 @@ import { buildProductChatLink, openChatTarget } from "../utils/chatLink.js";
 import { queueTelemetryEvent } from "../services/telemetry.js";
 import { productSnapshot } from "../utils/customerBehavior.js";
 
-const IMPRESSION_STORAGE_KEY = "hb_seen_product_impressions_v1";
-const IMPRESSION_LIST_LIMIT = 6;
-const impressionSeen = new Set();
-let impressionLoaded = false;
-
-function loadSeenImpressions() {
-  if (impressionLoaded || typeof window === "undefined") return;
-  impressionLoaded = true;
-  try {
-    const raw = window.sessionStorage.getItem(IMPRESSION_STORAGE_KEY);
-    const values = JSON.parse(raw || "[]");
-    if (!Array.isArray(values)) return;
-    values.forEach((value) => {
-      const key = String(value || "").trim();
-      if (key) impressionSeen.add(key);
-    });
-  } catch {}
-}
-
-function persistSeenImpressions() {
-  if (typeof window === "undefined") return;
-  try {
-    const values = [...impressionSeen].slice(-500);
-    window.sessionStorage.setItem(IMPRESSION_STORAGE_KEY, JSON.stringify(values));
-  } catch {}
-}
-
-function shouldTrackImpression(trackingContext = {}) {
-  if (typeof document !== "undefined" && document.visibilityState === "hidden") return false;
-
-  const pageType = String(trackingContext.pageType || "").trim().toLowerCase();
-  if (!["search", "category", "favorites"].includes(pageType)) return false;
-
-  const index = Number(trackingContext.index);
-  if (Number.isFinite(index) && index > IMPRESSION_LIST_LIMIT) return false;
-
-  return true;
-}
-
 function MessengerIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
@@ -132,33 +93,7 @@ export default function ProductCard({
   const trackOnView = useCallback(() => {
     prefetchImage(cdn(srcBase, { w: 480, h: 480, q: 70 }));
     prefetchImage(cdn(srcBase, { w: 960, q: 62 }));
-    const snap = productSnapshot(p);
-    if (!snap) return;
-    if (!shouldTrackImpression(trackingContext)) return;
-
-    loadSeenImpressions();
-
-    const dedupeKey = [
-      trackingContext.listId || trackingContext.listName || trackingContext.section || "catalog",
-      snap.pid,
-    ].join("|");
-    if (impressionSeen.has(dedupeKey)) return;
-    impressionSeen.add(dedupeKey);
-    persistSeenImpressions();
-
-    queueTelemetryEvent("product_impression", {
-      product: snap,
-      source: trackingContext.source || "product_list",
-      page_type: trackingContext.pageType || "",
-      content_group: trackingContext.contentGroup || "",
-      section: trackingContext.section || "",
-      list_id: trackingContext.listId || "",
-      list_name: trackingContext.listName || "",
-      list_position: trackingContext.index,
-      results_count: trackingContext.resultsCount,
-      category: trackingContext.category || snap.category || "",
-    });
-  }, [p, srcBase, trackingContext]);
+  }, [srcBase]);
   const prefetchRef = usePrefetchOnView(trackOnView, "600px");
 
   return (

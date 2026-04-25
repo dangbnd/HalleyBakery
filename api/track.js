@@ -1,6 +1,5 @@
 const UNKNOWN_ACTION_RE =
   /no action|unknown action|unknown op|invalid action|unsupported action|action not supported|missing action|missing op|no handler|no function/i;
-const PRODUCT_IMPRESSION_LIST_LIMIT = 6;
 const GPS_REVERSE_GEOCODE_URL = "https://nominatim.openstreetmap.org/reverse";
 const GPS_REVERSE_GEOCODE_TIMEOUT_MS = 2500;
 const GPS_REVERSE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -31,14 +30,8 @@ const ipLookupCache = new Map();
 const trackingConfigCache = new Map();
 
 const ALLOWED_EVENT_TYPES = new Set([
-  "session_start",
-  "page_view",
   "search_submit",
-  "search_results_view",
-  "search_zero_result",
-  "category_results_view",
   "detail_open",
-  "product_impression",
   "messenger_click",
   "contact_entry_click",
   "consult_submit",
@@ -716,38 +709,9 @@ function productField(event = {}, field = "") {
   return "";
 }
 
-function isAllowedVolumeEvent(event = {}) {
-  if (event.type === "product_impression") {
-    const pos = Number(event.list_position);
-    return !Number.isFinite(pos) || pos <= PRODUCT_IMPRESSION_LIST_LIMIT;
-  }
-
-  return true;
-}
-
-function compactMeta(value) {
-  if (!value) return "";
-  if (typeof value === "string") return value.slice(0, 500);
-  try {
-    return JSON.stringify(value).slice(0, 500);
-  } catch {
-    return String(value).slice(0, 500);
-  }
-}
-
 function eventUniqueKey(event = {}) {
   const type = s(event.type);
   const pid = productField(event, "pid");
-
-  if (type === "product_impression" && pid) {
-    return [
-      type,
-      event.session_id,
-      event.page_type,
-      event.list_id || event.list_name || event.section,
-      pid,
-    ].join("|");
-  }
 
   if (type === "detail_open" && pid) {
     return [
@@ -756,19 +720,6 @@ function eventUniqueKey(event = {}) {
       pid,
       event.source,
       event.page_path,
-    ].join("|");
-  }
-
-  if (type === "category_results_view" || type === "search_results_view" || type === "search_zero_result") {
-    return [
-      type,
-      event.session_id,
-      event.page_path,
-      event.route,
-      event.query,
-      event.category,
-      event.list_id || event.list_name,
-      compactMeta(event.meta),
     ].join("|");
   }
 
@@ -886,7 +837,6 @@ async function trackEvents({ webApp = "", events = [] } = {}) {
     events
       .map(normalizeEvent)
       .filter((event) => event.type && ALLOWED_EVENT_TYPES.has(event.type))
-      .filter(isAllowedVolumeEvent)
   );
   if (!rows.length) return { ok: true, accepted: 0, inserted: 0 };
 

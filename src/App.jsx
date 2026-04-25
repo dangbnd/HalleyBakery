@@ -42,7 +42,7 @@ import {
 } from "./utils/customerBehavior.js";
 import { submitConsultLead } from "./services/consult.js";
 import { ensureAttributionContext } from "./services/attribution.js";
-import { initTelemetry, isTrackingSuppressed, queueTelemetryEvent, trackPageView } from "./services/telemetry.js";
+import { initTelemetry, isTrackingSuppressed } from "./services/telemetry.js";
 
 /* ---------------- helpers ---------------- */
 
@@ -584,23 +584,6 @@ function clearProductPath() {
   window.history.replaceState(null, "", u);
 }
 
-function pageTypeForRoute(route = "", hasCustomPage = false) {
-  if (route === "home") return "home";
-  if (route === "search") return "search";
-  if (route === "favorites") return "favorites";
-  if (route === "admin") return "admin";
-  if (hasCustomPage) return "content_page";
-  return "category";
-}
-
-function contentGroupForPageType(pageType = "") {
-  if (pageType === "content_page") return "content";
-  if (pageType === "admin") return "admin";
-  return "catalog";
-}
-
-
-
 export default function App() {
   const [configTick, setConfigTick] = useState(0);
   const [route, setRoute] = useState("home");
@@ -614,8 +597,6 @@ export default function App() {
   const quickInitFromURLRef = useRef(false);
   const didInitQuickURLRef = useRef(false);
   const lastTrackedUrlProductRef = useRef("");
-  const lastTrackedSearchViewRef = useRef("");
-  const lastTrackedCategoryViewRef = useRef("");
   const [activeCat, setActiveCat] = useState("all");
   const [homeActive, setHomeActive] = useState("all");
   const [filterState, setFilterState] = useState(null);
@@ -802,18 +783,6 @@ export default function App() {
     }
     window.history.replaceState(null, "", u);
   }, [route, q, activeCat, filterState]);
-
-  useEffect(() => {
-    const pageType = pageTypeForRoute(route, false);
-    trackPageView({
-      route,
-      query: q,
-      category: activeCat,
-      pageType,
-      contentGroup: contentGroupForPageType(pageType),
-      source: "app_route",
-    });
-  }, [route, q, activeCat]);
 
   /* FB urls */
   useEffect(() => {
@@ -1527,108 +1496,6 @@ export default function App() {
 
     return [...sameCategoryAndStrong, ...sameCategoryOnly, ...strongCrossCategory];
   }, [quick, products, relatedShuffleSeed]);
-
-  useEffect(() => {
-    if (route !== "search" || dataLoading) return;
-
-    const query = qDeb.trim();
-    const hasFilters =
-      activeFilterSummary.tags.length > 0 ||
-      activeFilterSummary.sizes.length > 0 ||
-      activeFilterSummary.levels.length > 0 ||
-      activeFilterSummary.priceActive ||
-      activeFilterSummary.featured ||
-      activeFilterSummary.inStock ||
-      !!activeFilterSummary.sort;
-    const searchMode = query ? "query" : hasFilters ? "filter" : "browse";
-    const resultsCount = filtered.length;
-    const key = JSON.stringify({
-      route,
-      query,
-      searchMode,
-      resultsCount,
-      tags: activeFilterSummary.tags,
-      sizes: activeFilterSummary.sizes,
-      levels: activeFilterSummary.levels,
-      sort: activeFilterSummary.sort,
-      priceActive: activeFilterSummary.priceActive,
-      featured: activeFilterSummary.featured,
-      inStock: activeFilterSummary.inStock,
-    });
-    if (lastTrackedSearchViewRef.current === key) return;
-    lastTrackedSearchViewRef.current = key;
-
-    queueTelemetryEvent("search_results_view", {
-      source: query ? "search" : "filters",
-      query,
-      page_type: "search",
-      content_group: "catalog",
-      section: "search_results",
-      list_id: query ? `search:${query}` : "search:filters",
-      list_name: "search_results",
-      results_count: resultsCount,
-      zero_results: resultsCount === 0,
-      search_mode: searchMode,
-      category: activeCat !== "all" ? activeCat : "",
-      meta: {
-        filters: activeFilterSummary,
-      },
-    });
-
-    if (resultsCount === 0 && (query || hasFilters)) {
-      queueTelemetryEvent("search_zero_result", {
-        source: query ? "search" : "filters",
-        query,
-        page_type: "search",
-        content_group: "catalog",
-        section: "search_results",
-        list_id: query ? `search:${query}` : "search:filters",
-        list_name: "search_results",
-        results_count: 0,
-        zero_results: true,
-        search_mode: searchMode,
-        category: activeCat !== "all" ? activeCat : "",
-        meta: {
-          filters: activeFilterSummary,
-        },
-      });
-    }
-  }, [route, dataLoading, qDeb, filtered.length, activeFilterSummary, activeCat]);
-
-  useEffect(() => {
-    if (dataLoading || route === "home" || route === "search" || route === "favorites" || route === "admin" || customPage) {
-      return;
-    }
-
-    const key = JSON.stringify({
-      route,
-      resultsCount: filtered.length,
-      tags: activeFilterSummary.tags,
-      sizes: activeFilterSummary.sizes,
-      levels: activeFilterSummary.levels,
-      sort: activeFilterSummary.sort,
-      priceActive: activeFilterSummary.priceActive,
-      featured: activeFilterSummary.featured,
-      inStock: activeFilterSummary.inStock,
-    });
-    if (lastTrackedCategoryViewRef.current === key) return;
-    lastTrackedCategoryViewRef.current = key;
-
-    queueTelemetryEvent("category_results_view", {
-      source: "category_page",
-      category: route,
-      page_type: "category",
-      content_group: "catalog",
-      section: "category_results",
-      list_id: `category:${route}`,
-      list_name: route,
-      results_count: filtered.length,
-      zero_results: filtered.length === 0,
-      meta: {
-        filters: activeFilterSummary,
-      },
-    });
-  }, [route, dataLoading, customPage, filtered.length, activeFilterSummary]);
 
   const getOffset = useCallback(() => {
     const el = catbarRef.current; if (!el) return 0;

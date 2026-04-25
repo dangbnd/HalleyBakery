@@ -10,19 +10,10 @@ const QUEUE_LIMIT = 120;
 const BATCH_LIMIT = 40;
 const FLUSH_DELAY_MS = 1600;
 const RECENT_DEDUPE_LIMIT = 240;
-const PRODUCT_IMPRESSION_RATE_LIMIT = { windowMs: 60000, max: 24 };
 const EVENT_RATE_LIMITS = {
-  product_impression: PRODUCT_IMPRESSION_RATE_LIMIT,
-  category_results_view: { windowMs: 60000, max: 10 },
-  search_results_view: { windowMs: 60000, max: 10 },
-  search_zero_result: { windowMs: 60000, max: 10 },
   detail_open: { windowMs: 60000, max: 30 },
 };
 const EVENT_DEDUPE_TTL_MS = {
-  product_impression: 6 * 60 * 60 * 1000,
-  category_results_view: 2 * 60 * 1000,
-  search_results_view: 45 * 1000,
-  search_zero_result: 45 * 1000,
   detail_open: 3500,
 };
 const GPS_LOCATION_STATUS_KEY = "hb_tracking_gps_status_v1";
@@ -34,21 +25,14 @@ let flushTimer = 0;
 let flushing = false;
 let initialized = false;
 let cleanupFns = [];
-let lastPageKey = "";
 const recentEventKeys = new Map();
 const rateBuckets = new Map();
 let gpsContext = {};
 let gpsRequestStarted = false;
 
 const IMPORTANT_EVENT_TYPES = new Set([
-  "session_start",
-  "page_view",
   "search_submit",
-  "search_results_view",
-  "search_zero_result",
-  "category_results_view",
   "detail_open",
-  "product_impression",
   "messenger_click",
   "contact_entry_click",
   "consult_submit",
@@ -375,18 +359,6 @@ function eventDedupeKey(event = {}) {
   const type = s(event.type);
   if (!EVENT_DEDUPE_TTL_MS[type]) return "";
 
-  if (type === "product_impression") {
-    const pid = productKey(event);
-    if (!pid) return "";
-    return [
-      type,
-      event.session_id || "",
-      event.page_type || "",
-      event.list_id || event.list_name || event.section || "",
-      pid,
-    ].join("|");
-  }
-
   if (type === "detail_open") {
     const pid = productKey(event);
     if (!pid) return "";
@@ -582,39 +554,13 @@ export function trackReactError(error, info = {}, name = "react") {
 }
 
 export function trackPageView(meta = {}) {
-  if (typeof window === "undefined" || isTrackingSuppressed()) return;
-  const key = `${window.location.pathname}${window.location.search}${window.location.hash}:${meta.route || ""}`;
-  if (key === lastPageKey) return;
-  lastPageKey = key;
-  queueTelemetryEvent("page_view", {
-    source: meta.source || "route",
-    route: meta.route || "",
-    query: meta.query || "",
-    category: meta.category || "",
-    tag: meta.tag || "",
-    page_type: meta.pageType || "",
-    content_group: meta.contentGroup || "",
-    section: meta.section || "",
-    list_id: meta.listId || "",
-    list_name: meta.listName || "",
-    results_count: meta.resultsCount,
-    zero_results: meta.zeroResults,
-    search_mode: meta.searchMode || "",
-    meta,
-  });
+  return null;
 }
 
 export function initTelemetry() {
   if (typeof window === "undefined" || initialized || isTrackingSuppressed()) return () => {};
   initialized = true;
   ensureAttributionContext();
-
-  queueTelemetryEvent("session_start", {
-    source: "telemetry",
-    meta: {
-      startedAt: readStorage(window.sessionStorage, SESSION_STARTED_KEY),
-    },
-  });
 
   const onVisibility = () => {
     if (document.visibilityState === "hidden") flushTelemetry({ beacon: true });
