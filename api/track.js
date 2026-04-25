@@ -214,26 +214,46 @@ function pruneGpsReverseCache(now = Date.now()) {
   }
 }
 
-function formatReverseGeocodeAddress(data = {}) {
+function uniqueParts(parts = []) {
+  var out = [];
+  parts.map(s).filter(Boolean).forEach(function (part) {
+    if (!out.some(function (existing) { return existing.toLowerCase() === part.toLowerCase(); })) out.push(part);
+  });
+  return out;
+}
+
+function formatReverseGeocodeAddress(data = {}, granularity = "detail") {
   const display = clip(data.display_name || data.name, 240);
-  if (display) return display;
+  if (granularity === "detail" && display) return display;
 
   const address = data.address && typeof data.address === "object" ? data.address : {};
-  const parts = [
+  const ward = address.suburb || address.neighbourhood || address.quarter || address.hamlet;
+  const district = address.city_district || address.district || address.county || address.municipality;
+  const city = address.city || address.town || address.village || address.state;
+
+  if (granularity === "ward") {
+    return clip(uniqueParts([ward, district, city, address.country]).join(", "), 240);
+  }
+
+  if (granularity === "district") {
+    return clip(uniqueParts([district, city, address.country]).join(", "), 240);
+  }
+
+  const parts = uniqueParts([
     address.house_number,
     address.road || address.pedestrian || address.footway,
-    address.suburb || address.neighbourhood || address.quarter,
-    address.city_district || address.district || address.county,
-    address.city || address.town || address.village,
-    address.state,
+    ward,
+    district,
+    city,
     address.country,
-  ].map(s).filter(Boolean);
-  return clip([...new Set(parts)].join(", "), 240);
+  ]);
+  return clip(parts.join(", "), 240);
 }
 
 async function reverseGeocodeCoords(coords = {}, options = {}) {
   const zoom = String(options.zoom || "18");
-  const key = `${zoom}:${gpsReverseCacheKey(coords)}`;
+  const granularity = String(options.granularity || "detail");
+  const key = `${zoom}:${granularity}:${gpsReverseCacheKey(coords)}`;
   const now = Date.now();
   const cached = gpsReverseCache.get(key);
   if (cached && now - cached.at <= GPS_REVERSE_CACHE_TTL_MS) return cached.address || "";
@@ -261,7 +281,7 @@ async function reverseGeocodeCoords(coords = {}, options = {}) {
     if (!res.ok) return "";
 
     const data = await res.json().catch(() => ({}));
-    const address = formatReverseGeocodeAddress(data);
+    const address = formatReverseGeocodeAddress(data, granularity);
     gpsReverseCache.set(key, { at: now, address });
     pruneGpsReverseCache(now);
     return address;
@@ -274,6 +294,17 @@ async function reverseGeocodeCoords(coords = {}, options = {}) {
 
 async function reverseGeocodeGps(coords = {}) {
   return reverseGeocodeCoords(coords, { zoom: 18 });
+}
+
+function gpsAccuracyMeters(event = {}) {
+  return numberOrNull(firstNonBlank(event.gps_accuracy_m, event.accuracy_m, event.accuracy));
+}
+
+function gpsAddressGranularity(event = {}) {
+  var accuracy = gpsAccuracyMeters(event);
+  if (accuracy != null && accuracy <= 200) return { granularity: "detail", zoom: 18, source: "browser_gps" };
+  if (accuracy != null && accuracy <= 1000) return { granularity: "ward", zoom: 14, source: "browser_gps_area" };
+  return { granularity: "district", zoom: 12, source: "browser_gps_district" };
 }
 
 function formatIpLookupAddress(data = {}) {
@@ -385,9 +416,8 @@ async function lookupIpLocation(ip = "") {
         latitude: normalized.latitude,
         longitude: normalized.longitude,
       });
-      var reverseAddress = coords ? await reverseGeocodeCoords(coords, { zoom: 14 }) : "";
       var location = {
-        address: reverseAddress || normalized.address,
+        address: normalized.address,
         source: normalized.source,
         latitude: coords?.lat ?? "",
         longitude: coords?.lon ?? "",
@@ -413,8 +443,14 @@ async function enrichEventsWithGpsAddress(events = []) {
     if (s(event.address)) return;
     const coords = gpsCoordsFromEvent(event);
     if (!coords) return;
-    const key = gpsReverseCacheKey(coords);
-    if (!lookups.has(key)) lookups.set(key, reverseGeocodeGps(coords));
+    const rule = gpsAddressGranularity(event);
+    const key = `${rule.granularity}:${gpsReverseCacheKey(coords)}`;
+    if (!lookups.has(key)) {
+      lookups.set(key, reverseGeocodeCoords(coords, {
+        zoom: rule.zoom,
+        granularity: rule.granularity,
+      }));
+    }
   });
 
   if (!lookups.size) return events;
@@ -428,12 +464,13 @@ async function enrichEventsWithGpsAddress(events = []) {
     if (s(event.address)) return event;
     const coords = gpsCoordsFromEvent(event);
     if (!coords) return event;
-    const address = addresses[gpsReverseCacheKey(coords)];
+    const rule = gpsAddressGranularity(event);
+    const address = addresses[`${rule.granularity}:${gpsReverseCacheKey(coords)}`];
     if (!address) return event;
     return {
       ...event,
       address,
-      location_source: s(event.location_source) || "browser_gps",
+      location_source: rule.source,
     };
   });
 }
@@ -864,11 +901,16 @@ export default async function handler(req, res) {
     const ipLookupAddress = s(ipLookupLocation?.address);
     const data = await trackEvents({
       webApp,
-      events: gpsEnrichedEvents.map((event) => ({
-        ...event,
-        address: s(event.address) || ipLookupAddress,
-        location_source: s(event.location_source) || (ipLookupAddress ? "ip_lookup" : ipAddress ? "ip_lookup_failed" : ""),
-      })),
+      events: gpsEnrichedEvents.map((event) => {
+        var eventAddress = s(event.address);
+        return {
+          ...event,
+          address: eventAddress || ipLookupAddress,
+          location_source: eventAddress
+            ? s(event.location_source)
+            : ipLookupAddress ? "ip_lookup" : ipAddress ? "ip_lookup_failed" : "",
+        };
+      }),
     });
     return json(res, data.ok ? 200 : 202, data);
   } catch (error) {
