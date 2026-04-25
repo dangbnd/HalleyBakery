@@ -184,16 +184,6 @@ function cleanIpAddress(value = "") {
   return first;
 }
 
-function cleanGeoValue(value = "") {
-  const raw = String(value || "").split(",")[0].trim();
-  if (!raw || raw.toLowerCase() === "unknown") return "";
-  try {
-    return decodeURIComponent(raw).replace(/\+/g, " ").trim();
-  } catch {
-    return raw.replace(/\+/g, " ").trim();
-  }
-}
-
 function numberOrNull(value) {
   if (isBlankValue(value)) return null;
   const n = Number(value);
@@ -411,26 +401,6 @@ function clientIpFromRequest(req) {
     req.connection?.remoteAddress ||
     ""
   );
-}
-
-function geoHeader(headers = {}, names = []) {
-  for (const name of names) {
-    const value = cleanGeoValue(headerValue(headers, name));
-    if (value) return value;
-  }
-  return "";
-}
-
-function clientAddressFromRequest(req) {
-  const headers = req.headers || {};
-  const city = geoHeader(headers, ["x-vercel-ip-city", "cf-ipcity"]);
-  const region = geoHeader(headers, ["x-vercel-ip-country-region", "cf-region", "cf-region-code"]);
-  const country = geoHeader(headers, ["x-vercel-ip-country", "cf-ipcountry"]);
-  const parts = [];
-  [city, region, country].forEach((part) => {
-    if (part && !parts.some((existing) => existing.toLowerCase() === part.toLowerCase())) parts.push(part);
-  });
-  return parts.join(", ");
 }
 
 async function parseRequestBody(req) {
@@ -830,7 +800,6 @@ export default async function handler(req, res) {
 
     const events = Array.isArray(body.events) ? body.events : body.event ? [body.event] : [];
     const ipAddress = clientIpFromRequest(req);
-    const requestAddress = clientAddressFromRequest(req);
     const eventsWithRequestContext = events.map((event) => ({
       ...event,
       ip_address: s(event?.ip_address || event?.ip || event?.client_ip) || ipAddress,
@@ -845,8 +814,8 @@ export default async function handler(req, res) {
       webApp,
       events: gpsEnrichedEvents.map((event) => ({
         ...event,
-        address: s(event.address) || ipLookupAddress || requestAddress,
-        location_source: s(event.location_source) || (ipLookupAddress ? "ip_lookup" : requestAddress ? "ip_header" : ""),
+        address: s(event.address) || ipLookupAddress,
+        location_source: s(event.location_source) || (ipLookupAddress ? "ip_lookup" : ipAddress ? "ip_lookup_failed" : ""),
       })),
     });
     return json(res, data.ok ? 200 : 202, data);
