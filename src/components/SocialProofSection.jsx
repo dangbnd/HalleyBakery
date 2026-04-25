@@ -24,8 +24,13 @@ const CATEGORY_LABEL_FALLBACKS = {
 };
 
 const DEMO_COUNT = 60;
-const DESKTOP_CARD_COUNT = 54;
-const MOBILE_CARD_COUNT = 28;
+const DESKTOP_CARD_COUNT = 32;
+const MOBILE_CARD_COUNT = 16;
+const FEEDBACK_CARD_IMAGE_WIDTH = 480;
+const FEEDBACK_CARD_IMAGE_QUALITY = 62;
+const FEEDBACK_HOVER_IMAGE_WIDTH = 860;
+const FEEDBACK_HOVER_IMAGE_QUALITY = 68;
+const FEEDBACK_LIGHTBOX_IMAGE_WIDTH = 1600;
 const ROTATIONS = [-12, -9, -7, -5, -3, 3, 5, 7, 9, 11, -6, 4];
 
 function clamp(value, min, max) {
@@ -547,7 +552,54 @@ function createCollageLayouts(count, mobile = false, variantSeed = 0) {
   return layouts;
 }
 
-function ProofImage({ item, priority = false, className = "" }) {
+function feedbackImageCandidates(raw, width, quality) {
+  const candidates = candidatesFor(raw, width, 0, quality);
+  const drive = candidates.filter((url) => /drive\.google\.com\/thumbnail/i.test(url));
+  const cdn = candidates.filter((url) => /images\.weserv\.nl/i.test(url));
+  const rest = candidates.filter((url) => !drive.includes(url) && !cdn.includes(url));
+  return [...new Set([...drive, ...cdn, ...rest])];
+}
+
+function FeedbackProofImage({ item, priority = false, className = "", width, quality }) {
+  const raw = String(item?.image || "").trim();
+  const candidates = useMemo(() => feedbackImageCandidates(raw, width, quality), [raw, width, quality]);
+  const [altIndex, setAltIndex] = useState(0);
+  const current = candidates[altIndex] || raw || FALLBACK_IMAGE;
+
+  useEffect(() => {
+    setAltIndex(0);
+  }, [raw, width, quality]);
+
+  const onError = (event) => {
+    if (altIndex + 1 < candidates.length) {
+      setAltIndex((index) => index + 1);
+      return;
+    }
+
+    event.currentTarget.onerror = null;
+    event.currentTarget.src = FALLBACK_IMAGE;
+  };
+
+  return (
+    <img
+      src={current}
+      alt={item?.productName || item?.categoryLabel || "Feedback khach hang"}
+      className={className}
+      loading={priority ? "eager" : "lazy"}
+      fetchpriority={priority ? "high" : "low"}
+      decoding="async"
+      referrerPolicy="no-referrer"
+      width={width}
+      height={width}
+      onError={onError}
+    />
+  );
+}
+
+function ProofImage({ item, priority = false, className = "", variant = "card" }) {
+  const imageWidth = variant === "hover" ? FEEDBACK_HOVER_IMAGE_WIDTH : FEEDBACK_CARD_IMAGE_WIDTH;
+  const imageQuality = variant === "hover" ? FEEDBACK_HOVER_IMAGE_QUALITY : FEEDBACK_CARD_IMAGE_QUALITY;
+
   if (item?.product) {
     return (
       <ProductImage
@@ -555,20 +607,19 @@ function ProofImage({ item, priority = false, className = "" }) {
         priority={priority}
         lqip={false}
         className={className}
-        w={priority ? 1440 : 960}
-        q={priority ? 74 : 68}
+        w={imageWidth}
+        q={imageQuality}
       />
     );
   }
 
   return (
-    <img
-      src={item?.image}
-      alt={item?.productName || item?.categoryLabel || "Feedback khach hang"}
+    <FeedbackProofImage
+      item={item}
+      priority={priority}
       className={className}
-      loading={priority ? "eager" : "lazy"}
-      decoding="async"
-      referrerPolicy="no-referrer"
+      width={imageWidth}
+      quality={imageQuality}
     />
   );
 }
@@ -577,7 +628,7 @@ function PopupProofImage({ item, imageHint }) {
   const raw = String(item?.image || (item?.product ? firstImg(item.product) : "") || "").trim();
   const candidates = useMemo(() => {
     const hinted = String(imageHint?.src || "").trim();
-    return [...new Set([hinted, ...candidatesFor(raw, 1600, 0, 74)].filter(Boolean))];
+    return [...new Set([...feedbackImageCandidates(raw, FEEDBACK_LIGHTBOX_IMAGE_WIDTH, 74), hinted].filter(Boolean))];
   }, [imageHint?.src, raw]);
   const [altIndex, setAltIndex] = useState(0);
   const current = candidates[altIndex] || raw || FALLBACK_IMAGE;
@@ -727,7 +778,7 @@ function HoverPreview({ item, layout, mobile = false }) {
       aria-hidden="true"
     >
       <div className={`relative h-full w-full overflow-hidden bg-white ${frame.inner}`}>
-        <ProofImage item={item} className="h-full w-full object-contain bg-white" />
+        <ProofImage item={item} variant="hover" className="h-full w-full object-contain bg-white" />
       </div>
     </div>
   );
