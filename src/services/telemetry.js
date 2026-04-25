@@ -92,6 +92,12 @@ function writeStorage(storage, key, value) {
   } catch {}
 }
 
+function removeStorage(storage, key) {
+  try {
+    storage?.removeItem(key);
+  } catch {}
+}
+
 function readCookie(key) {
   if (typeof document === "undefined") return "";
   try {
@@ -428,12 +434,14 @@ async function requestBrowserGpsLocation() {
   if (!navigator.geolocation || !secureGeolocationAllowed()) return;
 
   const sessionId = getSessionId();
-  if (readStorage(window.sessionStorage, GPS_LOCATION_REQUESTED_SESSION_KEY) === sessionId) return;
   if (hasGpsCoords(gpsContext) || hydrateGpsContextFromCache()) return;
 
   const storedStatus = readStorage(window.localStorage, GPS_LOCATION_STATUS_KEY);
   const permission = await geolocationPermissionState();
   if (permission === "denied" || (!permission && storedStatus === "denied")) return;
+
+  const requestedThisSession = readStorage(window.sessionStorage, GPS_LOCATION_REQUESTED_SESSION_KEY) === sessionId;
+  if (requestedThisSession && permission !== "granted" && storedStatus !== "granted") return;
 
   writeStorage(window.sessionStorage, GPS_LOCATION_REQUESTED_SESSION_KEY, sessionId);
   gpsRequestStarted = true;
@@ -448,6 +456,9 @@ async function requestBrowserGpsLocation() {
   } catch (error) {
     if (Number(error?.code) === 1) {
       writeStorage(window.localStorage, GPS_LOCATION_STATUS_KEY, "denied");
+    } else {
+      writeStorage(window.localStorage, GPS_LOCATION_STATUS_KEY, "unavailable");
+      removeStorage(window.sessionStorage, GPS_LOCATION_REQUESTED_SESSION_KEY);
     }
   } finally {
     gpsRequestStarted = false;
@@ -740,16 +751,20 @@ export function initTelemetry() {
 
   const onVisibility = () => {
     if (document.visibilityState === "hidden") flushTelemetry({ beacon: true });
+    else requestBrowserGpsLocation();
   };
 
   const onPageHide = () => flushTelemetry({ beacon: true });
+  const onFocus = () => requestBrowserGpsLocation();
 
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("pagehide", onPageHide);
+  window.addEventListener("focus", onFocus);
 
   cleanupFns = [
     () => document.removeEventListener("visibilitychange", onVisibility),
     () => window.removeEventListener("pagehide", onPageHide),
+    () => window.removeEventListener("focus", onFocus),
   ];
 
   return () => {
