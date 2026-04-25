@@ -37,6 +37,7 @@ let cleanupFns = [];
 let lastPageKey = "";
 const recentEventKeys = new Map();
 const rateBuckets = new Map();
+let gpsContext = {};
 let gpsRequestStarted = false;
 
 const IMPORTANT_EVENT_TYPES = new Set([
@@ -254,6 +255,7 @@ function setGpsContext(ctx = {}) {
   const next = normalizeGpsContext(ctx);
   if (!hasGpsCoords(next)) return false;
 
+  gpsContext = next;
   queue = queue.map((event) => ({
     ...event,
     gps_latitude: fillMissing(event.gps_latitude, next.gps_latitude),
@@ -349,6 +351,7 @@ function commonContext() {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
     connection: connectionLabel(),
     app_host: window.location.host,
+    ...gpsContext,
     ...getAttributionContext(),
   };
 }

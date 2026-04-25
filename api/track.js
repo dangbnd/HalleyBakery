@@ -6,6 +6,7 @@ const GPS_REVERSE_GEOCODE_TIMEOUT_MS = 2500;
 const GPS_REVERSE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const GPS_REVERSE_CACHE_LIMIT = 120;
 const gpsReverseCache = new Map();
+const IP2LOCATION_LOOKUP_URL = "https://api.ip2location.io/";
 const IP_API_LOOKUP_URL = "http://ip-api.com/json";
 const IPWHOIS_LOOKUP_URL = "https://ipwho.is";
 const IP_LOOKUP_TIMEOUT_MS = 2500;
@@ -236,7 +237,7 @@ function formatReverseGeocodeAddress(data = {}, granularity = "detail") {
   }
 
   if (granularity === "district") {
-    return clip(uniqueParts([district, city, address.country]).join(", "), 240);
+    return clip(uniqueParts([district || ward, city, address.country]).join(", "), 240);
   }
 
   const parts = uniqueParts([
@@ -331,6 +332,25 @@ function normalizeIpWhoisLocation(data = {}) {
   };
 }
 
+function normalizeIp2Location(data = {}) {
+  if (data?.error || s(data?.message).toLowerCase().includes("invalid api key")) return null;
+  const coords = gpsCoordsFromEvent({
+    latitude: data.latitude,
+    longitude: data.longitude,
+  });
+  return {
+    address: formatIpLookupAddress({
+      district: data.district || data.district_name,
+      city: data.city_name,
+      regionName: data.region_name,
+      country: data.country_name,
+    }),
+    source: "ip2location",
+    latitude: coords?.lat ?? "",
+    longitude: coords?.lon ?? "",
+  };
+}
+
 function normalizeIpApiLocation(data = {}) {
   if (data?.status !== "success") return null;
   const coords = gpsCoordsFromEvent({
@@ -379,6 +399,16 @@ async function lookupIpLocation(ip = "") {
 
   try {
     const providers = [
+      {
+        url: new URL(IP2LOCATION_LOOKUP_URL),
+        configure: function (url) {
+          const key = s(process.env.IP2LOCATION_API_KEY);
+          if (key) url.searchParams.set("key", key);
+          url.searchParams.set("ip", clean);
+          url.searchParams.set("format", "json");
+        },
+        normalize: normalizeIp2Location,
+      },
       {
         url: new URL(`${IP_API_LOOKUP_URL}/${encodeURIComponent(clean)}`),
         configure: function (url) {
