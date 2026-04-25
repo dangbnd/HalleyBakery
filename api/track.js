@@ -6,7 +6,8 @@ const GPS_REVERSE_GEOCODE_TIMEOUT_MS = 2500;
 const GPS_REVERSE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const GPS_REVERSE_CACHE_LIMIT = 120;
 const gpsReverseCache = new Map();
-const IP_LOOKUP_URL = "https://ipwho.is";
+const IP_API_LOOKUP_URL = "http://ip-api.com/json";
+const IPWHOIS_LOOKUP_URL = "https://ipwho.is";
 const IP_LOOKUP_TIMEOUT_MS = 2500;
 const IP_LOOKUP_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const IP_LOOKUP_CACHE_LIMIT = 300;
@@ -279,9 +280,38 @@ function formatIpLookupAddress(data = {}) {
   const parts = [
     data.city,
     data.region,
+    data.regionName,
     data.country,
   ].map(s).filter(Boolean);
   return clip([...new Set(parts)].join(", "), 240);
+}
+
+function normalizeIpWhoisLocation(data = {}) {
+  if (data?.success === false) return null;
+  const coords = gpsCoordsFromEvent({
+    latitude: data.latitude,
+    longitude: data.longitude,
+  });
+  return {
+    address: formatIpLookupAddress(data),
+    source: "ipwhois",
+    latitude: coords?.lat ?? "",
+    longitude: coords?.lon ?? "",
+  };
+}
+
+function normalizeIpApiLocation(data = {}) {
+  if (data?.status !== "success") return null;
+  const coords = gpsCoordsFromEvent({
+    latitude: data.lat,
+    longitude: data.lon,
+  });
+  return {
+    address: formatIpLookupAddress(data),
+    source: "ip-api",
+    latitude: coords?.lat ?? "",
+    longitude: coords?.lon ?? "",
+  };
 }
 
 function isPublicIpCandidate(ip = "") {
@@ -317,37 +347,59 @@ async function lookupIpLocation(ip = "") {
   const timer = setTimeout(() => controller.abort(), IP_LOOKUP_TIMEOUT_MS);
 
   try {
-    const url = new URL(`${IP_LOOKUP_URL}/${encodeURIComponent(clean)}`);
-    url.searchParams.set("lang", "vi");
-
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "HalleyBakeryTracking/1.0 (https://halleybakery.io.vn)",
+    const providers = [
+      {
+        url: new URL(`${IP_API_LOOKUP_URL}/${encodeURIComponent(clean)}`),
+        configure: function (url) {
+          url.searchParams.set("fields", "status,message,country,regionName,city,lat,lon,isp,org,query");
+        },
+        normalize: normalizeIpApiLocation,
       },
-    });
-    if (!res.ok) return null;
+      {
+        url: new URL(`${IPWHOIS_LOOKUP_URL}/${encodeURIComponent(clean)}`),
+        configure: function (url) {
+          url.searchParams.set("lang", "vi");
+        },
+        normalize: normalizeIpWhoisLocation,
+      },
+    ];
 
-    const data = await res.json().catch(() => ({}));
-    if (data?.success === false) return null;
+    for (var i = 0; i < providers.length; i++) {
+      var provider = providers[i];
+      provider.configure(provider.url);
 
-    const coords = gpsCoordsFromEvent({
-      latitude: data.latitude,
-      longitude: data.longitude,
-    });
-    const reverseAddress = coords ? await reverseGeocodeCoords(coords, { zoom: 14 }) : "";
-    const fallbackAddress = formatIpLookupAddress(data);
-    const location = {
-      address: reverseAddress || fallbackAddress,
-      source: "ip_lookup",
-      latitude: coords?.lat ?? "",
-      longitude: coords?.lon ?? "",
-    };
+      var res = await fetch(provider.url, {
+        signal: controller.signal,
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "HalleyBakeryTracking/1.0 (https://halleybakery.io.vn)",
+        },
+      });
+      if (!res.ok) continue;
 
-    ipLookupCache.set(clean, { at: now, location });
-    pruneIpLookupCache(now);
-    return location;
+      var data = await res.json().catch(() => ({}));
+      var normalized = provider.normalize(data);
+      if (!normalized) continue;
+
+      var coords = gpsCoordsFromEvent({
+        latitude: normalized.latitude,
+        longitude: normalized.longitude,
+      });
+      var reverseAddress = coords ? await reverseGeocodeCoords(coords, { zoom: 14 }) : "";
+      var location = {
+        address: reverseAddress || normalized.address,
+        source: normalized.source,
+        latitude: coords?.lat ?? "",
+        longitude: coords?.lon ?? "",
+      };
+      if (!s(location.address)) continue;
+
+      ipLookupCache.set(clean, { at: now, location });
+      pruneIpLookupCache(now);
+      return location;
+    }
+
+    return null;
   } catch {
     return null;
   } finally {
