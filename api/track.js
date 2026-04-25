@@ -1046,7 +1046,7 @@ export default async function handler(req, res) {
         };
       }),
     });
-    return json(res, data.ok ? 200 : 502, data);
+    return json(res, 200, data);
   } catch (error) {
     return json(res, 500, { ok: false, error: s(error?.message || "track_failed") });
   }
