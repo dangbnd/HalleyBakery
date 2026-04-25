@@ -308,13 +308,13 @@ function gpsAddressGranularity(event = {}) {
 }
 
 function formatIpLookupAddress(data = {}) {
-  const parts = [
+  const district = data.district || data.city_district || data.county || data.municipality;
+  return clip(uniqueParts([
+    district,
     data.city,
-    data.region,
-    data.regionName,
+    data.regionName || data.region,
     data.country,
-  ].map(s).filter(Boolean);
-  return clip([...new Set(parts)].join(", "), 240);
+  ]).join(", "), 240);
 }
 
 function normalizeIpWhoisLocation(data = {}) {
@@ -416,8 +416,11 @@ async function lookupIpLocation(ip = "") {
         latitude: normalized.latitude,
         longitude: normalized.longitude,
       });
+      var districtAddress = coords
+        ? await reverseGeocodeCoords(coords, { zoom: 12, granularity: "district" })
+        : "";
       var location = {
-        address: normalized.address,
+        address: districtAddress || normalized.address,
         source: normalized.source,
         latitude: coords?.lat ?? "",
         longitude: coords?.lon ?? "",
