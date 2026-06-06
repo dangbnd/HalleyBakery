@@ -705,7 +705,7 @@ export default function App() {
     useState(() => readLS(LS.ANNOUNCEMENTS, DATA.announcements || []));
   useEffect(() => writeLS(LS.ANNOUNCEMENTS, announcements), [announcements]);
 
-  const SYNC_MS = 600000; // 10 phút
+  const SYNC_MS = 60 * 1000;
 
   // P3: Batch localStorage writes — tránh block main thread khi syncAll cập nhật nhiều state
   const lsQueue = useRef(new Map());
@@ -870,7 +870,11 @@ export default function App() {
   /* đồng bộ dữ liệu */
   useEffect(() => {
     let isFirstSync = true;
-    async function syncAll() {
+    let syncRunning = false;
+    let lastVisibleSync = 0;
+    async function syncAll({ force = false } = {}) {
+      if (syncRunning) return;
+      syncRunning = true;
       const currentProducts = readLS(LS.PRODUCTS, []);
       const hasCache = currentProducts.length > 1;
       if (!hasCache && isFirstSync) setDataLoading(true);
@@ -965,9 +969,10 @@ export default function App() {
           sheetId: SHEET.id,
           productTabs: productTabsConfig,
           gids: SHEET.gids,
+          force,
         });
         if (allUrl) {
-          let unified = await fetchUnifiedData(allUrl);
+          let unified = await fetchUnifiedData(allUrl, { force });
           if (isSuspiciousUnifiedPayload(unified, unifiedSource)) {
             const forcedUrl = buildUnifiedApiUrl({
               apiAllUrl,
@@ -977,7 +982,7 @@ export default function App() {
               force: true,
             });
             console.warn("[Halley] Unified API returned empty products. Retry with force=1.");
-            if (forcedUrl) unified = await fetchUnifiedData(forcedUrl);
+            if (forcedUrl) unified = await fetchUnifiedData(forcedUrl, { force: true });
             if (isSuspiciousUnifiedPayload(unified, unifiedSource)) {
               allowDirectSheetReads = true;
               unified = null;
@@ -1064,7 +1069,7 @@ export default function App() {
             if (tabsEnv) {
               const tabs = readProductTabsFromEnv();
               if (!tabs.length) {
-                prodRows = await fetchSheetRows({ sheetId: SHEET.id, gid: SHEET.gids.products || "0" });
+                prodRows = await fetchSheetRows({ sheetId: SHEET.id, gid: SHEET.gids.products || "0", force });
               } else {
                 // Hàm chuẩn hoá row (dùng chung)
                 const normalizeRow = (r) => ({
@@ -1099,7 +1104,7 @@ export default function App() {
                 // A. Fetch tab ưu tiên TRƯỚC (~2-3s)
                 console.time(`[Halley] Priority tab "${priorityTab.key}"`);
                 const priorityRows = await fetchProductsFromTabs({
-                  sheetId: SHEET.id, tabs: [priorityTab], normalize: normalizeRow,
+                  sheetId: SHEET.id, tabs: [priorityTab], normalize: normalizeRow, force,
                 });
                 console.timeEnd(`[Halley] Priority tab "${priorityTab.key}"`);
                 console.log(`[Halley] Priority: ${priorityRows.length} products, hasCache=${hasCache}`);
@@ -1115,13 +1120,13 @@ export default function App() {
 
                 // B. Fetch các tab còn lại ngầm
                 const restRows = await fetchProductsFromTabs({
-                  sheetId: SHEET.id, tabs: restTabs, normalize: normalizeRow,
+                  sheetId: SHEET.id, tabs: restTabs, normalize: normalizeRow, force,
                 });
 
                 prodRows = [...priorityRows, ...restRows];
               }
             } else {
-              prodRows = await fetchSheetRows({ sheetId: SHEET.id, gid: SHEET.gids.products || "0" });
+              prodRows = await fetchSheetRows({ sheetId: SHEET.id, gid: SHEET.gids.products || "0", force });
             }
           } else {
             prodRows = [];
@@ -1143,7 +1148,7 @@ export default function App() {
           const [typesResult, levelsResult] = await Promise.all([
             (async () => {
               if (allowDirectSheetReads && SHEET.id && SHEET.gids.types) {
-                const trows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.types });
+                const trows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.types, force });
                 const mapped = mapTypes(trows);
                 writeLS(LS.TYPES, mapped);
                 return mapped;
@@ -1152,7 +1157,7 @@ export default function App() {
             })(),
             (async () => {
               if (allowDirectSheetReads && SHEET.id && SHEET.gids.levels) {
-                const lrows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.levels });
+                const lrows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.levels, force });
                 const mapped = mapLevels(lrows);
                 writeLS(LS.LEVELS, mapped);
                 return mapped;
@@ -1175,7 +1180,7 @@ export default function App() {
           let menuMap = {};
           if (allowDirectSheetReads && SHEET.id && SHEET.gids.menu && !unifiedLoaded.menu) {
             try {
-              const menuRows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.menu });
+              const menuRows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.menu, force });
               const mapped = mapMenu(menuRows);
               if (mapped?.length) { setMenu(mapped); writeLS(LS.MENU, mapped); }
               for (const item of (mapped || menuRows || [])) {
@@ -1215,7 +1220,7 @@ export default function App() {
           if (!SHEET.id || !gid) return;
           if (alreadyLoaded) return;
           try {
-            const rows = await fetchTabAsObjects({ sheetId: SHEET.id, gid });
+            const rows = await fetchTabAsObjects({ sheetId: SHEET.id, gid, force });
             const mapped = mapper(rows);
             if (mapped?.length) { setter(mapped); writeLS(lsKey, mapped); }
           } catch (e) {
@@ -1236,7 +1241,7 @@ export default function App() {
         // Fallback FB posts when unified API does not provide fb data.
         if (allowDirectSheetReads && SHEET.id && SHEET.gids.fb && !unifiedLoaded.fb) {
           try {
-            const fbRows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.fb });
+            const fbRows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.fb, force });
             const mappedFb = extractFbUrlsFromRows(fbRows);
             setFbUrls(mappedFb);
             writeLS(LS.FB_URLS, mappedFb);
@@ -1246,6 +1251,7 @@ export default function App() {
         }
       } finally {
         setDataLoading(false);
+        syncRunning = false;
       }
     }
     const hasUnifiedEndpoint = !!buildUnifiedApiUrl({
@@ -1257,7 +1263,20 @@ export default function App() {
     if (SHEET.id || hasUnifiedEndpoint) {
       syncAll();
       const t = setInterval(syncAll, SYNC_MS);
-      return () => clearInterval(t);
+      const syncWhenVisible = () => {
+        if (typeof document !== "undefined" && document.visibilityState && document.visibilityState !== "visible") return;
+        const now = Date.now();
+        if (now - lastVisibleSync < 15 * 1000) return;
+        lastVisibleSync = now;
+        syncAll();
+      };
+      window.addEventListener("focus", syncWhenVisible);
+      document.addEventListener("visibilitychange", syncWhenVisible);
+      return () => {
+        clearInterval(t);
+        window.removeEventListener("focus", syncWhenVisible);
+        document.removeEventListener("visibilitychange", syncWhenVisible);
+      };
     }
     setDataLoading(false);
   }, [

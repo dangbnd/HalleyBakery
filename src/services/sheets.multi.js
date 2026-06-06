@@ -27,6 +27,12 @@ function appendParam(u, k, v) {
   u.searchParams.set(k, s);
 }
 
+function addRuntimeFreshParams(u, { force = false } = {}) {
+  if (!force) return;
+  u.searchParams.set("force", "1");
+  u.searchParams.set("_hb", String(Date.now()));
+}
+
 export function buildUnifiedApiUrl({
   apiAllUrl = "",
   sheetId = "",
@@ -65,7 +71,7 @@ export function buildUnifiedApiUrl({
       appendParam(u, "gidLevels", gids.levels);
       appendParam(u, "gidSizes", gids.sizes);
       appendParam(u, "gidFb", gids.fb);
-      if (force) u.searchParams.set("force", "1");
+      addRuntimeFreshParams(u, { force });
       if (meta) u.searchParams.set("meta", "1");
       return u.toString();
     } catch {
@@ -88,7 +94,7 @@ export function buildUnifiedApiUrl({
     appendParam(u, "gidLevels", gids.levels);
     appendParam(u, "gidSizes", gids.sizes);
     appendParam(u, "gidFb", gids.fb);
-    if (force) u.searchParams.set("force", "1");
+    addRuntimeFreshParams(u, { force });
     if (meta) u.searchParams.set("meta", "1");
     return `${u.pathname}${u.search}`;
   }
@@ -249,8 +255,16 @@ export async function fetchUnifiedData(apiUrl, { force = false } = {}) {
     if (!url || url.includes("...")) return null;
     if (!/^https?:\/\//i.test(url) && !url.startsWith("/")) return null;
 
-    const raw = await cachedText(url, { force });
-    const data = JSON.parse(raw);
+    const read = async (urlToRead, forceRead = false) => JSON.parse(await cachedText(urlToRead, {
+      force: forceRead,
+      ttlMs: 30 * 1000,
+    }));
+
+    let data = await read(url, force);
+    if (data?._meta?.stale && !force) {
+      const freshUrl = buildUnifiedApiUrl({ apiAllUrl: url, force: true });
+      data = await read(freshUrl || url, true);
+    }
 
     // Chuẩn hoá sơ bộ products
     if (Array.isArray(data.products)) {

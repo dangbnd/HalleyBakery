@@ -1,11 +1,11 @@
-// api/all.js - Unified data endpoint with in-memory cache + stale-while-revalidate.
+// api/all.js - Unified data endpoint with short in-memory cache.
 import { promises as fs } from "fs";
 import { createHash } from "crypto";
 import { tmpdir } from "os";
 import { join } from "path";
 
-const CACHE_TTL_MS = 60 * 1000; // fresh 60s
-const STALE_MS = 10 * 60 * 1000; // serve stale up to 10m while revalidating
+const CACHE_TTL_MS = 30 * 1000; // fresh 30s
+const STALE_MS = 0; // do not serve stale catalog data during normal refreshes
 const FETCH_TIMEOUT_MS = 7000;
 const CACHE_ROOT =
   process.env.VERCEL_DEV === "1"
@@ -197,11 +197,11 @@ function normalizeHeader(h = "") {
 }
 
 async function fetchCsvTab({ sheetId, gid }) {
-  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}&_hb=${Date.now()}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { signal: controller.signal });
+    const res = await fetch(url, { signal: controller.signal, cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
     const contentType = String(res.headers.get("content-type") || "").toLowerCase();
@@ -445,7 +445,9 @@ function refreshCache(key, cfg) {
 
 export default async function handler(req, res) {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Cache-Control", "public, max-age=60, s-maxage=60, stale-while-revalidate=600");
+  res.setHeader("Cache-Control", "no-store, no-cache, max-age=0, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
 
   try {
     const cfg = cfgFromRequest(req);
@@ -472,7 +474,7 @@ export default async function handler(req, res) {
       if (age <= CACHE_TTL_MS) {
         return res.status(200).json(withMeta(hit, { fromCache: true, metaOnly }));
       }
-      if (age <= CACHE_TTL_MS + STALE_MS) {
+      if (STALE_MS > 0 && age <= CACHE_TTL_MS + STALE_MS) {
         refreshCache(key, cfg).catch(() => {});
         return res.status(200).json(withMeta(hit, { fromCache: true, stale: true, metaOnly }));
       }
