@@ -1375,11 +1375,14 @@ export default function App() {
   );
   const categoryBaseNameMap = useMemo(() => {
     const map = new Map();
-    for (const item of menu || []) {
-      const key = String(item?.key || "").trim();
-      if (!key) continue;
-      map.set(key, String(item?.name || item?.label || item?.title || key).trim());
-    }
+    const walk = (items = []) => {
+      for (const item of items || []) {
+        const key = String(item?.key || "").trim();
+        if (key) map.set(key, String(item?.name || item?.label || item?.title || key).trim());
+        if (Array.isArray(item?.children) && item.children.length) walk(item.children);
+      }
+    };
+    walk(menu);
     for (const item of categories || []) {
       const key = String(item?.key || "").trim();
       if (key && !map.has(key)) map.set(key, String(item?.title || key).trim());
