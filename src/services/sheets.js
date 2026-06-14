@@ -391,6 +391,7 @@ export const mapMenu = (rows = []) => {
   const items = rows.filter((r) => r.key).map((r) => ({
     key: r.key,
     title: r.label || r.title || r.key,
+    name: r.name || "",
     parent: r.parent || "",
     order: Number(r.order || 0),
   }));
@@ -405,7 +406,7 @@ export const mapMenu = (rows = []) => {
     nodes.forEach((n) => sortTree(n.children));
   };
   sortTree(roots);
-  const clean = (n) => ({ key: n.key, title: n.title, children: n.children.map(clean) });
+  const clean = (n) => ({ key: n.key, title: n.title, name: n.name || "", children: n.children.map(clean) });
   return roots.map(clean);
 };
 
