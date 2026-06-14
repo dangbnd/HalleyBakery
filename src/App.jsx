@@ -314,7 +314,14 @@ function buildDescIndex(menu = []) {
   };
   if (product) gather(product); return idx;
 }
+const productCategoryKeys = (product = {}) => {
+  const list = Array.isArray(product.categories) && product.categories.length
+    ? product.categories
+    : [product.category, ...(Array.isArray(product.categoryAliases) ? product.categoryAliases : [])];
+  return [...new Set(list.map((item) => String(item || "").trim()).filter(Boolean))];
+};
 const inMenuCat = (catKey, selectedKey, descIdx) => selectedKey === "all" || catKey === selectedKey || !!descIdx.get(selectedKey)?.has(catKey);
+const productInMenuCat = (product, selectedKey, descIdx) => productCategoryKeys(product).some((key) => inMenuCat(key, selectedKey, descIdx));
 const stripAdmin = (nodes = []) => (nodes || []).filter((n) => n.key !== "admin").map((n) => ({ ...n, children: stripAdmin(n.children || []) }));
 const scrollTop = () => window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
 
@@ -1387,7 +1394,7 @@ export default function App() {
   /* list theo route */
   const baseForRoute = useMemo(() => {
     if (route === "home" || route === "search") return products || [];
-    return (products || []).filter((p) => inMenuCat(p.category, route, descByKey));
+    return (products || []).filter((p) => productInMenuCat(p, route, descByKey));
   }, [route, products, descByKey]);
   /* list cho search */
   const nqVal = useMemo(() => q.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""), [q]);
@@ -1463,7 +1470,7 @@ export default function App() {
     const sortFn = cmpGrid;
     for (const cat of homeSectionCats) {
       const limit = HOME_LIMITS?.[cat.key] ?? HOME_LIMITS?.default ?? 6;
-      const items = (filtered || []).filter((p) => p.category === cat.key).sort(sortFn).slice(0, limit);
+      const items = (filtered || []).filter((p) => productCategoryKeys(p).includes(cat.key)).sort(sortFn).slice(0, limit);
       if (items.length) arr.push({ key: cat.key, title: cat.title, items });
     }
     return arr;

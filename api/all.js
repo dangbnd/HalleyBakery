@@ -103,6 +103,7 @@ function normalizeProductRow(row = {}, tab = { gid: "", key: "" }) {
     id: pickFirst(row, ["id", "ID", "ma", "masp", "masanpham", "code", "sku"]),
     name: pickFirst(row, ["name", "title", "ten", "ten_san_pham"]),
     category: pickFirst(row, ["category", "danh_muc", "loai", "type"]) || tab.key,
+    category_aliases: pickFirst(row, ["category_aliases", "categoryaliases", "category_alias", "category_aliases_keys", "category_keys", "categorykeys", "categories"]),
     type: pickFirst(row, ["type"]),
     typeid: pickFirst(row, ["typeid", "type_id"]),
     images: pickFirst(row, ["images", "image", "hinh", "hinhanh", "img"]),

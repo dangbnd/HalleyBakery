@@ -190,6 +190,14 @@ export function mapProducts(rows = [], imageIndex) {
       .filter(Boolean)
       .map(normalizeImageUrl);
 
+  const parseCategoryAliases = (value, primary = "") => {
+    const main = String(primary || "").trim();
+    return [...new Set(String(value || "")
+      .split(/[;,|\n]/)
+      .map((item) => item.trim())
+      .filter((item) => item && item !== main))];
+  };
+
   const byName = (name) => {
     if (!imageIndex?.map) return [];
     const k = norm(name);
@@ -224,11 +232,18 @@ export function mapProducts(rows = [], imageIndex) {
       const nPrice = Number(String(r.price || r.gia || r["giá"] || "").replace(/[^\d.]/g, ""));
       const price = Number.isFinite(nPrice) && nPrice > 0 ? nPrice : null;
 
+      const category = String(r.category || r.danh_muc || r["danh mục"] || r.loai || r.type || "").trim();
+      const categoryAliases = parseCategoryAliases(
+        r.category_aliases || r.categoryAliases || r.category_alias || r.category_keys || r.categoryKeys || r.categories,
+        category
+      );
+
       return {
         id: makeStableId({ ...r, name }),
         name,
-        category:
-          String(r.category || r.danh_muc || r["danh mục"] || r.loai || r.type || "").trim(),
+        category,
+        categories: [category, ...categoryAliases].filter(Boolean),
+        categoryAliases,
         typeId: r.typeid || r.type || "",
         images,
         banner: parseBooleanLike(r.banner ?? r.active, false),
