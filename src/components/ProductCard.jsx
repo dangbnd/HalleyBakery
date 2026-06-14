@@ -59,6 +59,7 @@ export default function ProductCard({
   onMessengerClick,
   trackingContext = {},
 }) {
+  const displayName = p?.displayName || p?.name || "";
   const defaultSel = useMemo(() => pickDefaultSize(p, filter), [p, filter]);
   const [sel, setSel] = useState(defaultSel);
 
@@ -120,7 +121,7 @@ export default function ProductCard({
             category: trackingContext.category || p?.category || "",
           })
         }
-        aria-label={p?.name}
+        aria-label={displayName || p?.name}
       >
         <ProductImage
           product={p}
@@ -131,7 +132,7 @@ export default function ProductCard({
           lqip={false}
         />
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/45 to-transparent p-2 text-left">
-          <div className="text-sm font-semibold text-white drop-shadow truncate text-left">{p?.name}</div>
+          <div className="text-sm font-semibold text-white drop-shadow truncate text-left">{displayName}</div>
         </div>
       </button>
 
@@ -144,7 +145,7 @@ export default function ProductCard({
             ? "border-rose-200 bg-white text-rose-500"
             : "border-white/70 bg-white/90 text-gray-500 hover:text-rose-500")
         }
-        aria-label={isFavorite ? `Bo yeu thich ${p?.name || "mau banh"}` : `Luu yeu thich ${p?.name || "mau banh"}`}
+        aria-label={isFavorite ? `Bo yeu thich ${displayName || "mau banh"}` : `Luu yeu thich ${displayName || "mau banh"}`}
         title={isFavorite ? "Bỏ yêu thích" : "Yêu thích"}
       >
         <HeartIcon filled={isFavorite} />

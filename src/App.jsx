@@ -282,6 +282,9 @@ const cmpDefault = (a, b) => {
   const bo = Number.isFinite(+b?.order);
   if (ao && bo && +a.order !== +b.order) return +a.order - +b.order;
   if (ao !== bo) return ao ? -1 : 1;
+  const at = productCreatedTime(a);
+  const bt = productCreatedTime(b);
+  if (at !== bt) return bt - at;
   return cmpNameNatural(a.name, b.name);
 };
 
@@ -303,7 +306,7 @@ function buildTreeFromFlat(nav = []) {
 function findNodeByKey(nodes = [], key) { for (const n of nodes) { if (n.key === key) return n; const f = findNodeByKey(n.children || [], key); if (f) return f; } return null; }
 function getProductCategoriesFromMenu(menu = []) {
   const tree = buildTreeFromFlat(menu); const product = findNodeByKey(tree, "product"); if (!product) return [];
-  const out = []; const walk = (n) => { if (n.key && n.key !== "product") out.push({ key: n.key, title: titleOf(n) }); (n.children || []).forEach(walk); };
+  const out = []; const walk = (n) => { if (n.key && n.key !== "product") out.push({ key: n.key, title: titleOf(n), name: n.name || n.label || n.title || n.key }); (n.children || []).forEach(walk); };
   walk(product); return out;
 }
 function buildDescIndex(menu = []) {
@@ -322,6 +325,18 @@ const productCategoryKeys = (product = {}) => {
 };
 const inMenuCat = (catKey, selectedKey, descIdx) => selectedKey === "all" || catKey === selectedKey || !!descIdx.get(selectedKey)?.has(catKey);
 const productInMenuCat = (product, selectedKey, descIdx) => productCategoryKeys(product).some((key) => inMenuCat(key, selectedKey, descIdx));
+const productCreatedTime = (product = {}) => {
+  const value = Date.parse(product.createdAt || product.created_at || product.created || "");
+  return Number.isFinite(value) ? value : 0;
+};
+const productCategoryPositionSort = (a, b) =>
+  productCreatedTime(b) - productCreatedTime(a) || cmpGrid(a, b);
+const productWithDisplayName = (product, categoryKey, categoryBaseNameMap, position) => {
+  const key = String(categoryKey || "").trim();
+  const baseName = String(categoryBaseNameMap.get(key) || "").trim();
+  if (!product || !key || !baseName || !Number.isFinite(position) || position <= 0) return product;
+  return { ...product, displayName: `${baseName} (${position})`, displayCategory: key };
+};
 const stripAdmin = (nodes = []) => (nodes || []).filter((n) => n.key !== "admin").map((n) => ({ ...n, children: stripAdmin(n.children || []) }));
 const scrollTop = () => window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
 
@@ -1358,6 +1373,19 @@ export default function App() {
     () => Object.fromEntries((categories || []).map((c) => [String(c.key || ""), String(c.title || c.key || "")])),
     [categories]
   );
+  const categoryBaseNameMap = useMemo(() => {
+    const map = new Map();
+    for (const item of menu || []) {
+      const key = String(item?.key || "").trim();
+      if (!key) continue;
+      map.set(key, String(item?.name || item?.label || item?.title || key).trim());
+    }
+    for (const item of categories || []) {
+      const key = String(item?.key || "").trim();
+      if (key && !map.has(key)) map.set(key, String(item?.title || key).trim());
+    }
+    return map;
+  }, [menu, categories]);
 
   const fallbackHomeCats = useMemo(() => {
     if (productCatsFromMenu.length > 0) return [];
@@ -1390,12 +1418,29 @@ export default function App() {
   );
   const menuCatsWithAll = useMemo(() => [{ key: "all", title: "Tất cả" }, ...homeSectionCats], [homeSectionCats]);
   const categoryKeysFromMenu = useMemo(() => new Set(homeSectionCats.map((c) => c.key)), [homeSectionCats]);
+  const categoryPositionMap = useMemo(() => {
+    const map = new Map();
+    for (const cat of homeSectionCats) {
+      const key = String(cat?.key || "").trim();
+      if (!key) continue;
+      const rows = (products || [])
+        .filter((p) => productCategoryKeys(p).includes(key))
+        .sort(productCategoryPositionSort);
+      rows.forEach((product, index) => map.set(`${key}:${pidOf(product)}`, index + 1));
+    }
+    return map;
+  }, [homeSectionCats, products]);
+  const decorateProductsForCategory = useCallback((list = [], categoryKey = "") => {
+    const key = String(categoryKey || "").trim();
+    if (!key || key === "all" || !Array.isArray(list)) return list;
+    return list.map((product) => productWithDisplayName(product, key, categoryBaseNameMap, categoryPositionMap.get(`${key}:${pidOf(product)}`)));
+  }, [categoryBaseNameMap, categoryPositionMap]);
 
   /* list theo route */
   const baseForRoute = useMemo(() => {
     if (route === "home" || route === "search") return products || [];
-    return (products || []).filter((p) => productInMenuCat(p, route, descByKey));
-  }, [route, products, descByKey]);
+    return decorateProductsForCategory((products || []).filter((p) => productInMenuCat(p, route, descByKey)), route);
+  }, [route, products, descByKey, decorateProductsForCategory]);
   /* list cho search */
   const nqVal = useMemo(() => q.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""), [q]);
   const catTitle = useMemo(() => Object.fromEntries(homeSectionCats.map((c) => [c.key, norm(c.title || c.key)])), [homeSectionCats]);
@@ -1470,11 +1515,11 @@ export default function App() {
     const sortFn = cmpGrid;
     for (const cat of homeSectionCats) {
       const limit = HOME_LIMITS?.[cat.key] ?? HOME_LIMITS?.default ?? 6;
-      const items = (filtered || []).filter((p) => productCategoryKeys(p).includes(cat.key)).sort(sortFn).slice(0, limit);
+      const items = decorateProductsForCategory((filtered || []).filter((p) => productCategoryKeys(p).includes(cat.key)).sort(sortFn).slice(0, limit), cat.key);
       if (items.length) arr.push({ key: cat.key, title: cat.title, items });
     }
     return arr;
-  }, [route, homeSectionCats, filtered]);
+  }, [route, homeSectionCats, filtered, decorateProductsForCategory]);
 
   const favoriteIdSet = useMemo(() => new Set(getFavoriteIds()), [behaviorTick]);
   const favoriteProducts = useMemo(() => getFavoriteProducts(products), [products, behaviorTick]);

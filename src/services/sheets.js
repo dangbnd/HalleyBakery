@@ -266,6 +266,7 @@ export function mapProducts(rows = [], imageIndex) {
 
         desc: String(r.description || r.desc || r.mota || r["mô tả"] || "").trim(),
         description: String(r.description || r.desc || r.mota || r["mô tả"] || "").trim(),
+        createdAt: String(r.createdAt || r.created_at || r.created || "").trim(),
         descriptionVisibility: String(
           r.descriptionVisibility || r.descriptionvisibility ||
           r.descVisibility || r.descvisibility ||

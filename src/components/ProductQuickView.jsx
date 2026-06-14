@@ -86,6 +86,7 @@ export default function ProductQuickView({
   onMessengerClick,
   onConsultSubmit,
 }) {
+  const displayName = product?.displayName || product?.name || "";
   const [idx, setIdx] = useState(0);
   const [copied, setCopied] = useState(false);
   const [showConsult, setShowConsult] = useState(false);
@@ -311,7 +312,7 @@ export default function ProductQuickView({
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="min-w-0 flex-1 text-lg md:text-xl font-semibold truncate">{product.name}</h3>
+                    <h3 className="min-w-0 flex-1 text-lg md:text-xl font-semibold truncate">{displayName}</h3>
                     <button
                       type="button"
                       onClick={() => setShowConsult((v) => !v)}
