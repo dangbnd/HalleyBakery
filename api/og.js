@@ -296,15 +296,23 @@ function shouldServeCrawlerHtml(req) {
     return CRAWLERS.test(ua);
 }
 
+function setNoStoreHtmlHeaders(res) {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "private, no-store, no-cache, max-age=0, must-revalidate");
+    res.setHeader("CDN-Cache-Control", "no-store");
+    res.setHeader("Vercel-CDN-Cache-Control", "no-store");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Vary", "User-Agent");
+}
+
 /* ===== HANDLER ===== */
 export default async function handler(req, res) {
     // User thÃ†Â°Ã¡Â»Âng Ã¢â€ â€™ serve index.html
     if (!shouldServeCrawlerHtml(req)) {
         const html = getIndexHtml();
         if (html) {
-            res.setHeader("Content-Type", "text/html; charset=utf-8");
-            // Always serve latest HTML shell so users get newest hashed JS/CSS immediately.
-            res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+            setNoStoreHtmlHeaders(res);
             return res.status(200).send(html);
         }
         // Fallback: redirect vÃ¡Â»Â static
@@ -363,9 +371,7 @@ export default async function handler(req, res) {
             if (m) image = imgOf(m);
         }
     }
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.setHeader("Cache-Control", "public, max-age=300, s-maxage=300");
+    setNoStoreHtmlHeaders(res);
     res.status(200).send(ogHtml({ title, description, image, url: fullUrl }));
 }
-
 

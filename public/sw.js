@@ -1,7 +1,6 @@
 // Halley Bakery Service Worker
-const CACHE_NAME = 'halley-v3';
+const CACHE_NAME = 'halley-v4';
 const STATIC_ASSETS = [
-  '/',
   '/manifest.json',
   '/brand/logo-mobile.png',
   '/brand/logo-desktop.png',
@@ -35,11 +34,14 @@ self.addEventListener('fetch', (e) => {
   // Skip admin API calls - always fresh
   if (url.pathname.startsWith('/api/')) return;
 
+  // HTML shell varies by User-Agent via /api/og, so never cache documents here.
+  if (e.request.destination === 'document') return;
+
   e.respondWith(
     fetch(e.request)
       .then((res) => {
-        // Cache successful HTML/JS/CSS responses
-        if (res && res.status === 200 && ['document', 'script', 'style', 'image'].includes(e.request.destination)) {
+        // Cache successful static assets only.
+        if (res && res.status === 200 && ['script', 'style', 'image', 'font'].includes(e.request.destination)) {
           const clone = res.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone));
         }
@@ -48,11 +50,6 @@ self.addEventListener('fetch', (e) => {
       .catch(async () => {
         const cached = await caches.match(e.request);
         if (cached) return cached;
-
-        if (e.request.destination === 'document') {
-          const fallback = await caches.match('/');
-          if (fallback) return fallback;
-        }
 
         return Response.error();
       })
