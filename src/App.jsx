@@ -2139,7 +2139,7 @@ export default function App() {
     );
   } else {
     const isHome = route === "home";
-    const showHero = isHome;
+    const showHero = false;
     const list = filtered;
     mainContent = (
       <>
