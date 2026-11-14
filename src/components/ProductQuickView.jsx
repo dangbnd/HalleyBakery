@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ProductImage, { getImageUrls } from "./ProductImage.jsx";
-import { cdn, cdnThumb, prefetchImage } from "../utils/img.js";
+import { candidatesFor, cdn, cdnThumb, prefetchImage } from "../utils/img.js";
 import { VND } from "./PriceTag.jsx";
 import { coercePriceBySizeMap } from "../lib/pricing.js";
 import { buildProductChatLink, openChatTarget } from "../utils/chatLink.js";
@@ -275,16 +275,24 @@ export default function ProductQuickView({
                 style={{ width: "min(100%, calc(78vh * 4 / 5))" }}
               >
                 {!!images.length && (
-                  <ProductImage
-                    product={product}
-                    index={idx}
-                    className="absolute inset-0 w-full h-full object-contain"
-                    priority
-                    w={960}
-                    h={0}
-                    q={62}
-                    lqip={false}
-                  />
+                  <>
+                    <img
+                      src={candidatesFor(images[idx] || images[0], 600, 0, 70)[0] || ""}
+                      alt=""
+                      aria-hidden="true"
+                      className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+                    />
+                    <ProductImage
+                      product={product}
+                      index={idx}
+                      className="absolute inset-0 w-full h-full object-contain"
+                      priority
+                      w={960}
+                      h={0}
+                      q={62}
+                      lqip={false}
+                    />
+                  </>
                 )}
                 {images.length > 1 && (
                   <>

@@ -38,8 +38,11 @@ export const cdn = (raw = "", { w = 600, h = 0, q = 65 } = {}) => {
 /**
  * CDN thumbnail nhỏ (cho danh sách gợi ý, grid thumbnail)
  */
-export const cdnThumb = (raw = "", w = 96, h = 96, q = 65) =>
-  cdn(raw, { w, h, q });
+export const cdnThumb = (raw = "", w = 96, h = 96, q = 65) => {
+  const driveId = driveIdOf(raw);
+  if (driveId && MEDIA_CACHE_BASE) return `${MEDIA_CACHE_BASE}/img/${driveId}?w=${Math.max(320, Number(w) || 320)}`;
+  return cdn(raw, { w, h, q });
+};
 
 /**
  * Chuẩn hoá URL ảnh từ Google Drive / đường dẫn tương đối
