@@ -2,6 +2,10 @@ import { tagKey, toTagArray } from "../utils/tagKey.js";
 import { normalizeImageUrl } from "../utils/img.js";
 import { parseBooleanLike } from "../utils.js";
 import { cachedText } from "./cache.js";
+import {
+  coercePriceBySizeMap,
+  parsePriceValue,
+} from "../lib/pricing.js";
 
 /* ===================== Fetch helpers ===================== */
 function makeUid(r) {
@@ -59,22 +63,6 @@ export async function fetchTabAsObjects({ sheetId, gid, force = false } = {}) {
   return rows
     .filter((r) => r.some((x) => String(x || "").trim() !== ""))
     .map((r) => Object.fromEntries(head.map((h, i) => [h, String(r[i] ?? "").trim()])));
-}
-
-/* ===================== FB URLs ===================== */
-
-export async function fetchFbUrls({ sheetId, gid, force = false } = {}) {
-  const rows = await fetchTabAsObjects({ sheetId, gid, force });
-  const pick = (r) => r.url || r.fb || r.fb_url || r.post || r.link || r.col0 || r.col1 || "";
-  const out = [];
-  for (const r of rows) {
-    String(pick(r))
-      .split(/[\n,;|]/)
-      .map((s) => s.trim())
-      .filter((s) => /^(https?:\/\/)?((m|www)\.)?(facebook\.com|fb\.watch)\//i.test(s))
-      .forEach((s) => out.push(s));
-  }
-  return [...new Set(out)];
 }
 
 /* ===================== Image URL ===================== */
@@ -144,38 +132,49 @@ function makeStableId(r) {
   return name ? `${name}|${cat}` : (crypto.randomUUID?.() || String(Date.now() + Math.random()));
 }
 
+export function parseProductDate(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+
+  const match = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (match) {
+    const [, day, month, year, hour = "0", minute = "0", second = "0"] = match;
+    const parts = [year, month, day, hour, minute, second].map(Number);
+    const [y, mo, d, h, mi, s] = parts;
+    const date = new Date(y, mo - 1, d, h, mi, s);
+    if (
+      date.getFullYear() === y &&
+      date.getMonth() === mo - 1 &&
+      date.getDate() === d &&
+      date.getHours() === h &&
+      date.getMinutes() === mi &&
+      date.getSeconds() === s
+    ) {
+      return date.getTime();
+    }
+    return 0;
+  }
+
+  const direct = Date.parse(raw);
+  return Number.isFinite(direct) ? direct : 0;
+}
+
+function parseOptionalBoolean(value) {
+  if (value === undefined || value === null || String(value).trim() === "") return undefined;
+  return parseBooleanLike(value, false);
+}
+
+function parsePopularity(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+  const parsed = Number(raw.replace(/[^\d.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 // parse "priceBySize": JSON hoặc dạng text "Size 20x20x3cm: 300k"
 function parsePriceBySize(input = "") {
-  const s = String(input || "").trim();
-  if (!s) return {};
-  try {
-    const obj = JSON.parse(s);
-    return obj && typeof obj === "object" ? obj : {};
-  } catch { }
-  const out = {};
-  const toNumber = (numStr, unit = "") => {
-    let n = Number(String(numStr).replace(/\./g, "").replace(/\s/g, ""));
-    const u = unit.toLowerCase();
-    if (/k|ngh?ìn|ngan/.test(u)) n *= 1000;
-    if (/tr|triệu/.test(u)) n *= 1_000_000;
-    return Number.isFinite(n) ? n : 0;
-  };
-  for (const raw of s.split(/[\n,;]+/).map(t => t.trim()).filter(Boolean)) {
-    const line = raw.replace(/×/g, "x").toLowerCase();
-    let code = null, h = 0, m;
-    if ((m = line.match(/(\d{1,2}\s*x\s*\d{1,2})\s*x\s*(\d{1,2})\s*cm/))) {
-      code = m[1].replace(/\s+/g, "").replace(/x+/g, "x"); h = Number(m[2]);
-    } else if ((m = line.match(/(\d{1,2})\s*cm/))) {
-      code = m[1]; h = 0;
-    } else { continue; }
-    const rhs = line.split(":").slice(1).join(":").trim() || line;
-    const pm = rhs.match(/([\d\.]+)\s*([a-zA-ZÀ-ỹ]*)/i);
-    if (!pm) continue;
-    const price = toNumber(pm[1], pm[2] || "");
-    if (price <= 0) continue;
-    out[`${code}-${h}`] = price;
-  }
-  return out;
+  return coercePriceBySizeMap(input);
 }
 
 
@@ -229,33 +228,61 @@ export function mapProducts(rows = [], imageIndex) {
         parseImages(r.images || r.image || r.hinh || r.hinhanh || r.img || r["hình ảnh"]);
       if (!images.length && name) images = byName(name);
 
-      const nPrice = Number(String(r.price || r.gia || r["giá"] || "").replace(/[^\d.]/g, ""));
+      const nPrice = parsePriceValue(r.price || r.gia || r["giá"] || "");
       const price = Number.isFinite(nPrice) && nPrice > 0 ? nPrice : null;
 
       const category = String(r.category || r.danh_muc || r["danh mục"] || r.loai || r.type || "").trim();
-      const categoryAliases = parseCategoryAliases(
+      const sameDay = parseBooleanLike(
+        r.sameDay ?? r.sameday ?? r.same_day ??
+        r.banhTrongNgay ?? r.banhtrongngay ?? r.banh_trong_ngay ??
+        r.trongNgay ?? r.trongngay ?? r.trong_ngay ?? r["bánh trong ngày"],
+        false
+      );
+      const rawCategoryAliases = parseCategoryAliases(
         r.category_aliases || r.categoryAliases || r.category_alias || r.category_keys || r.categoryKeys || r.categories,
         category
       );
+      const categoryAliases = sameDay && category !== "banh-trong-ngay" && !rawCategoryAliases.includes("banh-trong-ngay")
+        ? [...rawCategoryAliases, "banh-trong-ngay"]
+        : rawCategoryAliases;
+
+      const createdAt = String(r.createdAt || r.created_at || r.created || r.ngay_tao || r["ngày tạo"] || "").trim();
+      const stockValue =
+        r.inStock ?? r.instock ?? r.in_stock ??
+        r.available ?? r.con_hang ?? r["còn hàng"];
+      const quantityValue =
+        r.stockQuantity ?? r.stock_quantity ?? r.quantity ?? r.soluong ?? r.so_luong;
+      const parsedStock = parseOptionalBoolean(stockValue);
+      const parsedQuantity = String(quantityValue ?? "").trim() === ""
+        ? undefined
+        : Number(String(quantityValue).replace(/[^\d.-]/g, ""));
+      const inStock = parsedStock !== undefined
+        ? parsedStock
+        : Number.isFinite(parsedQuantity) ? parsedQuantity > 0 : undefined;
+      const active = parseOptionalBoolean(r.active);
+      const explicitVisibility = String(
+        r.visibility || r.Visibility || r.show || r.hienthi || r["hiển thị"] || ""
+      ).trim().toLowerCase();
 
       return {
         id: makeStableId({ ...r, name }),
+        _tab_gid: String(r._tab_gid || "").trim(),
+        _tab_key: String(r._tab_key || "").trim(),
         name,
         category,
         categories: [category, ...categoryAliases].filter(Boolean),
         categoryAliases,
         typeId: r.typeid || r.type || "",
         images,
-        banner: parseBooleanLike(r.banner ?? r.active, false),
+        banner: parseBooleanLike(r.banner, false),
+        sameDay,
         tags: toTagArray(r.tags ?? r.tag ?? r["nhãn"]),
         price,
         sizes: parseSizesCell(r.sizes ?? r.size ?? r.Sizes ?? r.Size),
         priceBySize: parsePriceBySize(r.pricebysize ?? r.priceBySize),
 
         // Hiển thị sản phẩm: public|admin|hidden (mặc định public)
-        visibility: String(
-          r.visibility || r.Visibility || r.show || r.hienthi || r["hiển thị"] || "public"
-        ).trim().toLowerCase(),
+        visibility: explicitVisibility || (active === false ? "hidden" : "public"),
 
         // Hiển thị giá cho khách: public/show/true/1/yes => hiện; để trống => ẩn
         priceVisibility: String(
@@ -266,7 +293,12 @@ export function mapProducts(rows = [], imageIndex) {
 
         desc: String(r.description || r.desc || r.mota || r["mô tả"] || "").trim(),
         description: String(r.description || r.desc || r.mota || r["mô tả"] || "").trim(),
-        createdAt: String(r.createdAt || r.created_at || r.created || "").trim(),
+        createdAt,
+        createdAtTs: parseProductDate(createdAt),
+        popular: parsePopularity(r.popular ?? r.hot ?? r.views ?? r.view_count ?? r.luot_xem),
+        inStock,
+        stockQuantity: Number.isFinite(parsedQuantity) ? parsedQuantity : undefined,
+        level: String(r.level || r.level_id || r.levelid || r.cap_do || "").trim(),
         descriptionVisibility: String(
           r.descriptionVisibility || r.descriptionvisibility ||
           r.descVisibility || r.descvisibility ||

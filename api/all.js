@@ -3,9 +3,14 @@ import { promises as fs } from "fs";
 import { createHash } from "crypto";
 import { tmpdir } from "os";
 import { join } from "path";
+import { inspectCatalogProducts } from "../src/lib/catalogIntegrity.js";
+import { coercePriceBySizeMap, normalizeSizeKey } from "../src/lib/pricing.js";
+import { tagKey, toTagArray } from "../src/utils/tagKey.js";
+import { readPublicRuntimeConfig } from "./runtime-config.js";
 
 const CACHE_TTL_MS = 30 * 1000; // fresh 30s
 const STALE_MS = 0; // do not serve stale catalog data during normal refreshes
+const MAX_ERROR_STALE_MS = 2 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 7000;
 const CACHE_ROOT =
   process.env.VERCEL_DEV === "1"
@@ -98,7 +103,7 @@ function compactObject(obj = {}) {
   return out;
 }
 
-function normalizeProductRow(row = {}, tab = { gid: "", key: "" }) {
+export function normalizeProductRow(row = {}, tab = { gid: "", key: "" }) {
   const item = {
     id: pickFirst(row, ["id", "ID", "ma", "masp", "masanpham", "code", "sku"]),
     name: pickFirst(row, ["name", "title", "ten", "ten_san_pham"]),
@@ -112,8 +117,8 @@ function normalizeProductRow(row = {}, tab = { gid: "", key: "" }) {
     priceBySize: pickFirst(row, ["priceBySize", "pricebysize", "price_by_size"]),
     pricebysize: pickFirst(row, ["pricebysize", "priceBySize", "price_by_size"]),
     tags: pickFirst(row, ["tags", "tag"]),
-    banner: pickFirst(row, ["banner", "active"]),
-    active: pickFirst(row, ["active", "banner"]),
+    banner: pickFirst(row, ["banner"]),
+    active: pickFirst(row, ["active"]),
     visibility: pickFirst(row, ["visibility", "show", "hienthi"]),
     priceVisibility: pickFirst(row, ["priceVisibility", "pricevisibility", "showPrice", "showprice", "show_price", "hienGia"]),
     description: pickFirst(row, ["description", "desc", "mota", "mo_ta"]),
@@ -132,7 +137,11 @@ function normalizeProductRow(row = {}, tab = { gid: "", key: "" }) {
     ]),
     order: pickFirst(row, ["order", "thu_tu", "sapxep"]),
     popular: pickFirst(row, ["popular", "hot"]),
-    createdAt: pickFirst(row, ["createdAt", "created_at", "created"]),
+    sameDay: pickFirst(row, ["sameDay", "sameday", "same_day", "banhTrongNgay", "banhtrongngay", "banh_trong_ngay", "trongNgay", "trongngay", "trong_ngay"]),
+    inStock: pickFirst(row, ["inStock", "instock", "in_stock", "available", "con_hang"]),
+    stockQuantity: pickFirst(row, ["stockQuantity", "stock_quantity", "quantity", "so_luong", "soluong"]),
+    level: pickFirst(row, ["level", "level_id", "levelid", "cap_do"]),
+    createdAt: pickFirst(row, ["createdAt", "createdat", "created_at", "created"]),
     _tab_gid: tab.gid,
     _tab_key: tab.key,
   };
@@ -197,7 +206,7 @@ function normalizeHeader(h = "") {
   return alias[n] || n || String(h || "").trim();
 }
 
-async function fetchCsvTab({ sheetId, gid }) {
+export async function fetchCsvTab({ sheetId, gid }) {
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}&_hb=${Date.now()}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -229,6 +238,88 @@ function pickGid(cfg, key) {
   return normalizeGid(cfg[key] || "");
 }
 
+export function deriveCatalogMetadata(data = {}) {
+  const out = { ...data };
+  const products = Array.isArray(out.products) ? out.products : [];
+  const menu = Array.isArray(out.menu) ? out.menu : [];
+  const menuLabels = new Map();
+  for (const item of menu) {
+    const key = String(item?.key || item?.slug || item?.code || "").trim();
+    if (!key) continue;
+    menuLabels.set(key, String(item?.label || item?.title || item?.name || key).trim());
+  }
+
+  if (!Array.isArray(out.categories) || !out.categories.length) {
+    const categories = new Map();
+    for (const product of products) {
+      const key = String(product?.category || product?._tab_key || "").trim();
+      if (!key || categories.has(key)) continue;
+      categories.set(key, {
+        key,
+        title: menuLabels.get(key) || key,
+      });
+    }
+    out.categories = [...categories.values()];
+  }
+
+  if (!Array.isArray(out.tags) || !out.tags.length) {
+    const tags = new Map();
+    for (const product of products) {
+      for (const label of toTagArray(product?.tags)) {
+        const key = tagKey(label);
+        if (!key || tags.has(key)) continue;
+        tags.set(key, { key, label });
+      }
+    }
+    out.tags = [...tags.values()];
+  }
+
+  if (!Array.isArray(out.sizes) || !out.sizes.length) {
+    const sizes = new Map();
+    const addSize = (value) => {
+      const key = normalizeSizeKey(value);
+      if (!key || sizes.has(key)) return;
+      const match = key.match(/^(.+)-(\d+)$/);
+      const code = match?.[1] || key;
+      const height = Number(match?.[2] || 0);
+      const label = height > 0
+        ? `Size ${code}x${height}cm`
+        : `Size ${code}cm`;
+      sizes.set(key, { id: key, key, code, height, label });
+    };
+    for (const product of products) {
+      Object.keys(coercePriceBySizeMap(product?.priceBySize)).forEach(addSize);
+      const declared = Array.isArray(product?.sizes)
+        ? product.sizes
+        : String(product?.sizes || "").split(/[|,;\n]+/);
+      declared.forEach((size) => addSize(
+        typeof size === "object" ? size?.key || size?.id || size?.code || size?.label : size
+      ));
+    }
+    out.sizes = [...sizes.values()];
+  }
+
+  if (!Array.isArray(out.levels) || !out.levels.length) {
+    const levels = new Map();
+    for (const product of products) {
+      const id = String(product?.level || "").trim();
+      if (id && !levels.has(id)) levels.set(id, { id, name: id });
+    }
+    out.levels = [...levels.values()];
+  }
+
+  if (!Array.isArray(out.types) || !out.types.length) {
+    const types = new Map();
+    for (const product of products) {
+      const id = String(product?.typeid || product?.type || "").trim();
+      if (id && !types.has(id)) types.set(id, { id, code: id, name: id });
+    }
+    out.types = [...types.values()];
+  }
+
+  return out;
+}
+
 async function loadUnifiedFromSheet(cfg) {
   const sheetId = normalizeSheetId(cfg.sheetId);
   if (!sheetId) throw new Error("Missing sheetId");
@@ -246,6 +337,7 @@ async function loadUnifiedFromSheet(cfg) {
           return {
             ok: true,
             rows: rows.map((r) => normalizeProductRow(r, t)),
+            tab: t,
           };
         } catch (error) {
           return {
@@ -257,17 +349,39 @@ async function loadUnifiedFromSheet(cfg) {
         }
       })
     ).then((all) => {
-      const successful = all.filter((x) => x.ok);
-      if (!successful.length) {
-        const reason =
-          all
-            .filter((x) => !x.ok)
-            .map((x) => x.error)
-            .filter(Boolean)
-            .join("; ") || "No product tab could be loaded";
-        throw new Error(reason);
-      }
-      return { key: "products", value: successful.flatMap((x) => x.rows) };
+      const products = all.flatMap((result) => result.rows);
+      const sourceInspection = inspectCatalogProducts(products);
+      const failedTabs = all
+        .filter((result) => !result.ok)
+        .map((result) => ({
+          gid: String(result.tab?.gid || ""),
+          key: String(result.tab?.key || ""),
+          error: result.error || "tab_load_failed",
+        }));
+      return {
+        key: "products",
+        value: products,
+        ok:
+          failedTabs.length === 0 &&
+          sourceInspection.missingName === 0 &&
+          sourceInspection.duplicateCount === 0,
+        integrity: {
+          complete:
+            failedTabs.length === 0 &&
+            sourceInspection.missingName === 0 &&
+            sourceInspection.duplicateCount === 0,
+          configuredTabs: tabs.length,
+          loadedTabs: all.length - failedTabs.length,
+          failedTabs,
+          tabRows: Object.fromEntries(
+            all.map((result) => [
+              String(result.tab?.key || result.tab?.gid || ""),
+              result.rows.length,
+            ])
+          ),
+          sourceInspection,
+        },
+      };
     })
   );
 
@@ -280,20 +394,37 @@ async function loadUnifiedFromSheet(cfg) {
     ["types", pickGid(cfg, "gidTypes")],
     ["levels", pickGid(cfg, "gidLevels")],
     ["sizes", pickGid(cfg, "gidSizes")],
-    ["fb", pickGid(cfg, "gidFb")],
   ];
 
   for (const [name, gid] of singleTabs) {
     if (!gid) continue;
     plans.push(
       fetchCsvTab({ sheetId, gid })
-        .then((rows) => ({ key: name, value: rows }))
-        .catch(() => ({ key: name, value: [] }))
+        .then((rows) => ({ key: name, value: rows, ok: true }))
+        .catch((error) => ({
+          key: name,
+          value: [],
+          ok: false,
+          error: String(error?.message || error || "tab_load_failed"),
+        }))
     );
   }
 
   const settled = await Promise.all(plans);
   const out = Object.fromEntries(settled.map((x) => [x.key, x.value]));
+  const productResult = settled.find((result) => result.key === "products");
+  const sectionResults = Object.fromEntries(
+    settled
+      .filter((result) => result.key !== "products")
+      .map((result) => [
+        result.key,
+        {
+          ok: result.ok !== false,
+          count: Array.isArray(result.value) ? result.value.length : 0,
+          error: result.error || "",
+        },
+      ])
+  );
 
   for (const key of [
     "products",
@@ -305,30 +436,107 @@ async function loadUnifiedFromSheet(cfg) {
     "types",
     "levels",
     "sizes",
-    "fb",
   ]) {
     if (!Array.isArray(out[key])) out[key] = [];
   }
 
-  return out;
+  const enrichedOut = deriveCatalogMetadata(out);
+  enrichedOut._integrity = {
+    productTabs: productResult?.integrity || {
+      complete: false,
+      configuredTabs: tabs.length,
+      loadedTabs: 0,
+      failedTabs: [],
+      tabRows: {},
+    },
+    sections: sectionResults,
+  };
+
+  return enrichedOut;
 }
 
-function cfgFromRequest(req) {
+export function cfgFromRequest(req, env = process.env) {
   const q = req.query || {};
-  return {
-    sheetId: normalizeSheetId(q.sheetId || process.env.OG_SHEET_ID || process.env.VITE_SHEET_ID || ""),
-    productTabs: String(q.productTabs || process.env.OG_PRODUCT_TABS || process.env.VITE_PRODUCT_TABS || "").trim(),
-    gidProducts: normalizeGid(q.gidProducts || q.gid_products || process.env.VITE_SHEET_GID_PRODUCTS || ""),
-    gidMenu: normalizeGid(q.gidMenu || q.gid_menu || process.env.OG_MENU_GID || process.env.VITE_SHEET_GID_MENU || ""),
-    gidPages: normalizeGid(q.gidPages || q.gid_pages || process.env.VITE_SHEET_GID_PAGES || ""),
-    gidAnnouncements: normalizeGid(q.gidAnnouncements || q.gid_announcements || process.env.VITE_SHEET_GID_ANNOUNCEMENTS || ""),
-    gidCategories: normalizeGid(q.gidCategories || q.gid_categories || process.env.VITE_SHEET_GID_CATEGORIES || ""),
-    gidTags: normalizeGid(q.gidTags || q.gid_tags || process.env.VITE_SHEET_GID_TAGS || ""),
-    gidTypes: normalizeGid(q.gidTypes || q.gid_types || process.env.VITE_SHEET_GID_TYPES || ""),
-    gidLevels: normalizeGid(q.gidLevels || q.gid_levels || process.env.VITE_SHEET_GID_LEVELS || ""),
-    gidSizes: normalizeGid(q.gidSizes || q.gid_sizes || process.env.VITE_SHEET_GID_SIZES || ""),
-    gidFb: normalizeGid(q.gidFb || q.gid_fb || process.env.VITE_SHEET_GID_FB || ""),
+  const configuredSheetId = normalizeSheetId(env.OG_SHEET_ID || env.VITE_SHEET_ID || "");
+  const requestedSheetId = normalizeSheetId(q.sheetId || "");
+  const useRequestConfig = !configuredSheetId && env.VERCEL_DEV === "1";
+  const configuredProductTabs = String(
+    env.OG_PRODUCT_TABS || env.VITE_PRODUCT_TABS || ""
+  ).trim();
+  const configuredGid = (name) => normalizeGid(env[name] || "");
+  const requestGid = (...names) => {
+    if (!useRequestConfig) return "";
+    for (const name of names) {
+      const gid = normalizeGid(q[name] || "");
+      if (gid) return gid;
+    }
+    return "";
   };
+  return {
+    sheetId: configuredSheetId || (useRequestConfig ? requestedSheetId : ""),
+    configuredSheetId,
+    requestedSheetId,
+    productTabs: configuredProductTabs || (useRequestConfig ? String(q.productTabs || "").trim() : ""),
+    gidProducts: configuredGid("VITE_SHEET_GID_PRODUCTS") || requestGid("gidProducts", "gid_products"),
+    gidMenu:
+      configuredGid("OG_MENU_GID") ||
+      configuredGid("VITE_SHEET_GID_MENU") ||
+      requestGid("gidMenu", "gid_menu"),
+    gidPages: configuredGid("VITE_SHEET_GID_PAGES") || requestGid("gidPages", "gid_pages"),
+    gidAnnouncements:
+      configuredGid("VITE_SHEET_GID_ANNOUNCEMENTS") ||
+      requestGid("gidAnnouncements", "gid_announcements"),
+    gidCategories:
+      configuredGid("VITE_SHEET_GID_CATEGORIES") ||
+      requestGid("gidCategories", "gid_categories"),
+    gidTags: configuredGid("VITE_SHEET_GID_TAGS") || requestGid("gidTags", "gid_tags"),
+    gidTypes: configuredGid("VITE_SHEET_GID_TYPES") || requestGid("gidTypes", "gid_types"),
+    gidLevels: configuredGid("VITE_SHEET_GID_LEVELS") || requestGid("gidLevels", "gid_levels"),
+    gidSizes: configuredGid("VITE_SHEET_GID_SIZES") || requestGid("gidSizes", "gid_sizes"),
+  };
+}
+
+const RUNTIME_CATALOG_KEYS = {
+  productTabs: "product_tabs",
+  gidProducts: "sheet_gid_products",
+  gidMenu: "sheet_gid_menu",
+  gidPages: "sheet_gid_pages",
+  gidAnnouncements: "sheet_gid_announcements",
+  gidCategories: "sheet_gid_categories",
+  gidTags: "sheet_gid_tags",
+  gidTypes: "sheet_gid_types",
+  gidLevels: "sheet_gid_levels",
+  gidSizes: "sheet_gid_sizes",
+};
+
+export function mergeRuntimeCatalogConfig(base = {}, runtimeConfig = {}) {
+  const merged = { ...base };
+  for (const [targetKey, runtimeKey] of Object.entries(RUNTIME_CATALOG_KEYS)) {
+    if (!Object.prototype.hasOwnProperty.call(runtimeConfig || {}, runtimeKey)) continue;
+    merged[targetKey] = targetKey === "productTabs"
+      ? String(runtimeConfig[runtimeKey] || "").trim()
+      : normalizeGid(runtimeConfig[runtimeKey] || "");
+  }
+  return merged;
+}
+
+export async function cfgWithRuntime(req, env = process.env) {
+  const base = cfgFromRequest(req, env);
+  if (!base.sheetId) return base;
+  const gidConfig = normalizeGid(env.OG_SHEET_GID_CONFIG || env.VITE_SHEET_GID_CONFIG || "");
+  try {
+    const runtime = await readPublicRuntimeConfig({
+      sheetId: base.sheetId,
+      gidConfig,
+    });
+    return mergeRuntimeCatalogConfig(base, runtime?.config || {});
+  } catch {
+    return base;
+  }
+}
+
+export function shouldForceRefresh(query = {}, env = process.env) {
+  return env.VERCEL_DEV === "1" && isTruthy(query.force);
 }
 
 function cacheKey(cfg) {
@@ -344,7 +552,6 @@ function cacheKey(cfg) {
     gidTypes: cfg.gidTypes,
     gidLevels: cfg.gidLevels,
     gidSizes: cfg.gidSizes,
-    gidFb: cfg.gidFb,
   });
 }
 
@@ -388,6 +595,8 @@ function withMeta(entry, opts = {}) {
       staleWindowMs: STALE_MS,
       fromCache: !!opts.fromCache,
       stale: !!opts.stale,
+      staleReason: opts.staleReason || "",
+      refreshError: opts.refreshError || "",
       version: entry?.version || 0,
     },
     ...(opts.metaOnly ? {} : entry?.data),
@@ -409,11 +618,12 @@ function hasAnyUnifiedContent(data = {}) {
     "types",
     "levels",
     "sizes",
-    "fb",
   ].some((key) => countItems(data?.[key]) > 0);
 }
 
-function shouldRejectRefresh(nextData, prevEntry) {
+export function shouldRejectRefresh(nextData, prevEntry) {
+  if (nextData?._integrity?.productTabs?.complete === false) return true;
+
   const nextProducts = countItems(nextData?.products);
   if (nextProducts > 0) return false;
 
@@ -423,16 +633,34 @@ function shouldRejectRefresh(nextData, prevEntry) {
   return !hasAnyUnifiedContent(nextData);
 }
 
+export function preserveFailedSections(nextData = {}, previousData = {}) {
+  const next = { ...nextData };
+  const sections = nextData?._integrity?.sections || {};
+  for (const [key, status] of Object.entries(sections)) {
+    if (status?.ok !== false) continue;
+    if (Array.isArray(previousData?.[key]) && previousData[key].length) {
+      next[key] = previousData[key];
+    }
+  }
+  return next;
+}
+
 function refreshCache(key, cfg) {
   if (INFLIGHT.has(key)) return INFLIGHT.get(key);
   const p = loadUnifiedFromSheet(cfg)
     .then((data) => {
       const current = CACHE.get(key);
       if (shouldRejectRefresh(data, current)) {
-        throw new Error("Suspicious empty unified payload");
+        const failed = data?._integrity?.productTabs?.failedTabs || [];
+        const detail = failed.map((tab) => tab.key || tab.gid).filter(Boolean).join(", ");
+        throw new Error(detail ? `Incomplete product tabs: ${detail}` : "Suspicious empty unified payload");
       }
-      const version = (current?.version || 0) + 1;
-      const next = { data, refreshedAt: Date.now(), version };
+      const mergedData = preserveFailedSections(data, current?.data || {});
+      const version = createHash("sha1")
+        .update(JSON.stringify(mergedData))
+        .digest("hex")
+        .slice(0, 16);
+      const next = { data: mergedData, refreshedAt: Date.now(), version };
       CACHE.set(key, next);
       writeDiskCache(key, next).catch(() => {});
       return next;
@@ -450,12 +678,16 @@ export default async function handler(req, res) {
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
 
+  let cfg = cfgFromRequest(req);
   try {
-    const cfg = cfgFromRequest(req);
+    cfg = await cfgWithRuntime(req);
+    if (cfg.configuredSheetId && cfg.requestedSheetId && cfg.requestedSheetId !== cfg.configuredSheetId) {
+      return res.status(403).json({ ok: false, error: "Sheet is not allowed" });
+    }
     const key = cacheKey(cfg);
     const now = Date.now();
 
-    const force = isTruthy(req.query?.force);
+    const force = shouldForceRefresh(req.query || {});
     const metaOnly = isTruthy(req.query?.meta);
 
     if (!cfg.sheetId) {
@@ -484,10 +716,17 @@ export default async function handler(req, res) {
     const refreshed = await refreshCache(key, cfg);
     return res.status(200).json(withMeta(refreshed, { fromCache: false, metaOnly }));
   } catch (e) {
-    const cfg = cfgFromRequest(req);
     const key = cacheKey(cfg);
     const stale = CACHE.get(key);
-    if (stale) return res.status(200).json(withMeta(stale, { fromCache: true, stale: true }));
+    const staleAge = stale ? Date.now() - stale.refreshedAt : Infinity;
+    if (stale && staleAge <= MAX_ERROR_STALE_MS) {
+      return res.status(200).json(withMeta(stale, {
+        fromCache: true,
+        stale: true,
+        staleReason: "refresh_failed",
+        refreshError: e?.message || "Failed to refresh unified data",
+      }));
+    }
     return res.status(502).json({ ok: false, error: e?.message || "Failed to load unified data" });
   }
 }

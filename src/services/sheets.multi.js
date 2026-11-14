@@ -2,6 +2,7 @@
 import { normalizeImageUrl } from "../utils/img.js";
 import { cachedText } from "./cache.js";
 import { getConfig } from "../utils/config.js";
+import { inspectCatalogProducts } from "../lib/catalogIntegrity.js";
 
 function isPlaceholderUrl(v = "") {
   return String(v || "").includes("...");
@@ -21,12 +22,6 @@ function isLocalHost() {
   return h === "localhost" || h === "127.0.0.1" || h === "0.0.0.0";
 }
 
-function appendParam(u, k, v) {
-  const s = String(v || "").trim();
-  if (!s) return;
-  u.searchParams.set(k, s);
-}
-
 function addRuntimeFreshParams(u, { force = false } = {}) {
   if (!force) return;
   u.searchParams.set("force", "1");
@@ -35,9 +30,6 @@ function addRuntimeFreshParams(u, { force = false } = {}) {
 
 export function buildUnifiedApiUrl({
   apiAllUrl = "",
-  sheetId = "",
-  productTabs = "",
-  gids = {},
   forceLocal = false,
   force = false,
   meta = false,
@@ -47,7 +39,7 @@ export function buildUnifiedApiUrl({
   let base = "";
   if (raw && !isPlaceholderUrl(raw) && (isHttpUrl(raw) || isRelativeApi(raw))) {
     base = raw;
-  } else if (!raw && (!isLocalHost() || forceLocal)) {
+  } else if (!raw) {
     base = "/api/all";
   }
 
@@ -59,18 +51,6 @@ export function buildUnifiedApiUrl({
       const u = new URL(base);
       const isNativeAll = /\/api\/all$/i.test(u.pathname);
       if (!isNativeAll) return u.toString();
-      appendParam(u, "sheetId", sheetId);
-      appendParam(u, "productTabs", productTabs);
-      appendParam(u, "gidProducts", gids.products);
-      appendParam(u, "gidMenu", gids.menu);
-      appendParam(u, "gidPages", gids.pages);
-      appendParam(u, "gidAnnouncements", gids.announcements);
-      appendParam(u, "gidCategories", gids.categories);
-      appendParam(u, "gidTags", gids.tags);
-      appendParam(u, "gidTypes", gids.types);
-      appendParam(u, "gidLevels", gids.levels);
-      appendParam(u, "gidSizes", gids.sizes);
-      appendParam(u, "gidFb", gids.fb);
       addRuntimeFreshParams(u, { force });
       if (meta) u.searchParams.set("meta", "1");
       return u.toString();
@@ -82,18 +62,6 @@ export function buildUnifiedApiUrl({
   if (isRelativeApi(base)) {
     const origin = (typeof window !== "undefined" && window.location?.origin) || "http://localhost";
     const u = new URL(base, origin);
-    appendParam(u, "sheetId", sheetId);
-    appendParam(u, "productTabs", productTabs);
-    appendParam(u, "gidProducts", gids.products);
-    appendParam(u, "gidMenu", gids.menu);
-    appendParam(u, "gidPages", gids.pages);
-    appendParam(u, "gidAnnouncements", gids.announcements);
-    appendParam(u, "gidCategories", gids.categories);
-    appendParam(u, "gidTags", gids.tags);
-    appendParam(u, "gidTypes", gids.types);
-    appendParam(u, "gidLevels", gids.levels);
-    appendParam(u, "gidSizes", gids.sizes);
-    appendParam(u, "gidFb", gids.fb);
     addRuntimeFreshParams(u, { force });
     if (meta) u.searchParams.set("meta", "1");
     return `${u.pathname}${u.search}`;
@@ -173,7 +141,8 @@ async function fetchTabCSV({ sheetId, gid, force = false }) {
     banner: "banner",
     active: "active",
     tag: "tags", tags: "tags",
-    order: "order", sapxep: "order", thu_tu: "order", thutu: "order", sort: "order"
+    order: "order", sapxep: "order", thu_tu: "order", thutu: "order", sort: "order",
+    sameday: "sameDay", same_day: "sameDay", banhtrongngay: "sameDay", banh_trong_ngay: "sameDay", trongngay: "sameDay", trong_ngay: "sameDay"
   };
 
   const head = rawHead.map(s => {
@@ -196,8 +165,27 @@ function slugify(s = "") {
 }
 
 /* ---------- Load nhiều tab sản phẩm ---------- */
-export async function fetchProductsFromTabs({ sheetId, tabs, normalize, onTabDone, force = false }) {
-  if (!Array.isArray(tabs) || !tabs.length) return [];
+export async function fetchProductsFromTabs({
+  sheetId,
+  tabs,
+  normalize,
+  onTabDone,
+  force = false,
+  withDiagnostics = false,
+}) {
+  if (!Array.isArray(tabs) || !tabs.length) {
+    const empty = {
+      products: [],
+      integrity: {
+        complete: true,
+        configuredTabs: 0,
+        loadedTabs: 0,
+        failedTabs: [],
+        tabRows: {},
+      },
+    };
+    return withDiagnostics ? empty : empty.products;
+  }
 
   // Tải qua hàng đợi (tối đa 4 song song nhờ queuedFetch)
   const lists = await Promise.all(
@@ -221,16 +209,22 @@ export async function fetchProductsFromTabs({ sheetId, tabs, normalize, onTabDon
         });
         // Callback progressive: hiển sản phẩm ngay khi tab xong
         if (onTabDone) onTabDone(mapped, t);
-        return mapped;
+        return { ok: true, rows: mapped, tab: t };
       } catch (e) {
         console.error(`[sheets.multi] Tab ${t.key} (gid=${t.gid}) fail:`, e);
-        return []; // không crash toàn bộ nếu 1 tab fail
+        return {
+          ok: false,
+          rows: [],
+          tab: t,
+          error: String(e?.message || e || "tab_load_failed"),
+        };
       }
     })
   );
 
   // gộp + chống trùng giữa các tab: id__gid
-  const flat = lists.flat();
+  const flat = lists.flatMap((result) => result.rows);
+  const sourceInspection = inspectCatalogProducts(flat);
   const seen = new Set();
   const out = [];
 
@@ -245,7 +239,34 @@ export async function fetchProductsFromTabs({ sheetId, tabs, normalize, onTabDon
       out.push({ ...p, _id: k });
     }
   }
-  return out;
+  const failedTabs = lists
+    .filter((result) => !result.ok)
+    .map((result) => ({
+      gid: String(result.tab?.gid || ""),
+      key: String(result.tab?.key || ""),
+      error: result.error || "tab_load_failed",
+    }));
+  const tabRows = Object.fromEntries(
+    lists.map((result) => [
+      String(result.tab?.key || result.tab?.gid || ""),
+      result.rows.length,
+    ])
+  );
+  const snapshot = {
+    products: out,
+    integrity: {
+      complete:
+        failedTabs.length === 0 &&
+        sourceInspection.missingName === 0 &&
+        sourceInspection.duplicateCount === 0,
+      configuredTabs: tabs.length,
+      loadedTabs: lists.length - failedTabs.length,
+      failedTabs,
+      tabRows,
+      sourceInspection,
+    },
+  };
+  return withDiagnostics ? snapshot : snapshot.products;
 }
 
 /* ---------- Fetch Unified Data (GAS) ---------- */

@@ -15,10 +15,11 @@ const CRAWLERS = /facebookexternalhit|Facebot|Twitterbot|TelegramBot|Zalobot|Lin
 
 const SITE_URL = "https://halleybakery.io.vn";
 const DEFAULT_IMAGE = `${SITE_URL}/brand/logo-desktop.png`;
-const DEFAULT_TITLE = "HALLEY BAKERY - Banh sinh nhat & Banh su kien Ha Noi";
-const DEFAULT_DESC = "Dat banh sinh nhat, banh su kien theo yeu cau. Thiet ke doc dao, giao hang tan noi tai Ha Noi.";
+const DEFAULT_TITLE = "HALLEY BAKERY - Bánh sinh nhật và bánh sự kiện Hà Nội";
+const DEFAULT_DESC = "Đặt bánh sinh nhật, bánh sự kiện theo yêu cầu. Thiết kế độc đáo, giao hàng tận nơi tại Hà Nội.";
 const FORCE_APP_PARAMS = ["hb_staff", "staff", "staff_mode", "tracking", "_app", "app"];
 const STAFF_OPT_OUT_COOKIE = "hb_tracking_opt_out_v1";
+const FETCH_TIMEOUT_MS = 7000;
 
 /* ===== CACHE ===== */
 let cachedProducts = null;
@@ -30,16 +31,35 @@ const CACHE_TTL = 10 * 60 * 1000; // 10 phÃƒÂºt
 async function fetchGViz(gid) {
     if (!SHEET_ID || !gid) return [];
     const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${gid}`;
-    const res = await fetch(url);
-    const txt = await res.text();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    let txt = "";
+    try {
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error(`GViz HTTP ${res.status}`);
+        txt = await res.text();
+    } finally {
+        clearTimeout(timer);
+    }
     try {
         const m = txt.match(/google\.visualization\.Query\.setResponse\((.*)\);?$/s);
         const payload = m ? m[1] : txt.slice(txt.indexOf("{"), txt.lastIndexOf("}") + 1);
         const json = JSON.parse(payload);
-        const cols = (json.table?.cols || []).map(c =>
-            (c.label || "").trim().toLowerCase().replace(/\s+/g, "").replace(/[^a-z0-9_]/g, "")
-        );
-        return (json.table?.rows || []).map(row => {
+        const normalizeColumn = value =>
+            String(value || "")
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .replace(/đ/g, "d")
+                .trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "");
+        let rows = json.table?.rows || [];
+        let cols = (json.table?.cols || []).map(c => normalizeColumn(c.label));
+        if (!cols.some(Boolean) && rows.length) {
+            cols = (rows[0]?.c || []).map(cell => normalizeColumn(cell?.v ?? cell?.f ?? ""));
+            rows = rows.slice(1);
+        }
+        return rows.map(row => {
             const obj = {};
             (row.c || []).forEach((cell, i) => {
                 if (cols[i]) obj[cols[i]] = cell?.v ?? cell?.f ?? "";
@@ -327,7 +347,8 @@ export default async function handler(req, res) {
 
     const url = new URL(req.url || "/", SITE_URL);
     const pid = pidFromProductPath(url.pathname) || url.searchParams.get("pid");
-    const cat = url.searchParams.get("cat") || url.searchParams.get("view");
+    const pathSlug = url.pathname.replace(/^\/+|\/+$/g, "");
+    const cat = url.searchParams.get("cat") || url.searchParams.get("view") || (pathSlug === "banh-trong-ngay" ? "banh-trong-ngay" : "");
     const q = url.searchParams.get("q");
     const fullUrl = `${SITE_URL}${url.pathname}${url.search}`;
 
@@ -342,7 +363,7 @@ export default async function handler(req, res) {
                 const desc = productDescOf(p);
                 description = desc
                     ? String(desc).slice(0, 200)
-                    : `Dat ${name} tai Halley Bakery. Giao hang tan noi tai Ha Noi.`;
+                    : `Đặt ${name} tại Halley Bakery. Giao hàng tận nơi tại Hà Nội.`;
                 image = imgOf(p);
             }
         } else if (cat && cat !== "all" && cat !== "home") {
@@ -350,22 +371,36 @@ export default async function handler(req, res) {
             // Find display title from menu data.
             let catTitle = cat;
             for (const m of menu) {
-                const mk = norm(m.key || m.title || "");
-                if (mk === cn || m.key === cat) { catTitle = m.title || m.key || cat; break; }
+                const menuKey = pickFirst(m, ["key", "slug", "code", "category"]);
+                const menuTitle = pickFirst(m, ["title", "label", "name", "ten"]);
+                const mk = norm(menuKey || menuTitle);
+                if (mk === cn || menuKey === cat) {
+                    catTitle = menuTitle || menuKey || cat;
+                    break;
+                }
+            }
+            if (cn === "banh-trong-ngay" && catTitle === cat) {
+                catTitle = "Bánh trong ngày";
             }
             const cp = products.filter(p => {
+                if (cn === "banh-trong-ngay") {
+                    const sd = String(p.sameday ?? p.same_day ?? p.banhtrongngay ?? p.banh_trong_ngay ?? p.trongngay ?? p.trong_ngay ?? "").trim();
+                    if (/^(1|true|yes|y|on|x)$/i.test(sd)) return true;
+                    const aliases = String(p.category_aliases ?? p.categoryaliases ?? p.categories ?? "");
+                    if (aliases.split(/[;,|\n]/).map(x => norm(x)).includes("banh-trong-ngay")) return true;
+                }
                 const pc = p.category || p._tab_key || "";
                 return pc === cat || norm(pc) === cn;
             });
             title = `${catTitle} - Halley Bakery`;
             description = cp.length
-                ? `Xem ${cp.length} mau ${catTitle} tai Halley Bakery. Dat banh online, giao tan noi.`
-                : `${catTitle} tai Halley Bakery. Dat banh online, giao tan noi.`;
+                ? `Xem ${cp.length} mẫu ${catTitle} tại Halley Bakery. Đặt bánh online, giao tận nơi.`
+                : `${catTitle} tại Halley Bakery. Đặt bánh online, giao tận nơi.`;
             const withImg = cp.filter(p => imgOf(p) !== DEFAULT_IMAGE);
             if (withImg.length) image = imgOf(withImg[Math.floor(Math.random() * withImg.length)]);
         } else if (q) {
-            title = `Tim "${q}" - Halley Bakery`;
-            description = `Ket qua tim kiem "${q}" tai Halley Bakery.`;
+            title = `Tìm "${q}" - Halley Bakery`;
+            description = `Kết quả tìm kiếm "${q}" tại Halley Bakery.`;
             const ql = q.toLowerCase();
             const m = products.find(p => (productNameOf(p).toLowerCase()).includes(ql));
             if (m) image = imgOf(m);
@@ -374,4 +409,3 @@ export default async function handler(req, res) {
     setNoStoreHtmlHeaders(res);
     res.status(200).send(ogHtml({ title, description, image, url: fullUrl }));
 }
-

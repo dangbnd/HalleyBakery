@@ -17,6 +17,7 @@ import FilterSheet from "./components/FilterSheet.jsx";
 import { ProductList } from "./components/ProductList.jsx";
 import ProductQuickView from "./components/ProductQuickView.jsx";
 import ProductShelf from "./components/ProductShelf.jsx";
+import DeferredSection from "./components/DeferredSection.jsx";
 import PageViewer from "./components/PageViewer.jsx";
 import MessageButton from "./components/MessageButton.jsx";
 import BackToTop from "./components/BackToTop.jsx";
@@ -25,7 +26,7 @@ import LoadingSkeleton from "./components/LoadingSkeleton.jsx";
 
 import { readProductTabsFromEnv, fetchProductsFromTabs, fetchUnifiedData, buildUnifiedApiUrl } from "./services/sheets.multi.js";
 import {
-  fetchSheetRows, fetchTabAsObjects, fetchFbUrls,
+  fetchSheetRows, fetchTabAsObjects,
   mapProducts, mapCategories, mapTags, mapMenu, mapPages,
   mapTypes, mapLevels, mapSizes, enrichProductPricing, mapAnnouncements,
 } from "./services/sheets.js";
@@ -40,9 +41,14 @@ import {
   recordCustomerEvent,
   toggleFavoriteProduct,
 } from "./utils/customerBehavior.js";
-import { submitConsultLead } from "./services/consult.js";
+import { retryPendingConsultLeads, submitConsultLead } from "./services/consult.js";
 import { ensureAttributionContext } from "./services/attribution.js";
-import { initTelemetry, isTrackingSuppressed } from "./services/telemetry.js";
+import { initTelemetry, isTrackingSuppressed, TRACKING_CONSENT_EVENT } from "./services/telemetry.js";
+import {
+  evaluateCatalogSnapshot,
+  productTabsComplete,
+} from "./lib/catalogIntegrity.js";
+import { sizeOptions } from "./lib/pricing.js";
 
 /* ---------------- helpers ---------------- */
 
@@ -227,7 +233,7 @@ const primaryImage = firstImg;
 const cmpGrid = (a, b) =>
   (b.popular || 0) - (a.popular || 0) ||          // ưu tiên nổi bật
   (+a.order || 0) - (+b.order || 0) ||            // sau đó theo 'order' tăng dần
-  (b.createdAt || 0) - (a.createdAt || 0) ||      // mới hơn trước
+  productCreatedTime(b) - productCreatedTime(a) || // mới hơn trước
   cmpNameNatural(a.name, b.name);                 // cuối cùng theo tên
 
 const priceMinOf = (p) => {
@@ -250,30 +256,7 @@ const allPrices = (p = {}) => {
 };
 
 const norm = (s = "") => s.toString().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
-const normFb = (u) => {
-  try {
-    const x = new URL(u);
-    x.hash = "";
-    return x.toString();
-  } catch {
-    return u;
-  }
-};
 const HOME_LIMITS = { default: 4 };
-const FB_URL_RE = /^(https?:\/\/)?((m|www)\.)?(facebook\.com|fb\.watch)\//i;
-
-function extractFbUrlsFromRows(rows = []) {
-  const pick = (r) => r?.url || r?.fb || r?.fb_url || r?.post || r?.link || r?.col0 || r?.col1 || "";
-  const out = [];
-  for (const r of Array.isArray(rows) ? rows : []) {
-    String(pick(r))
-      .split(/[\n,;|]/)
-      .map((s) => s.trim())
-      .filter((s) => FB_URL_RE.test(s))
-      .forEach((s) => out.push(normFb(s)));
-  }
-  return [...new Set(out)];
-}
 
 const cmpNameNatural = (a = "", b = "") =>
   String(a || "").localeCompare(String(b || ""), "vi", { numeric: true, sensitivity: "base" });
@@ -326,6 +309,8 @@ const productCategoryKeys = (product = {}) => {
 const inMenuCat = (catKey, selectedKey, descIdx) => selectedKey === "all" || catKey === selectedKey || !!descIdx.get(selectedKey)?.has(catKey);
 const productInMenuCat = (product, selectedKey, descIdx) => productCategoryKeys(product).some((key) => inMenuCat(key, selectedKey, descIdx));
 const productCreatedTime = (product = {}) => {
+  const normalized = Number(product.createdAtTs || 0);
+  if (Number.isFinite(normalized) && normalized > 0) return normalized;
   const value = Date.parse(product.createdAt || product.created_at || product.created || "");
   return Number.isFinite(value) ? value : 0;
 };
@@ -338,6 +323,37 @@ const productWithDisplayName = (product, categoryKey, categoryBaseNameMap, posit
   return { ...product, displayName: `${baseName} (${position})`, displayCategory: key };
 };
 const stripAdmin = (nodes = []) => (nodes || []).filter((n) => n.key !== "admin").map((n) => ({ ...n, children: stripAdmin(n.children || []) }));
+const SAME_DAY_KEY = "banh-trong-ngay";
+const SAME_DAY_TITLE = "Bánh trong ngày";
+function injectSameDayIntoMenu(menu = [], hasSameDay = false) {
+  if (!hasSameDay || !Array.isArray(menu)) return menu;
+  const hasNode = (nodes = []) => nodes.some((n) => n?.key === SAME_DAY_KEY || (Array.isArray(n?.children) && hasNode(n.children)));
+  if (hasNode(menu)) return menu;
+
+  const sameDayNode = { key: SAME_DAY_KEY, label: SAME_DAY_TITLE, title: SAME_DAY_TITLE, name: SAME_DAY_TITLE, children: [] };
+  if (menu.some((n) => Array.isArray(n?.children))) {
+    let inserted = false;
+    const walk = (nodes = []) =>
+      nodes.map((n) => {
+        if (n?.key === "product" && !inserted) {
+          inserted = true;
+          return { ...n, children: [sameDayNode, ...(n.children || [])] };
+        }
+        return Array.isArray(n?.children) && n.children.length
+          ? { ...n, children: walk(n.children) }
+          : n;
+      });
+    const next = walk(menu);
+    return inserted ? next : menu;
+  }
+
+  const productChildren = menu.filter((n) => n?.parent === "product");
+  const minOrder = productChildren.reduce((acc, n) => {
+    const o = Number(n?.order);
+    return Number.isFinite(o) ? Math.min(acc, o) : acc;
+  }, 0);
+  return [{ ...sameDayNode, parent: "product", order: minOrder - 1 }, ...menu];
+}
 const scrollTop = () => window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
 
 // --------- Admin mode & Hiển thị giá theo từng sản phẩm ---------
@@ -501,7 +517,6 @@ function readSheetConfig() {
       levels: getConfig("sheet_gid_levels"),
       sizes: getConfig("sheet_gid_sizes"),
       announcements: getConfig("sheet_gid_announcements"),
-      fb: getConfig("sheet_gid_fb"),
     },
   };
 }
@@ -517,13 +532,14 @@ const DATA_CACHE_KEYS = [
   LS.TYPES,
   LS.LEVELS,
   LS.SIZES,
-  LS.FB_URLS,
   LS.ANNOUNCEMENTS,
 ];
 
-function clearRuntimeDataCache() {
+function clearRuntimeDataCache({ preserveSnapshot = false } = {}) {
   try {
-    DATA_CACHE_KEYS.forEach((key) => localStorage.removeItem(key));
+    if (!preserveSnapshot) {
+      DATA_CACHE_KEYS.forEach((key) => localStorage.removeItem(key));
+    }
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const key = localStorage.key(i);
       if (key && key.startsWith("cache:")) localStorage.removeItem(key);
@@ -532,9 +548,13 @@ function clearRuntimeDataCache() {
 }
 
 function buildConfigSignature(sheet = {}, apiAllUrl = "", productTabs = "") {
+  const normalizedApiAllUrl =
+    buildUnifiedApiUrl({ apiAllUrl }) ||
+    String(apiAllUrl || "").trim();
+
   return JSON.stringify({
     id: String(sheet?.id || "").trim(),
-    apiAllUrl: String(apiAllUrl || "").trim(),
+    apiAllUrl: normalizedApiAllUrl,
     productTabs: String(productTabs || "").trim(),
     gids: {
       products: String(sheet?.gids?.products || "").trim(),
@@ -546,7 +566,6 @@ function buildConfigSignature(sheet = {}, apiAllUrl = "", productTabs = "") {
       levels: String(sheet?.gids?.levels || "").trim(),
       sizes: String(sheet?.gids?.sizes || "").trim(),
       announcements: String(sheet?.gids?.announcements || "").trim(),
-      fb: String(sheet?.gids?.fb || "").trim(),
     },
   });
 }
@@ -606,10 +625,37 @@ function clearProductPath() {
   window.history.replaceState(null, "", u);
 }
 
+function initialNavigationState() {
+  if (typeof window === "undefined") {
+    return { route: "home", q: "", activeCat: "all", filters: null };
+  }
+  const state = decodeState(window.location.search);
+  const pathSlug = window.location.pathname.replace(/^\/+|\/+$/g, "");
+  const isSameDayPath = pathSlug === SAME_DAY_KEY;
+  const route =
+    window.location.hash === "#admin"
+      ? "admin"
+      : state.view ||
+        (state.q.trim()
+          ? "search"
+          : state.cat && state.cat !== "all"
+            ? state.cat
+            : isSameDayPath
+              ? SAME_DAY_KEY
+              : "home");
+  return {
+    route,
+    q: state.q,
+    activeCat: state.cat && state.cat !== "all" ? state.cat : (isSameDayPath ? SAME_DAY_KEY : "all"),
+    filters: state.filters,
+  };
+}
+
 export default function App() {
+  const initialNavigation = useMemo(initialNavigationState, []);
   const [configTick, setConfigTick] = useState(0);
-  const [route, setRoute] = useState("home");
-  const [q, setQ] = useState("");
+  const [route, setRoute] = useState(initialNavigation.route);
+  const [q, setQ] = useState(initialNavigation.q);
   const qDeb = useDebounced(q, 200);
   const qDef = useDeferredValue(qDeb);
   const [limit, setLimit] = useState(9999);
@@ -619,15 +665,22 @@ export default function App() {
   const quickInitFromURLRef = useRef(false);
   const didInitQuickURLRef = useRef(false);
   const lastTrackedUrlProductRef = useRef("");
-  const [activeCat, setActiveCat] = useState("all");
+  const [activeCat, setActiveCat] = useState(initialNavigation.activeCat);
   const [homeActive, setHomeActive] = useState("all");
-  const [filterState, setFilterState] = useState(null);
+  const [filterState, setFilterState] = useState(initialNavigation.filters);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filtersResetKey, setFiltersResetKey] = useState(0);
   const [relatedShuffleSeed, setRelatedShuffleSeed] = useState(() => randomSeed());
 
   const [user, setUser] = useState(() => readLS(LS.AUTH, null));
   const [behaviorTick, setBehaviorTick] = useState(0);
+
+  useEffect(() => {
+    const retry = () => retryPendingConsultLeads().catch(() => {});
+    retry();
+    window.addEventListener("online", retry);
+    return () => window.removeEventListener("online", retry);
+  }, []);
 
   useEffect(() => {
     const refresh = () => setBehaviorTick((n) => n + 1);
@@ -654,14 +707,25 @@ export default function App() {
   }, []);
 
   const telemetryStartedRef = useRef(false);
+  const [telemetryConsentTick, setTelemetryConsentTick] = useState(0);
+
+  useEffect(() => {
+    const refresh = () => setTelemetryConsentTick((value) => value + 1);
+    window.addEventListener(TRACKING_CONSENT_EVENT, refresh);
+    return () => window.removeEventListener(TRACKING_CONSENT_EVENT, refresh);
+  }, []);
 
   useEffect(() => {
     if (telemetryStartedRef.current) return undefined;
-    telemetryStartedRef.current = true;
     if (isTrackingSuppressed()) return undefined;
+    telemetryStartedRef.current = true;
     ensureAttributionContext();
-    return initTelemetry();
-  }, []);
+    const cleanup = initTelemetry();
+    return () => {
+      cleanup?.();
+      telemetryStartedRef.current = false;
+    };
+  }, [telemetryConsentTick]);
 
   const visitorTrackingEnabled = false;
 
@@ -691,18 +755,20 @@ export default function App() {
     } catch { }
   }, [visitorTrackingEnabled]);
   /* ---------------- State ---------------- */
-  const [fbUrls, setFbUrls] = useState(() => readLS(LS.FB_URLS, []));
-  const [products, setProducts] = useState(() => readLS(LS.PRODUCTS, DATA.products || []));
+  const [products, setProducts] = useState(() => readLS(LS.PRODUCTS, []));
   // Returning user có cache → false (hiện SP từ cache ngay)
   // New user → true (hiện skeleton)
   const [dataLoading, setDataLoading] = useState(() => {
     const cached = readLS(LS.PRODUCTS, null);
     return !cached || !Array.isArray(cached) || cached.length <= 1;
   });
+  const [catalogLoadFailed, setCatalogLoadFailed] = useState(false);
+  const [catalogRetryKey, setCatalogRetryKey] = useState(0);
+  const catalogVersionRef = useRef("");
   useEffect(() => {
     try {
       const mode = getMode(user);
-      const sanitized = sanitizeProductsForMode(readLS(LS.PRODUCTS, DATA.products || []), mode);
+      const sanitized = sanitizeProductsForMode(readLS(LS.PRODUCTS, []), mode);
       setProducts(sanitized);
     } catch { }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -727,7 +793,7 @@ export default function App() {
     useState(() => readLS(LS.ANNOUNCEMENTS, DATA.announcements || []));
   useEffect(() => writeLS(LS.ANNOUNCEMENTS, announcements), [announcements]);
 
-  const SYNC_MS = 60 * 1000;
+  const SYNC_MS = 5 * 60 * 1000;
 
   // P3: Batch localStorage writes — tránh block main thread khi syncAll cập nhật nhiều state
   const lsQueue = useRef(new Map());
@@ -743,14 +809,12 @@ export default function App() {
   const queueLS = useCallback((key, val) => { lsQueue.current.set(key, val); }, []);
   useEffect(() => { queueLS(LS.AUTH, user); flushLS(); }, [user]);
   useEffect(() => {
-    queueLS(LS.PRODUCTS, products);
     queueLS(LS.CATEGORIES, categories);
     queueLS(LS.MENU, menu);
     queueLS(LS.PAGES, pages);
     queueLS(LS.TAGS, tags);
-    queueLS(LS.FB_URLS, fbUrls);
     flushLS();
-  }, [products, categories, menu, pages, tags, fbUrls]);
+  }, [categories, menu, pages, tags]);
   useEffect(() => {
     try {
       const prev = localStorage.getItem(CONFIG_SIGNATURE_KEY) || "";
@@ -761,8 +825,8 @@ export default function App() {
       return;
     }
 
-    clearRuntimeDataCache();
-    setDataLoading(true);
+    clearRuntimeDataCache({ preserveSnapshot: true });
+    if (!readLS(LS.PRODUCTS, []).length) setDataLoading(true);
   }, [configSignature]);
   useEffect(() => {
     setLimit(24);
@@ -774,20 +838,24 @@ export default function App() {
   useEffect(() => {
     const applyFromURL = () => {
       const s = decodeState(location.search);
-      if (s.q) setQ(s.q);
-      if (s.cat) setActiveCat(s.cat);
+      setQ(s.q || "");
+      setActiveCat(s.cat || "all");
+      const pathSlug = location.pathname.replace(/^\/+|\/+$/g, "");
       if (s.view) {
         setRoute(s.view);                            // ví dụ 'love'
       } else if (s.q && s.q.trim()) {
         setRoute("search");                          // chỉ vào search khi có query
       } else if (s.cat && s.cat !== "all") {
         setRoute(s.cat);                             // deep-link theo cat nếu không có 'view'
+      } else if (pathSlug === SAME_DAY_KEY) {
+        setRoute(SAME_DAY_KEY);
+        setActiveCat(SAME_DAY_KEY);
       } else {
         setRoute("home");                            // mặc định
       }
-      if (s.filters) { setFilterState(s.filters); setFiltersResetKey((k) => k + 1); }
+      setFilterState(s.filters || null);
+      setFiltersResetKey((k) => k + 1);
     };
-    applyFromURL();
     window.addEventListener("popstate", applyFromURL);
     return () => window.removeEventListener("popstate", applyFromURL);
   }, []);
@@ -795,6 +863,9 @@ export default function App() {
   /* state -> URL */
   useEffect(() => {
     const u = new URL(location.href);
+    if (u.pathname.replace(/^\/+|\/+$/g, "") === SAME_DAY_KEY && route !== SAME_DAY_KEY) {
+      u.pathname = "/";
+    }
     // Xóa TẤT CẢ key do app quản lý (bao gồm cả filter params)
     ["view", "q", "cat", "filters", "tags", "sizes", "lvls", "price", "feat", "stock", "sort"].forEach((k) => u.searchParams.delete(k));
     // Gộp lại các key mới từ state
@@ -806,17 +877,6 @@ export default function App() {
     window.history.replaceState(null, "", u);
   }, [route, q, activeCat, filterState]);
 
-  /* FB urls */
-  useEffect(() => {
-    if (isPublicHostRuntime()) return;
-    const SHEET_ID = getConfig("sheet_id");
-    const FB_GID = getConfig("sheet_gid_fb");
-    if (!SHEET_ID || !FB_GID) return;
-    (async () => {
-      try { const urls = await fetchFbUrls({ sheetId: SHEET_ID, gid: FB_GID }); setFbUrls([...new Set(urls.map(normFb))]); }
-      catch (e) { console.error("load FB sheet fail:", e); }
-    })();
-  }, [configTick]);
   useEffect(() => {
     if (!filterState?.tags?.size || !tags?.length) return;
     const hasAllLabels = [...filterState.tags].every(k => filterState.tagLabels?.[k]);
@@ -899,25 +959,23 @@ export default function App() {
       syncRunning = true;
       const currentProducts = readLS(LS.PRODUCTS, []);
       const hasCache = currentProducts.length > 1;
-      if (!hasCache && isFirstSync) setDataLoading(true);
+      if (!hasCache && isFirstSync) {
+        setCatalogLoadFailed(false);
+        setDataLoading(true);
+      }
       isFirstSync = false;
-
-      let uiRevealed = hasCache;
-      const revealContentEarly = () => {
-        if (uiRevealed) return;
-        uiRevealed = true;
-        setDataLoading(false);
-      };
 
       try {
         let prodRows;
-        let unifiedOk = false;
+        let productSourceComplete;
+        let stagedUnified = null;
+        let stagedTypes = null;
+        let stagedLevels = null;
         let allowDirectSheetReads = !isPublicHostRuntime();
         const unifiedLoaded = {
           menu: false,
           pages: false,
           announcements: false,
-          fb: false,
         };
         const productTabsConfig = getConfig("product_tabs").trim();
         const apiAllUrl = getConfig("api_all_url").trim();
@@ -926,8 +984,42 @@ export default function App() {
           productTabs: productTabsConfig,
           gidProducts: SHEET.gids.products,
         };
-        const applyUnifiedPayload = (unified) => {
+        const normalizeUnifiedProducts = (rows = []) => rows.map((r) => ({
+          ...r,
+          images: String(r.images || "").trim(),
+          price: String(r.price || r.gia || ""),
+          sizes: String(r.sizes || r.size || r.Sizes || r.Size || ""),
+          priceBySize: (r.pricebysize ?? r.priceBySize ?? ""),
+          visibility: String(r.visibility ?? r.Visibility ?? r.show ?? r.hienthi ?? r["hiển thị"] ?? "public").trim().toLowerCase(),
+          priceVisibility: String(r.priceVisibility ?? r.pricevisibility ?? r.showPrice ?? r.showprice ?? r.show_price ?? r.hienGia ?? r["hiển thị giá"] ?? "").trim().toLowerCase(),
+          description: String(r.description || r.desc || r.mo_ta || "").trim(),
+          descriptionVisibility: String(
+            r.descriptionVisibility ?? r.descriptionvisibility ??
+            r.descVisibility ?? r.descvisibility ??
+            r.showDesc ?? r.showdesc ??
+            r.showDescription ?? r.showdescription ??
+            r.hienMoTa ?? r["hiển thị mô tả"] ?? r["hien thi mo ta"] ?? ""
+          ).trim().toLowerCase(),
+        }));
+        const stageUnifiedPayload = (unified) => {
           if (!unified || !Array.isArray(unified.products)) return false;
+          if (unified?._meta?.version) {
+            catalogVersionRef.current = String(unified._meta.version);
+          }
+          stagedUnified = unified;
+          stagedTypes = unified.types?.length ? mapTypes(unified.types) : null;
+          stagedLevels = unified.levels?.length ? mapLevels(unified.levels) : null;
+          productSourceComplete = productTabsComplete(unified?._integrity);
+          prodRows = normalizeUnifiedProducts(unified.products);
+
+          unifiedLoaded.menu = !!unified.menu?.length;
+          unifiedLoaded.pages = !!unified.pages?.length;
+          unifiedLoaded.announcements = !!unified.announcements?.length;
+          return true;
+        };
+        const commitUnifiedMetadata = () => {
+          const unified = stagedUnified;
+          if (!unified) return;
           if (unified?._meta?.refreshedAt) {
             setConfig("last_sync_at", unified._meta.refreshedAt);
           }
@@ -954,43 +1046,13 @@ export default function App() {
             setAnnouncements(mapped); writeLS(LS.ANNOUNCEMENTS, mapped);
             unifiedLoaded.announcements = true;
           }
-          if (unified.fb?.length) {
-            const mappedFb = extractFbUrlsFromRows(unified.fb);
-            if (mappedFb.length) {
-              setFbUrls(mappedFb);
-              writeLS(LS.FB_URLS, mappedFb);
-              unifiedLoaded.fb = true;
-            }
-          }
-          if (unified.types?.length) { writeLS(LS.TYPES, mapTypes(unified.types)); }
-          if (unified.levels?.length) { writeLS(LS.LEVELS, mapLevels(unified.levels)); }
-
-          prodRows = unified.products.map((r) => ({
-            ...r,
-            images: String(r.images || "").trim(),
-            price: String(r.price || r.gia || ""),
-            sizes: String(r.sizes || r.size || r.Sizes || r.Size || ""),
-            priceBySize: (r.pricebysize ?? r.priceBySize ?? ""),
-            visibility: String(r.visibility ?? r.Visibility ?? r.show ?? r.hienthi ?? r["hiá»ƒn thá»‹"] ?? "public").trim().toLowerCase(),
-            priceVisibility: String(r.priceVisibility ?? r.pricevisibility ?? r.showPrice ?? r.showprice ?? r.show_price ?? r.hienGia ?? r["hiá»ƒn thá»‹ giÃ¡"] ?? "").trim().toLowerCase(),
-            description: String(r.description || r.desc || r.mo_ta || "").trim(),
-            descriptionVisibility: String(
-              r.descriptionVisibility ?? r.descriptionvisibility ??
-              r.descVisibility ?? r.descvisibility ??
-              r.showDesc ?? r.showdesc ??
-              r.showDescription ?? r.showdescription ??
-              r.hienMoTa ?? r["hiá»ƒn thá»‹ mÃ´ táº£"] ?? r["hien thi mo ta"] ?? ""
-            ).trim().toLowerCase(),
-          }));
-          return true;
+          if (stagedTypes) writeLS(LS.TYPES, stagedTypes);
+          if (stagedLevels) writeLS(LS.LEVELS, stagedLevels);
         };
 
         // 1. Ưu tiên fetch từ API gộp (nhanh, 1 request) - chỉ khi user cấu hình
         const allUrl = buildUnifiedApiUrl({
           apiAllUrl,
-          sheetId: SHEET.id,
-          productTabs: productTabsConfig,
-          gids: SHEET.gids,
           force,
         });
         if (allUrl) {
@@ -998,9 +1060,6 @@ export default function App() {
           if (isSuspiciousUnifiedPayload(unified, unifiedSource)) {
             const forcedUrl = buildUnifiedApiUrl({
               apiAllUrl,
-              sheetId: SHEET.id,
-              productTabs: productTabsConfig,
-              gids: SHEET.gids,
               force: true,
             });
             console.warn("[Halley] Unified API returned empty products. Retry with force=1.");
@@ -1011,64 +1070,8 @@ export default function App() {
               console.warn("[Halley] Unified API still empty after force refresh. Fallback to direct Google Sheet reads.");
             }
           }
-          if (unified && Array.isArray(unified.products)) {
-            if (unified?._meta?.refreshedAt) {
-              setConfig("last_sync_at", unified._meta.refreshedAt);
-            }
-            // Set metadata
-            if (unified.categories?.length) {
-              const mapped = mapCategories(unified.categories);
-              setCategories(mapped); writeLS(LS.CATEGORIES, mapped);
-            }
-            if (unified.tags?.length) {
-              const mapped = mapTags(unified.tags);
-              setTags(mapped); writeLS(LS.TAGS, mapped);
-            }
-            if (unified.menu?.length) {
-              const mapped = mapMenu(unified.menu);
-              setMenu(mapped); writeLS(LS.MENU, mapped);
-              unifiedLoaded.menu = true;
-            }
-            if (unified.pages?.length) {
-              const mapped = mapPages(unified.pages);
-              setPages(mapped); writeLS(LS.PAGES, mapped);
-              unifiedLoaded.pages = true;
-            }
-            if (unified.announcements?.length) {
-              const mapped = mapAnnouncements(unified.announcements);
-              setAnnouncements(mapped); writeLS(LS.ANNOUNCEMENTS, mapped);
-              unifiedLoaded.announcements = true;
-            }
-            if (unified.fb?.length) {
-              const mappedFb = extractFbUrlsFromRows(unified.fb);
-              if (mappedFb.length) {
-                setFbUrls(mappedFb);
-                writeLS(LS.FB_URLS, mappedFb);
-                unifiedLoaded.fb = true;
-              }
-            }
-            if (unified.types?.length) { writeLS(LS.TYPES, mapTypes(unified.types)); }
-            if (unified.levels?.length) { writeLS(LS.LEVELS, mapLevels(unified.levels)); }
-
-            // Set products
-            prodRows = unified.products.map(r => ({
-              ...r,
-              images: String(r.images || "").trim(),
-              price: String(r.price || r.gia || ""),
-              sizes: String(r.sizes || r.size || r.Sizes || r.Size || ""),
-              priceBySize: (r.pricebysize ?? r.priceBySize ?? ""),
-              visibility: String(r.visibility ?? r.Visibility ?? r.show ?? r.hienthi ?? r["hiển thị"] ?? "public").trim().toLowerCase(),
-              priceVisibility: String(r.priceVisibility ?? r.pricevisibility ?? r.showPrice ?? r.showprice ?? r.show_price ?? r.hienGia ?? r["hiển thị giá"] ?? "").trim().toLowerCase(),
-              description: String(r.description || r.desc || r.mo_ta || "").trim(),
-              descriptionVisibility: String(
-                r.descriptionVisibility ?? r.descriptionvisibility ??
-                r.descVisibility ?? r.descvisibility ??
-                r.showDesc ?? r.showdesc ??
-                r.showDescription ?? r.showdescription ??
-                r.hienMoTa ?? r["hiển thị mô tả"] ?? r["hien thi mo ta"] ?? ""
-              ).trim().toLowerCase(),
-            }));
-            unifiedOk = true;
+          if (stageUnifiedPayload(unified)) {
+            // Chỉ stage tại đây. Metadata và cache được commit sau khi catalog hợp lệ.
           } else if (typeof window !== "undefined") {
             const host = String(window.location?.hostname || "").toLowerCase();
             const isPublicHost = !!host && !["localhost", "127.0.0.1", "0.0.0.0"].includes(host);
@@ -1092,6 +1095,7 @@ export default function App() {
               const tabs = readProductTabsFromEnv();
               if (!tabs.length) {
                 prodRows = await fetchSheetRows({ sheetId: SHEET.id, gid: SHEET.gids.products || "0", force });
+                productSourceComplete = true;
               } else {
                 // Hàm chuẩn hoá row (dùng chung)
                 const normalizeRow = (r) => ({
@@ -1125,78 +1129,94 @@ export default function App() {
 
                 // A. Fetch tab ưu tiên TRƯỚC (~2-3s)
                 console.time(`[Halley] Priority tab "${priorityTab.key}"`);
-                const priorityRows = await fetchProductsFromTabs({
+                const prioritySnapshot = await fetchProductsFromTabs({
                   sheetId: SHEET.id, tabs: [priorityTab], normalize: normalizeRow, force,
+                  withDiagnostics: true,
                 });
+                const priorityRows = prioritySnapshot.products;
                 console.timeEnd(`[Halley] Priority tab "${priorityTab.key}"`);
                 console.log(`[Halley] Priority: ${priorityRows.length} products, hasCache=${hasCache}`);
 
-                // Set products sớm (nhưng GIỮ skeleton - chỉ tắt ở finally)
-                if (!hasCache && priorityRows.length) {
-                  const mapped = mapProducts(priorityRows, null);
-                  const mode = getMode(user);
-                  const sanitized = sanitizeProductsForMode(mapped, mode);
-                  setProducts(sanitized);
-                  revealContentEarly();
-                }
-
                 // B. Fetch các tab còn lại ngầm
-                const restRows = await fetchProductsFromTabs({
+                const restSnapshot = await fetchProductsFromTabs({
                   sheetId: SHEET.id, tabs: restTabs, normalize: normalizeRow, force,
+                  withDiagnostics: true,
                 });
 
-                prodRows = [...priorityRows, ...restRows];
+                prodRows = [...priorityRows, ...restSnapshot.products];
+                productSourceComplete =
+                  prioritySnapshot.integrity.complete &&
+                  restSnapshot.integrity.complete;
+                if (!productSourceComplete) {
+                  console.warn("[Halley] Product snapshot incomplete. Keep last-known-good cache.", [
+                    ...prioritySnapshot.integrity.failedTabs,
+                    ...restSnapshot.integrity.failedTabs,
+                  ]);
+                }
               }
             } else {
               prodRows = await fetchSheetRows({ sheetId: SHEET.id, gid: SHEET.gids.products || "0", force });
+              productSourceComplete = true;
             }
           } else {
             prodRows = [];
+            productSourceComplete = false;
           }
         }
 
         const fromSheet = mapProducts(prodRows, null);
 
-        // Set products sớm cho new user (nhưng GIỮ skeleton)
-        if (!hasCache && fromSheet?.length) {
-          const mode = getMode(user);
-          const sanitized = sanitizeProductsForMode(fromSheet, mode);
-          setProducts(sanitized);
-          revealContentEarly();
-        }
-
-        let types = [], levels = [];
-        try {
-          const [typesResult, levelsResult] = await Promise.all([
+        let types = stagedTypes || readLS(LS.TYPES, []);
+        let levels = stagedLevels || readLS(LS.LEVELS, []);
+        const metadataLoads = await Promise.allSettled([
             (async () => {
-              if (allowDirectSheetReads && SHEET.id && SHEET.gids.types) {
+              if (!stagedTypes && allowDirectSheetReads && SHEET.id && SHEET.gids.types) {
                 const trows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.types, force });
-                const mapped = mapTypes(trows);
-                writeLS(LS.TYPES, mapped);
-                return mapped;
+                return mapTypes(trows);
               }
-              return readLS(LS.TYPES, []);
+              return types;
             })(),
             (async () => {
-              if (allowDirectSheetReads && SHEET.id && SHEET.gids.levels) {
+              if (!stagedLevels && allowDirectSheetReads && SHEET.id && SHEET.gids.levels) {
                 const lrows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.levels, force });
-                const mapped = mapLevels(lrows);
-                writeLS(LS.LEVELS, mapped);
-                return mapped;
+                return mapLevels(lrows);
               }
-              return readLS(LS.LEVELS, []);
+              return levels;
             })(),
           ]);
-          types = typesResult || [];
-          levels = levelsResult || [];
-        } catch (e) { console.error("load types/levels fail:", e); }
+        if (metadataLoads[0].status === "fulfilled") {
+          types = metadataLoads[0].value || [];
+        } else {
+          console.warn("[Halley] types load failed. Use cached types.", metadataLoads[0].reason);
+        }
+        if (metadataLoads[1].status === "fulfilled") {
+          levels = metadataLoads[1].value || [];
+        } else {
+          console.warn("[Halley] levels load failed. Use cached levels.", metadataLoads[1].reason);
+        }
 
 
         if (fromSheet?.length) {
           const enriched = fromSheet.map((p) => enrichProductPricing(p, types, levels));
+          const integrity = evaluateCatalogSnapshot({
+            products: enriched,
+            previousProducts: currentProducts,
+            sourceComplete: productSourceComplete,
+            sourceProductCount: prodRows.length,
+          });
+          if (!integrity.ok) {
+            console.warn("[Halley] Reject catalog snapshot. Keep last-known-good cache.", integrity);
+            if (!currentProducts.length) setCatalogLoadFailed(true);
+            return;
+          }
+
           const mode = getMode(user);
           const sanitized = sanitizeProductsForMode(enriched, mode);
+          setCatalogLoadFailed(false);
           setProducts(sanitized); writeLS(LS.PRODUCTS, sanitized);
+          if (types.length) writeLS(LS.TYPES, types);
+          if (levels.length) writeLS(LS.LEVELS, levels);
+          commitUnifiedMetadata();
 
           // Load Menu trước để lấy label cho categories
           let menuMap = {};
@@ -1214,7 +1234,7 @@ export default function App() {
 
           // Build categories từ product data + Menu labels
           const cats = [...new Set(sanitized.map((p) => p.category).filter(Boolean))];
-          if (cats.length) {
+          if (!stagedUnified?.categories?.length && cats.length) {
             const catList = cats.map((k) => ({
               key: k,
               title: menuMap[k] || k, // Dùng label từ Menu, fallback = key
@@ -1231,7 +1251,7 @@ export default function App() {
               if (!tagSet.has(tk)) tagSet.set(tk, t);
             }
           }
-          if (tagSet.size) {
+          if (!stagedUnified?.tags?.length && tagSet.size) {
             const tagList = [...tagSet.entries()].map(([k, label]) => ({ key: k, label, id: k }));
             setTags(tagList); writeLS(LS.TAGS, tagList);
           }
@@ -1260,17 +1280,12 @@ export default function App() {
           loadOpt(SHEET.gids.announcements, mapAnnouncements, setAnnouncements, LS.ANNOUNCEMENTS, unifiedLoaded.announcements),
         ].filter(Boolean)).catch(e => console.error("loadOpt fail:", e));
 
-        // Fallback FB posts when unified API does not provide fb data.
-        if (allowDirectSheetReads && SHEET.id && SHEET.gids.fb && !unifiedLoaded.fb) {
-          try {
-            const fbRows = await fetchTabAsObjects({ sheetId: SHEET.id, gid: SHEET.gids.fb, force });
-            const mappedFb = extractFbUrlsFromRows(fbRows);
-            setFbUrls(mappedFb);
-            writeLS(LS.FB_URLS, mappedFb);
-          } catch (e) {
-            console.warn("[Halley] skip FB fallback load:", e.message);
-          }
+        if (!fromSheet?.length && !currentProducts.length) {
+          setCatalogLoadFailed(true);
         }
+      } catch (error) {
+        console.error("[Halley] Catalog sync failed:", error);
+        if (!currentProducts.length) setCatalogLoadFailed(true);
       } finally {
         setDataLoading(false);
         syncRunning = false;
@@ -1284,13 +1299,33 @@ export default function App() {
     });
     if (SHEET.id || hasUnifiedEndpoint) {
       syncAll();
-      const t = setInterval(syncAll, SYNC_MS);
+      const checkForCatalogUpdate = async () => {
+        const metaUrl = buildUnifiedApiUrl({
+          apiAllUrl: getConfig("api_all_url").trim(),
+          meta: true,
+        });
+        if (!metaUrl) {
+          await syncAll();
+          return;
+        }
+        const meta = await fetchUnifiedData(metaUrl, { force: true });
+        const nextVersion = String(meta?._meta?.version || "");
+        if (!nextVersion) return;
+        if (!catalogVersionRef.current) {
+          catalogVersionRef.current = nextVersion;
+          return;
+        }
+        if (nextVersion !== catalogVersionRef.current) {
+          await syncAll({ force: true });
+        }
+      };
+      const t = setInterval(checkForCatalogUpdate, SYNC_MS);
       const syncWhenVisible = () => {
         if (typeof document !== "undefined" && document.visibilityState && document.visibilityState !== "visible") return;
         const now = Date.now();
-        if (now - lastVisibleSync < 15 * 1000) return;
+        if (now - lastVisibleSync < 2 * 60 * 1000) return;
         lastVisibleSync = now;
-        syncAll();
+        checkForCatalogUpdate();
       };
       window.addEventListener("focus", syncWhenVisible);
       document.addEventListener("visibilitychange", syncWhenVisible);
@@ -1303,7 +1338,7 @@ export default function App() {
     setDataLoading(false);
   }, [
     SYNC_MS,
-    configTick,
+    configSignature,
     SHEET.id,
     SHEET.gid,
     SHEET.gids.products,
@@ -1315,7 +1350,7 @@ export default function App() {
     SHEET.gids.levels,
     SHEET.gids.sizes,
     SHEET.gids.announcements,
-    SHEET.gids.fb,
+    catalogRetryKey,
   ]);
 
   /* lọc */
@@ -1332,10 +1367,10 @@ export default function App() {
         tagKey(typeof t === "string" ? t : (t?.id ?? t?.label ?? ""))
       );
       const tagOk = !tagSet?.size || pTags.some((k) => tagSet.has(k));
-      const sizeOk = !sizeSet?.size || (p.sizes || []).some((s) => sizeSet.has(String(s)));
+      const sizeOk = !sizeSet?.size || sizeOptions(p).some((size) => sizeSet.has(size.id));
       const lvlOk = !levelSet?.size || (p.level && levelSet.has(String(p.level)));
       const featOk = !featured || !!p.banner;
-      const stockOk = !inStock || p.inStock !== false;
+      const stockOk = !inStock || p.inStock === true;
       return priceOk && tagOk && sizeOk && lvlOk && featOk && stockOk;
     });
 
@@ -1344,7 +1379,7 @@ export default function App() {
     else if (sort === "price-desc") out = [...out].sort((a, b) => (priceMinOf(b) ?? -Infinity) - (priceMinOf(a) ?? -Infinity));
     else if (sort === "name-asc") out = [...out].sort((a, b) => cmpNameNatural(a.name, b.name));
     else if (sort === "name-desc") out = [...out].sort((a, b) => cmpNameNatural(b.name, a.name));
-    else if (sort === "newest") out = [...out].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    else if (sort === "newest") out = [...out].sort((a, b) => productCreatedTime(b) - productCreatedTime(a) || cmpGrid(a, b));
     else if (sort === "popular") out = [...out].sort((a, b) => (b.popular || 0) - (a.popular || 0));
     return out;
   }
@@ -1367,8 +1402,16 @@ export default function App() {
   }, [listKey, booted]);
 
   /* ======= danh mục ======= */
-  const productCatsFromMenu = useMemo(() => getProductCategoriesFromMenu(menu), [menu]);
-  const descByKey = useMemo(() => buildDescIndex(menu), [menu]);
+  const hasSameDayProducts = useMemo(
+    () => (products || []).some((p) => p?.sameDay || productCategoryKeys(p).includes(SAME_DAY_KEY)),
+    [products]
+  );
+  const effectiveMenu = useMemo(
+    () => injectSameDayIntoMenu(menu, hasSameDayProducts),
+    [menu, hasSameDayProducts]
+  );
+  const productCatsFromMenu = useMemo(() => getProductCategoriesFromMenu(effectiveMenu), [effectiveMenu]);
+  const descByKey = useMemo(() => buildDescIndex(effectiveMenu), [effectiveMenu]);
   const categoryTitleMap = useMemo(
     () => Object.fromEntries((categories || []).map((c) => [String(c.key || ""), String(c.title || c.key || "")])),
     [categories]
@@ -1382,13 +1425,13 @@ export default function App() {
         if (Array.isArray(item?.children) && item.children.length) walk(item.children);
       }
     };
-    walk(menu);
+    walk(effectiveMenu);
     for (const item of categories || []) {
       const key = String(item?.key || "").trim();
       if (key && !map.has(key)) map.set(key, String(item?.title || key).trim());
     }
     return map;
-  }, [menu, categories]);
+  }, [effectiveMenu, categories]);
 
   const fallbackHomeCats = useMemo(() => {
     if (productCatsFromMenu.length > 0) return [];
@@ -1436,6 +1479,13 @@ export default function App() {
   const decorateProductsForCategory = useCallback((list = [], categoryKey = "") => {
     const key = String(categoryKey || "").trim();
     if (!key || key === "all" || !Array.isArray(list)) return list;
+    if (key === SAME_DAY_KEY) {
+      return list.map((product) => {
+        const origKey = String(product?.category || "").trim();
+        if (!origKey || origKey === SAME_DAY_KEY) return product;
+        return productWithDisplayName(product, origKey, categoryBaseNameMap, categoryPositionMap.get(`${origKey}:${pidOf(product)}`));
+      });
+    }
     return list.map((product) => productWithDisplayName(product, key, categoryBaseNameMap, categoryPositionMap.get(`${key}:${pidOf(product)}`)));
   }, [categoryBaseNameMap, categoryPositionMap]);
 
@@ -1681,7 +1731,7 @@ export default function App() {
     if (prevRouteRef.current !== route) { scrollTop(); prevRouteRef.current = route; }
   }, [route, activeCat]);
 
-  const menuPublic = useMemo(() => stripAdmin(menu), [menu]);
+  const menuPublic = useMemo(() => stripAdmin(effectiveMenu), [effectiveMenu]);
 
   // Gợi ý: danh mục + sản phẩm — dùng qDeb để debounce, dùng productCatsFromMenu đã memo
   const suggestions = useMemo(() => {
@@ -1868,8 +1918,8 @@ export default function App() {
       page_type: "product_detail",
       content_group: "catalog",
       section: "consult_form",
-      status: result?.remoteOk ? "remote_ok" : "local_only",
-      meta: { remoteOk: !!result?.remoteOk },
+      status: result?.remoteOk ? "remote_ok" : result?.local ? "local_pending" : "failed",
+      meta: { remoteOk: !!result?.remoteOk, local: !!result?.local },
     });
     setBehaviorTick((n) => n + 1);
     return result;
@@ -1959,12 +2009,29 @@ export default function App() {
 
 
   /* --------------- render --------------- */
-  // Skeleton giữ cho đến khi TẤT CẢ data sẵn sàng
-  const showSkeleton = dataLoading;
+  // Home render ngay; chỉ giữ skeleton toàn nội dung cho route cần catalog để xác định kết quả.
+  const showSkeleton = dataLoading && products.length === 0 && route !== "home";
   let mainContent = null;
 
   if (showSkeleton) {
     mainContent = <LoadingSkeleton count={8} message="Đang tải sản phẩm…" />;
+  } else if (catalogLoadFailed && products.length === 0) {
+    mainContent = (
+      <section className="mx-auto max-w-6xl px-4 py-16 text-center">
+        <p className="text-sm text-gray-600">Chưa tải được danh sách sản phẩm.</p>
+        <button
+          type="button"
+          onClick={() => {
+            setCatalogLoadFailed(false);
+            setDataLoading(true);
+            setCatalogRetryKey((value) => value + 1);
+          }}
+          className="mt-4 h-10 rounded-md bg-rose-500 px-5 text-sm font-medium text-white hover:bg-rose-600"
+        >
+          Thử tải lại
+        </button>
+      </section>
+    );
   } else if (route === "favorites") {
     const list = applyFilters(favoriteProducts);
     const hasSaved = favoriteProducts.length > 0;
@@ -2072,25 +2139,26 @@ export default function App() {
     );
   } else {
     const isHome = route === "home";
+    const showHero = isHome;
     const list = filtered;
     mainContent = (
       <>
-        {isHome && (
+        {showHero && (
           <Hero
             products={products}
-            interval={2000}
-            fbUrls={fbUrls}
-            onBannerClick={(p) =>
+            loading={dataLoading && products.length === 0}
+            interval={7600}
+            onBannerClick={(p, heroContext = {}) =>
               openQuick(p, {
                 source: "hero",
-                pageType: "home",
+                pageType: isHome ? "home" : "category",
                 contentGroup: "catalog",
                 section: "hero",
-                listId: "home:hero",
+                listId: `${isHome ? "home" : route}:hero:${heroContext.category || p?.category || "all"}`,
                 listName: "hero",
-                listPosition: 1,
-                resultsCount: 1,
-                category: p?.category || "",
+                listPosition: heroContext.listPosition || 1,
+                resultsCount: heroContext.resultsCount || 5,
+                category: heroContext.category || p?.category || "",
               })
             }
           />
@@ -2098,19 +2166,6 @@ export default function App() {
         {isHome && (
           <SocialProofSection
             entries={DATA.socialProof}
-            products={products}
-            categoryTitleMap={categoryTitleMap}
-            onProductClick={(p) =>
-              openQuick(p, {
-                source: "social_proof",
-                pageType: "home",
-                contentGroup: "catalog",
-                section: "social_proof",
-                listId: "home:social_proof",
-                listName: "social_proof",
-                category: p?.category || "",
-              })
-            }
           />
         )}
         {showCatBar ? CatBar : null}
@@ -2154,9 +2209,14 @@ export default function App() {
               }}
             />
             {(() => {
-              const sections = homeSections.map(({ key, title, items }) => {
+              const sections = homeSections.map(({ key, title, items }, index) => {
                 return (
-                  <div key={key} ref={(el) => (sectionRefs.current[key] = el)}>
+                  <DeferredSection
+                    key={key}
+                    ref={(el) => (sectionRefs.current[key] = el)}
+                    eager={index < 2}
+                    onLayout={recalcSectionTops}
+                  >
                     <div className="flex items-center justify-between mb-3">
                       <h3 className="text-lg font-semibold">{title}</h3>
                       <button className="text-rose-600 hover:underline" onClick={() => { navigate(key); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" })); }}>Xem tất cả</button>
@@ -2178,12 +2238,12 @@ export default function App() {
                         category: key,
                       }}
                     />
-                  </div>
+                  </DeferredSection>
                 );
               });
               const hasContent = sections.some(Boolean);
-              if (!homeMenuReady) return <LoadingSkeleton count={8} message="?ang t?i danh m?c..." />;
-              if (!hasContent && dataLoading) return <LoadingSkeleton count={8} message="?ang t?i s?n ph?m..." />;
+              if (!homeMenuReady) return <LoadingSkeleton count={8} message="Đang tải danh mục..." />;
+              if (!hasContent && dataLoading) return <LoadingSkeleton count={8} message="Đang tải sản phẩm..." />;
               return sections;
             })()}
           </section>
@@ -2226,7 +2286,7 @@ export default function App() {
   }
 
   return (
-    <div className="bg-gray-50 min-h-screen">
+    <div className="storefront-watercolor min-h-screen">
       <SectionErrorBoundary name="Header">
         <Header
           currentKey={route}
@@ -2288,6 +2348,7 @@ export default function App() {
             key={filtersResetKey}
             products={route === "favorites" ? favoriteProducts : route === "search" ? listForSearch : baseForRoute}
             tags={tags}
+            value={filterState}
             onChange={setFilterState}
           />
         </FilterSheet>
@@ -2296,7 +2357,6 @@ export default function App() {
       <SectionErrorBoundary name="Footer">
         <Footer data={DATA.footer} pages={pages} />
       </SectionErrorBoundary>
-
       <BackToTop />
       <MessageButton />
     </div>
