@@ -208,11 +208,7 @@ function createCollageLayouts(count, mobile = false, variantSeed = 0) {
 }
 
 function feedbackImageCandidates(raw, width, quality) {
-  const candidates = candidatesFor(raw, width, 0, quality);
-  const drive = candidates.filter((url) => /drive\.google\.com\/thumbnail/i.test(url));
-  const cdn = candidates.filter((url) => /images\.weserv\.nl/i.test(url));
-  const rest = candidates.filter((url) => !drive.includes(url) && !cdn.includes(url));
-  return [...new Set([...cdn, ...drive, ...rest])];
+  return candidatesFor(raw, width, 0, quality);
 }
 
 function FeedbackProofImage({ item, priority = false, className = "", width, quality }) {
