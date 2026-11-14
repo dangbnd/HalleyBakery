@@ -9,13 +9,13 @@ import { firstImg } from "./utils/img.js";
 import SectionErrorBoundary from "./components/system/SectionErrorBoundary.jsx";
 import Header from "./components/Header.jsx";
 import { Footer } from "./components/Footer.jsx";
-import { Hero } from "./components/Hero.jsx";
+const Hero = lazy(() => import("./components/Hero.jsx").then((m) => ({ default: m.Hero })));
 import SocialProofSection from "./components/SocialProofSection.jsx";
 import CategoryBar from "./components/CategoryBar.jsx";
 import Filters from "./components/Filters.jsx";
-import FilterSheet from "./components/FilterSheet.jsx";
+const FilterSheet = lazy(() => import("./components/FilterSheet.jsx"));
 import { ProductList } from "./components/ProductList.jsx";
-import ProductQuickView from "./components/ProductQuickView.jsx";
+const ProductQuickView = lazy(() => import("./components/ProductQuickView.jsx"));
 import ProductShelf from "./components/ProductShelf.jsx";
 import DeferredSection from "./components/DeferredSection.jsx";
 import PageViewer from "./components/PageViewer.jsx";
@@ -1213,7 +1213,29 @@ export default function App() {
           const mode = getMode(user);
           const sanitized = sanitizeProductsForMode(enriched, mode);
           setCatalogLoadFailed(false);
-          setProducts(sanitized); writeLS(LS.PRODUCTS, sanitized);
+          setProducts(sanitized);
+          writeLS(LS.PRODUCTS, sanitized.map((prod) => {
+            const c = { id: prod.id, name: prod.name, category: prod.category, images: prod.images };
+            if (prod._id) c._id = prod._id;
+            if (prod.categoryAliases?.length) c.categoryAliases = prod.categoryAliases;
+            if (prod.categories?.length > 1) c.categories = prod.categories;
+            if (prod.price != null) c.price = prod.price;
+            if (prod.priceBySize && Object.keys(prod.priceBySize).length) c.priceBySize = prod.priceBySize;
+            if (prod.sizes?.length) c.sizes = prod.sizes;
+            if (prod.tags?.length) c.tags = prod.tags;
+            if (prod.visibility && prod.visibility !== "public") c.visibility = prod.visibility;
+            if (prod.priceVisibility) c.priceVisibility = prod.priceVisibility;
+            if (prod.descriptionVisibility) c.descriptionVisibility = prod.descriptionVisibility;
+            if (prod.description) c.description = prod.description;
+            if (prod.desc) c.desc = prod.desc;
+            if (prod.sameDay) c.sameDay = true;
+            if (prod.banner) c.banner = true;
+            if (prod.popular) c.popular = prod.popular;
+            if (prod.order !== undefined) c.order = prod.order;
+            if (prod.inStock !== undefined) c.inStock = prod.inStock;
+            if (prod.createdAtTs) c.createdAtTs = prod.createdAtTs;
+            return c;
+          }));
           if (types.length) writeLS(LS.TYPES, types);
           if (levels.length) writeLS(LS.LEVELS, levels);
           commitUnifiedMetadata();
@@ -2145,6 +2167,7 @@ export default function App() {
     mainContent = (
       <>
         {showHero && (
+          <Suspense fallback={null}>
           <Hero
             products={products}
             loading={dataLoading && products.length === 0}
@@ -2163,6 +2186,7 @@ export default function App() {
               })
             }
           />
+          </Suspense>
         )}
         {isHome && (
           <SocialProofSection
@@ -2316,6 +2340,7 @@ export default function App() {
 
       {quick && (
         <SectionErrorBoundary name="Xem nhanh">
+          <Suspense fallback={null}>
           <ProductQuickView
             key={pidOf(quick)}
             product={quick}
@@ -2340,10 +2365,13 @@ export default function App() {
             onMessengerClick={handleMessengerClick}
             onConsultSubmit={handleConsultSubmit}
           />
+          </Suspense>
         </SectionErrorBoundary>
       )}
 
+      {filtersOpen && (
       <SectionErrorBoundary name="Bộ lọc">
+        <Suspense fallback={null}>
         <FilterSheet open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Bộ lọc">
           <Filters
             key={filtersResetKey}
@@ -2353,7 +2381,9 @@ export default function App() {
             onChange={setFilterState}
           />
         </FilterSheet>
+        </Suspense>
       </SectionErrorBoundary>
+      )}
 
       <SectionErrorBoundary name="Footer">
         <Footer data={DATA.footer} pages={pages} />
