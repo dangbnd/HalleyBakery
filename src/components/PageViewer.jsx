@@ -1,3 +1,4 @@
+import { candidatesFor } from "../utils/img.js";
 // src/components/PageViewer.jsx
 import React, { useMemo } from "react";
 import DOMPurify from "dompurify";
@@ -15,7 +16,7 @@ const driveSrcs = (u = "") => {
   return [
     // trực tiếp
     `https://drive.usercontent.google.com/uc?id=${id}`,
-    `https://drive.google.com/uc?export=view&id=${id}`,
+    ...candidatesFor(`https://drive.google.com/thumbnail?id=${id}&sz=w1200`, 1200, 0, 75),
     // thumbnail (ít bị chặn hơn)
     `https://drive.google.com/thumbnail?id=${id}&sz=w1200`,
   ];

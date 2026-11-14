@@ -12,7 +12,7 @@ export default function ProductImage({
   w = 960,
   h = 0,
   q = 65,
-  lqip = true,
+  lqip = false,
   sizes = "(max-width: 1023px) calc(100vw - 32px), 960px",
 }) {
   const urls = getImageUrls(product);

@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ProductImage, { getImageUrls } from "./ProductImage.jsx";
-import { candidatesFor, cdn, cdnThumb, prefetchImage } from "../utils/img.js";
+import { candidatesFor, cdnThumb, prefetchImage } from "../utils/img.js";
 import { VND } from "./PriceTag.jsx";
 import { coercePriceBySizeMap } from "../lib/pricing.js";
 import { buildProductChatLink, openChatTarget } from "../utils/chatLink.js";
@@ -189,7 +189,7 @@ export default function ProductQuickView({
   useEffect(() => {
     if (!images.length) return;
     const nexts = [images[(idx + 1) % images.length], images[(idx + 2) % images.length]].filter(Boolean);
-    for (const u of nexts) prefetchImage(cdn(u, { w: 960, q: 62 }));
+    for (const u of nexts) prefetchImage(candidatesFor(u, 960, 0, 62)[0]);
   }, [idx, images]);
 
   useEffect(() => {
@@ -197,7 +197,7 @@ export default function ProductQuickView({
     const link = document.createElement("link");
     link.rel = "preload";
     link.as = "image";
-    link.href = cdn(images[idx], { w: 960, q: 62 });
+    link.href = candidatesFor(images[idx], 960, 0, 62)[0] || images[idx];
     document.head.appendChild(link);
     return () => document.head.removeChild(link);
   }, [idx, images]);

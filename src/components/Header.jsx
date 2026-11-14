@@ -250,7 +250,7 @@ export default function Header({
               <li key={i}>
                 <button
                   type="button"
-                  onMouseEnter={() => { if (s.type==="product" && s.thumb) prefetchImage(cdn(s.thumb,{w:480,h:480})); }}
+                  onMouseEnter={() => { if (s.type==="product" && s.thumb) prefetchImage(candidatesFor(s.thumb, 600, 0, 70)[0]); }}
                   className="w-full flex items-center gap-3 px-3 py-2 hover:bg-gray-50 text-left"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => {
@@ -261,7 +261,7 @@ export default function Header({
                   {/* avatar nhỏ */}
                   {s.type === "product" && thumbOf(s) ? (
                     <img
-                      src={cdn(s.thumb || "", { w: 64, h: 64, q: 65 })}
+                      src={cdnThumb(s.thumb || "", 64, 64, 65)}
                       width="32" height="32"
                       className="h-8 w-8 rounded object-cover flex-none"
                       loading="lazy" decoding="async"
