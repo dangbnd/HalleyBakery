@@ -1355,7 +1355,7 @@ export default function App() {
 
   /* lọc */
   function applyFilters(list = []) {
-    if (!filterState) return [...list].sort(cmpGrid);
+    if (!filterState) return [...list].sort((a, b) => cmpNameNatural(a.displayName || a.name, b.displayName || b.name));
 
     const { price = [0, Number.MAX_SAFE_INTEGER], priceActive = false, tags: tagSet, sizes: sizeSet,
       levels: levelSet, featured, inStock, sort = "" } = filterState;
@@ -1374,7 +1374,7 @@ export default function App() {
       return priceOk && tagOk && sizeOk && lvlOk && featOk && stockOk;
     });
 
-    if (!sort) out = [...out].sort(cmpDefault);
+    if (!sort) out = [...out].sort((a, b) => cmpNameNatural(a.displayName || a.name, b.displayName || b.name));
     else if (sort === "price-asc") out = [...out].sort((a, b) => (priceMinOf(a) ?? Infinity) - (priceMinOf(b) ?? Infinity));
     else if (sort === "price-desc") out = [...out].sort((a, b) => (priceMinOf(b) ?? -Infinity) - (priceMinOf(a) ?? -Infinity));
     else if (sort === "name-asc") out = [...out].sort((a, b) => cmpNameNatural(a.displayName || a.name, b.displayName || b.name));
