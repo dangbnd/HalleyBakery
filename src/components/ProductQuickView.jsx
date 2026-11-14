@@ -291,6 +291,7 @@ export default function ProductQuickView({
                       h={0}
                       q={62}
                       lqip={false}
+                      hidePlaceholder
                     />
                   </>
                 )}

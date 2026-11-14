@@ -14,6 +14,7 @@ export default function ProductImage({
   q = 65,
   lqip = false,
   sizes = "(max-width: 1023px) calc(100vw - 32px), 960px",
+  hidePlaceholder = false,
 }) {
   const urls = getImageUrls(product);
   const primaryRaw = urls[index] || urls[0] || "";
@@ -64,7 +65,7 @@ export default function ProductImage({
 
   return (
     <div className={"relative w-full h-full"}>
-      {!loaded && <div className="absolute inset-0 bg-gray-100" aria-hidden="true" />}
+      {!loaded && !hidePlaceholder && <div className="absolute inset-0 bg-gray-100" aria-hidden="true" />}
       <img
         ref={imgRef}
         src={cur}
