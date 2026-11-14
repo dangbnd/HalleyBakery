@@ -10,9 +10,6 @@ export const DATA = {
     {key:'about',label:'Giới thiệu'},
     //{key:'admin',label:'Admin'}
   ],
-  social: {
-    fbPost: "https://www.facebook.com/halleybakery/posts/pfbid02iegyTurHEyZ9MW4rzrgw7hAxPiwzxwoJDhktgWgKBz4n7u7jjUmqnHKeLbXZoy3Tl?__cft__[0]=AZUKJnnQtDqxF0q7YGumPSwyno92dr247RVhjuLO0F1JHoMNVwwkvuJ2Ev0sKwQADAtqXlkrFImBileDLWs7ZRU5j7HZJnB8BXstjyABcYbt8xpNnis9EEe8HXl17oOJn9hffj4wT0M45hhanL7_3tANnJaaACubjRFwBh_qARhgNw&__tn__=%2CO%2CP-R",
-  },
   socialProof: [
     {
       key: "than-tai",

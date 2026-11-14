@@ -56,20 +56,13 @@ function responseMessage(data = {}) {
   return s(data?.msg || data?.message || data?.error || data?.reason || "");
 }
 
-function getAdminAuth({ tokenOverride = "" } = {}) {
-  const token = s(tokenOverride || getConfig(KEYS.GS_WEBAPP_TOKEN, ""));
+function getAdminAuth() {
   const user = readLS(LS.AUTH, null);
-  if (!token) return null;
+  if (!user?.username) return null;
   return {
-    token,
-    ts: Date.now(),
-    user: user
-      ? {
-          username: s(user.username),
-          role: s(user.role || "staff"),
-          isSuper: !!user.isSuper,
-        }
-      : null,
+    username: s(user.username),
+    role: s(user.role || "staff"),
+    isSuper: !!user.isSuper,
   };
 }
 
@@ -96,11 +89,12 @@ function shouldUseGsProxy(webApp = "") {
   return isGoogleAppsScriptUrl(webApp);
 }
 
-async function postViaProxy(webApp = "", payload = {}) {
+async function postViaProxy(payload = {}) {
   const res = await fetch("/api/gs-proxy", {
     method: "POST",
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json;charset=utf-8" },
-    body: JSON.stringify({ webApp, payload }),
+    body: JSON.stringify({ payload }),
   });
   let data = {};
   try {
@@ -138,58 +132,12 @@ async function requestWithInit(webApp = "", init = {}) {
 }
 
 async function postBody(body = {}, { requireAuth = false, authToken = "", webappUrl = "" } = {}) {
-  const webApp = getWebappUrl(webappUrl);
-  if (!webApp) throw new Error("Chưa cấu hình GS WebApp URL");
-  const adminAuth = getAdminAuth({ tokenOverride: authToken });
-  if (requireAuth && !adminAuth?.token) {
-    throw new Error("Chưa cấu hình GS WebApp Admin Token");
+  const adminAuth = getAdminAuth();
+  if (requireAuth && !adminAuth) {
+    throw new Error("Phiên đăng nhập admin không hợp lệ");
   }
 
-  const payload = adminAuth ? { ...body, _auth: adminAuth } : body;
-
-  // Google Apps Script bị CORS → phải dùng proxy
-  if (shouldUseGsProxy(webApp)) {
-    return postViaProxy(webApp, payload);
-  }
-
-  // Non-GAS URLs: thử direct
-  const attempts = [
-    {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      redirect: "follow",
-      body: JSON.stringify(payload),
-    },
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json;charset=utf-8" },
-      redirect: "follow",
-      body: JSON.stringify(payload),
-    },
-  ];
-
-  let lastErr = null;
-  for (let i = 0; i < attempts.length; i++) {
-    try {
-      const { res, data } = await requestWithInit(webApp, attempts[i]);
-      if (!res.ok) {
-        lastErr = new Error(responseMessage(data) || `GS WebApp lỗi HTTP ${res.status}`);
-        continue;
-      }
-      const unknown = isUnknownAction(data);
-      const isEmptyObject =
-        data && typeof data === "object" && !Array.isArray(data) && Object.keys(data).length === 0;
-      if ((unknown || isEmptyObject) && i < attempts.length - 1) {
-        lastErr = new Error(responseMessage(data) || "Unknown action/op");
-        continue;
-      }
-      return data;
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-
-  throw lastErr || new Error("Không thể gọi GS WebApp");
+  return postViaProxy(body);
 }
 
 async function call(action, payload = {}, options = {}) {
@@ -311,22 +259,15 @@ const RUNTIME_CONFIG_KEYS = [
   KEYS.SHEET_GID_TYPES,
   KEYS.SHEET_GID_LEVELS,
   KEYS.SHEET_GID_SIZES,
-  KEYS.SHEET_GID_FB,
   KEYS.MESSENGER_LINK,
   KEYS.ZALO_LINK,
   KEYS.API_ALL_URL,
-  KEYS.GS_WEBAPP_URL,
-  KEYS.GS_WEBAPP_TOKEN,
-  KEYS.TRACKING_SHEET_ID,
   KEYS.GOOGLE_OAUTH_CLIENT_ID,
   KEYS.SUPER_ADMIN_EMAIL,
   KEYS.ADMIN_ALLOWED_EMAILS,
-  KEYS.GEMINI_API_KEYS,
-  KEYS.GEMINI_API_KEY,
   KEYS.GEMINI_MODELS_ORDER,
   KEYS.AI_PROMPT_TEMPLATE,
   KEYS.ENABLE_VISITOR_TRACKING,
-  KEYS.IP2LOCATION_API_KEY,
 ];
 
 const CONFIG_SHEET_CANDIDATES = ["URL", "Config", "config", "Cấu hình", "Cau hinh", "Settings"];
@@ -404,9 +345,9 @@ async function resolveConfigSheet(options = {}) {
 }
 
 async function upsertConfigEntries(entries = [], { authToken = "", webappUrl = "" } = {}) {
-  const auth = getAdminAuth({ tokenOverride: authToken });
-  if (!auth?.token) throw new Error("Thiếu GS WebApp Admin Token để đồng bộ cấu hình");
-  const transportOptions = { authToken: auth.token, webappUrl };
+  const auth = getAdminAuth();
+  if (!auth) throw new Error("Phiên đăng nhập admin không hợp lệ");
+  const transportOptions = {};
 
   const { sheetName, rows } = await resolveConfigSheet({ webappUrl });
   const byKey = new Map();
@@ -511,20 +452,13 @@ export async function saveRuntimeConfigToSheet(config = {}, options = {}) {
 
 export async function saveGeminiKeysToSheet(keys = [], options = {}) {
   const normalized = normalizeGeminiKeyList(keys);
-  const entries = [
-    { key: KEYS.GEMINI_API_KEYS, value: normalized.join("\n") },
-    { key: KEYS.GEMINI_API_KEY, value: normalized[0] || "" },
-  ];
-  const result = await upsertConfigEntries(entries, options);
-  return { ...result, keyCount: normalized.length };
+  return { ok: false, skipped: true, keyCount: normalized.length, error: "Gemini keys are server-managed" };
 }
 
 export async function saveAITagsConfigToSheet({ keys = [], models = [], prompt = "" } = {}, options = {}) {
   const normalizedKeys = normalizeGeminiKeyList(keys);
   const normalizedModels = uniq((Array.isArray(models) ? models : []).map((x) => s(x)));
   const entries = [
-    { key: KEYS.GEMINI_API_KEYS, value: normalizedKeys.join("\n") },
-    { key: KEYS.GEMINI_API_KEY, value: normalizedKeys[0] || "" },
     { key: KEYS.GEMINI_MODELS_ORDER, value: JSON.stringify(normalizedModels) },
     { key: KEYS.AI_PROMPT_TEMPLATE, value: s(prompt) },
   ];

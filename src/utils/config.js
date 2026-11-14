@@ -1,6 +1,5 @@
 // Runtime config for the client app.
-// Public-facing config is mirrored into a shared cookie so admin/public subdomains
-// can read the same values. Sensitive admin-only fields stay in localStorage only.
+// Only public runtime settings may enter browser storage.
 
 const PREFIX = "cfg:";
 const SHARED_COOKIE = "hb_public_cfg_v1";
@@ -13,7 +12,6 @@ const KEYS = {
   FEEDBACK_IMAGES: "feedback_images",
   SHEET_GID_CONFIG: "sheet_gid_config",
   PRODUCT_TABS: "product_tabs",
-  SHEET_GID_FB: "sheet_gid_fb",
   SHEET_GID_PRODUCTS: "sheet_gid_products",
   SHEET_GID_CATEGORIES: "sheet_gid_categories",
   SHEET_GID_TAGS: "sheet_gid_tags",
@@ -47,7 +45,6 @@ const SHARED_KEYS = new Set([
   KEYS.FEEDBACK_DRIVE_FOLDER_ID,
   KEYS.SHEET_GID_CONFIG,
   KEYS.PRODUCT_TABS,
-  KEYS.SHEET_GID_FB,
   KEYS.SHEET_GID_PRODUCTS,
   KEYS.SHEET_GID_CATEGORIES,
   KEYS.SHEET_GID_TAGS,
@@ -60,10 +57,18 @@ const SHARED_KEYS = new Set([
   KEYS.MESSENGER_LINK,
   KEYS.ZALO_LINK,
   KEYS.API_ALL_URL,
-  KEYS.SUPER_ADMIN_EMAIL,
-  KEYS.ADMIN_ALLOWED_EMAILS,
   KEYS.ENABLE_VISITOR_TRACKING,
   KEYS.LAST_SYNC_AT,
+]);
+const SERVER_ONLY_KEYS = new Set([
+  KEYS.GS_WEBAPP_URL,
+  KEYS.GS_WEBAPP_TOKEN,
+  KEYS.TRACKING_SHEET_ID,
+  KEYS.SUPER_ADMIN_EMAIL,
+  KEYS.ADMIN_ALLOWED_EMAILS,
+  KEYS.GEMINI_API_KEY,
+  KEYS.GEMINI_API_KEYS,
+  KEYS.IP2LOCATION_API_KEY,
 ]);
 
 const ENV_MAP = {
@@ -73,7 +78,6 @@ const ENV_MAP = {
   [KEYS.FEEDBACK_IMAGES]: "VITE_FEEDBACK_IMAGES",
   [KEYS.SHEET_GID_CONFIG]: "VITE_SHEET_GID_CONFIG",
   [KEYS.PRODUCT_TABS]: "VITE_PRODUCT_TABS",
-  [KEYS.SHEET_GID_FB]: "VITE_SHEET_GID_FB",
   [KEYS.SHEET_GID_PRODUCTS]: "VITE_SHEET_GID_PRODUCTS",
   [KEYS.SHEET_GID_CATEGORIES]: "VITE_SHEET_GID_CATEGORIES",
   [KEYS.SHEET_GID_TAGS]: "VITE_SHEET_GID_TAGS",
@@ -86,13 +90,7 @@ const ENV_MAP = {
   [KEYS.MESSENGER_LINK]: "VITE_MESSENGER_LINK",
   [KEYS.ZALO_LINK]: "VITE_ZALO_LINK",
   [KEYS.API_ALL_URL]: "VITE_API_ALL_URL",
-  [KEYS.GS_WEBAPP_URL]: "VITE_GS_WEBAPP_URL",
-  [KEYS.GS_WEBAPP_TOKEN]: "VITE_GS_WEBAPP_TOKEN",
-  [KEYS.TRACKING_SHEET_ID]: "VITE_TRACKING_SHEET_ID",
   [KEYS.GOOGLE_OAUTH_CLIENT_ID]: "VITE_GOOGLE_OAUTH_CLIENT_ID",
-  [KEYS.ADMIN_ALLOWED_EMAILS]: "VITE_ADMIN_ALLOWED_EMAILS",
-  [KEYS.GEMINI_API_KEY]: "VITE_GEMINI_API_KEY",
-  [KEYS.GEMINI_API_KEYS]: "VITE_GEMINI_API_KEYS",
   [KEYS.GEMINI_MODELS_ORDER]: "VITE_GEMINI_MODELS_ORDER",
   [KEYS.AI_PROMPT_TEMPLATE]: "VITE_AI_PROMPT_TEMPLATE",
   [KEYS.ENABLE_VISITOR_TRACKING]: "VITE_ENABLE_VISITOR_TRACKING",
@@ -131,29 +129,13 @@ const REMOTE_ALIAS_MAP = {
   [KEYS.SHEET_GID_TYPES]: ["sheet_gid_types", "gid_types", "types_gid"],
   [KEYS.SHEET_GID_LEVELS]: ["sheet_gid_levels", "gid_levels", "levels_gid"],
   [KEYS.SHEET_GID_SIZES]: ["sheet_gid_sizes", "gid_sizes", "sizes_gid"],
-  [KEYS.SHEET_GID_FB]: ["sheet_gid_fb", "gid_fb", "fb_gid", "facebook_gid", "sheet_gid_facebook"],
   [KEYS.MESSENGER_LINK]: ["messenger_link", "messenger", "fb_messenger_link"],
   [KEYS.ZALO_LINK]: ["zalo_link", "zalo", "zalo_url"],
   [KEYS.API_ALL_URL]: ["api_all_url", "api_all", "api_url", "all_url", "apps_script_all_url"],
-  [KEYS.GS_WEBAPP_URL]: ["gs_webapp_url", "webapp_url", "admin_webapp_url"],
-  [KEYS.GS_WEBAPP_TOKEN]: ["gs_webapp_token", "hb_admin_token", "admin_token", "webapp_admin_token"],
-  [KEYS.TRACKING_SHEET_ID]: [
-    "tracking_sheet_id",
-    "tracking_spreadsheet_id",
-    "telemetry_sheet_id",
-    "telemetry_spreadsheet_id",
-    "events_sheet_id",
-    "events_spreadsheet_id",
-  ],
   [KEYS.GOOGLE_OAUTH_CLIENT_ID]: ["google_oauth_client_id", "oauth_client_id", "google_client_id"],
-  [KEYS.SUPER_ADMIN_EMAIL]: ["super_admin_email", "google_super_admin_email", "owner_google_email"],
-  [KEYS.ADMIN_ALLOWED_EMAILS]: ["admin_allowed_emails", "allowed_admin_emails", "oauth_allowlist"],
-  [KEYS.GEMINI_API_KEYS]: ["gemini_api_keys", "gemini_keys", "ai_gemini_keys", "ai_keys"],
-  [KEYS.GEMINI_API_KEY]: ["gemini_api_key", "gemini_key", "google_gemini_api_key"],
   [KEYS.GEMINI_MODELS_ORDER]: ["gemini_models_order", "ai_models_order", "models_order", "gemini_models"],
   [KEYS.AI_PROMPT_TEMPLATE]: ["ai_prompt_template", "gemini_prompt_template", "prompt_template", "ai_prompt"],
   [KEYS.ENABLE_VISITOR_TRACKING]: ["enable_visitor_tracking", "visitor_tracking", "track_visitors"],
-  [KEYS.IP2LOCATION_API_KEY]: ["ip2location_api_key", "ip2location_key", "ip2location_token", "ip2location_api_token"],
 };
 
 let remoteSyncPromise = null;
@@ -220,45 +202,11 @@ function getConfigValueWithoutGeminiOverride(key, fallback = "") {
 }
 
 export function getGeminiKeys() {
-  const remoteListRaw = remoteSnapshotValueFor(KEYS.GEMINI_API_KEYS);
-  if (remoteListRaw !== null) {
-    const remoteList = parseGeminiKeysRaw(remoteListRaw);
-    if (remoteList.length) return remoteList;
-    const remoteSingleRaw = remoteSnapshotValueFor(KEYS.GEMINI_API_KEY);
-    const remoteSingle = String(remoteSingleRaw == null ? "" : remoteSingleRaw).trim();
-    return remoteSingle ? [remoteSingle] : [];
-  }
-
-  const fromConfigList = parseGeminiKeysRaw(getConfigValueWithoutGeminiOverride(KEYS.GEMINI_API_KEYS, ""));
-  if (fromConfigList.length) return fromConfigList;
-
-  const fromLocal = readGeminiKeysLocalCache();
-  if (fromLocal.length) return fromLocal;
-
-  const single = String(getConfigValueWithoutGeminiOverride(KEYS.GEMINI_API_KEY, "") || "").trim();
-  if (!single) return [];
-  return [single];
+  return [];
 }
 
-export function setGeminiKeys(nextKeys = []) {
-  const keys = normalizeGeminiKeyList(nextKeys);
-  const joined = keys.join("\n");
-
-  try {
-    localStorage.setItem("ai_gemini_keys", JSON.stringify(keys));
-  } catch {}
-
-  setConfig(KEYS.GEMINI_API_KEYS, joined);
-  setConfig(KEYS.GEMINI_API_KEY, keys[0] || "");
-
-  // Tự động lưu lên Sheet để đồng bộ thiết bị khác (chạy nền, không block)
-  pushConfigKeyToSheet("gemini_api_keys", keys.join(",")).catch(() => {});
-
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new Event("hb:config-changed"));
-  }
-
-  return keys;
+export function setGeminiKeys() {
+  return [];
 }
 
 const sheetWriteTimers = {};
@@ -389,7 +337,6 @@ function extractDriveFolderId(input = "") {
 
 const GID_KEYS = new Set([
   KEYS.SHEET_GID_CONFIG,
-  KEYS.SHEET_GID_FB,
   KEYS.SHEET_GID_PRODUCTS,
   KEYS.SHEET_GID_CATEGORIES,
   KEYS.SHEET_GID_TAGS,
@@ -713,15 +660,29 @@ function mapRemoteConfig(map = {}) {
 
 async function fetchRemoteConfigViaApi({ sheetId = "", gidConfig = "" } = {}) {
   const q = new URLSearchParams();
-  if (sheetId) q.set("sheetId", sheetId);
-  if (gidConfig) q.set("gidConfig", gidConfig);
+  if (!isPublicHostRuntime()) {
+    if (sheetId) q.set("sheetId", sheetId);
+    if (gidConfig) q.set("gidConfig", gidConfig);
+  }
   const url = `/api/runtime-config${q.toString() ? `?${q}` : ""}`;
   const res = await fetchWithTimeout(url);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok || data?.ok === false) {
+  if (!res.ok || !isValidRuntimeConfigPayload(data)) {
     throw new Error(data?.error || `Runtime config HTTP ${res.status}`);
   }
   return data;
+}
+
+export function isValidRuntimeConfigPayload(data) {
+  return !!(
+    data &&
+    data.ok === true &&
+    !data.error &&
+    data.source !== "error_fallback" &&
+    data.config &&
+    typeof data.config === "object" &&
+    !Array.isArray(data.config)
+  );
 }
 
 async function fetchRemoteConfigDirectSheet({ sheetId = "", gidConfig = "" } = {}) {
@@ -761,22 +722,18 @@ export async function syncConfigFromRemote({ force = false } = {}) {
   remoteSyncPromise = (async () => {
     const sheetId = bootstrapValueFor(KEYS.SHEET_ID);
     const gidConfig = bootstrapValueFor(KEYS.SHEET_GID_CONFIG);
-    console.log("[ConfigSync] sheetId:", sheetId, "gidConfig:", gidConfig);
     if (!sheetId) return { ok: false, changed: false, reason: "missing_sheet_id" };
 
     let payload = {};
     try {
       payload = await fetchRemoteConfigViaApi({ sheetId, gidConfig });
-      console.log("[ConfigSync] API payload:", Object.keys(payload?.config || {}));
     } catch (apiErr) {
       if (isPublicHostRuntime()) {
         console.warn("[ConfigSync] API failed on public host. Skip direct sheet fallback:", apiErr?.message);
         return { ok: false, changed: false, error: String(apiErr?.message || "runtime_config_api_failed") };
       }
-      console.log("[ConfigSync] API failed, trying direct sheet:", apiErr?.message);
       try {
         payload = await fetchRemoteConfigDirectSheet({ sheetId, gidConfig });
-        console.log("[ConfigSync] Direct sheet payload:", Object.keys(payload?.config || {}));
       } catch (sheetErr) {
         console.error("[ConfigSync] Direct sheet also failed:", sheetErr?.message);
         throw sheetErr;
@@ -785,8 +742,9 @@ export async function syncConfigFromRemote({ force = false } = {}) {
 
     const rawMap = payload?.config && typeof payload.config === "object" ? payload.config : {};
     const mapped = mapRemoteConfig(rawMap);
-    console.log("[ConfigSync] mapped keys:", Object.keys(mapped), "values:", JSON.stringify(mapped).substring(0, 300));
-    const effectiveGid = String(payload?.gidConfig || mapped[KEYS.SHEET_GID_CONFIG] || gidConfig || "").trim();
+    const effectiveGid = isPublicHostRuntime()
+      ? ""
+      : String(payload?.gidConfig || mapped[KEYS.SHEET_GID_CONFIG] || gidConfig || "").trim();
     if (effectiveGid) mapped[KEYS.SHEET_GID_CONFIG] = effectiveGid;
     if (!mapped[KEYS.SHEET_ID]) mapped[KEYS.SHEET_ID] = extractSheetId(sheetId);
 
@@ -812,7 +770,6 @@ export async function syncConfigFromRemote({ force = false } = {}) {
       localStorage.setItem(REMOTE_SYNC_TTL_KEY, String(Date.now()));
     } catch {}
     if (changed) window.dispatchEvent(new Event("hb:config-changed"));
-    console.log("[ConfigSync] done. changed:", changed, "keys synced:", Object.keys(mapped).length);
     return { ok: true, changed, source: payload?.source || "remote" };
   })()
     .catch((error) => ({ ok: false, changed: false, error: String(error?.message || error || "sync_failed") }))
@@ -834,16 +791,13 @@ function envValueFor(key) {
 }
 
 export function getConfig(key, fallback = "") {
-  if (key === KEYS.GEMINI_API_KEY) {
-    const keys = getGeminiKeys();
-    return keys[0] || fallback;
-  }
-  if (key === KEYS.GEMINI_API_KEYS) return getGeminiKeys().join("\n");
+  if (SERVER_ONLY_KEYS.has(key)) return fallback;
 
   return getConfigValueWithoutGeminiOverride(key, fallback);
 }
 
 export function setConfig(key, value) {
+  if (SERVER_ONLY_KEYS.has(key)) return;
   const normalized = normalizeValue(key, value);
   try {
     if (normalized === "") localStorage.removeItem(PREFIX + key);
@@ -865,7 +819,7 @@ export function setAllConfig(configObj) {
   const shared = readSharedConfig();
   const snapshot = readRemoteSnapshot();
   for (const [key, value] of Object.entries(configObj)) {
-    if (key === KEYS.GEMINI_API_KEY || key === KEYS.GEMINI_API_KEYS) continue;
+    if (SERVER_ONLY_KEYS.has(key)) continue;
     const normalized = normalizeValue(key, value);
     try {
       if (normalized === "") localStorage.removeItem(PREFIX + key);
@@ -892,6 +846,16 @@ export function resetAllConfig() {
     localStorage.removeItem(REMOTE_SYNC_TTL_KEY);
   } catch {}
   writeSharedConfig({});
+}
+
+export function clearLegacyClientSecrets() {
+  try {
+    for (const key of SERVER_ONLY_KEYS) localStorage.removeItem(PREFIX + key);
+    localStorage.removeItem("ai_gemini_keys");
+    const snapshot = readRemoteSnapshot();
+    for (const key of SERVER_ONLY_KEYS) delete snapshot[key];
+    writeRemoteSnapshot(snapshot);
+  } catch {}
 }
 
 export { KEYS };

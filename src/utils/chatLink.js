@@ -4,7 +4,7 @@ import { pidOf } from "./pid.js";
 
 const FALLBACK_ZALO = String(DATA?.footer?.socials?.zalo || "").trim();
 const FALLBACK_FACEBOOK = String(DATA?.footer?.socials?.facebook || "").trim();
-const ENV_PUBLIC_SITE_URL = String(import.meta.env.VITE_PUBLIC_SITE_URL || "").trim();
+const ENV_PUBLIC_SITE_URL = String(import.meta.env?.VITE_PUBLIC_SITE_URL || "").trim();
 
 const toHttpUrl = (input = "") => {
   const raw = String(input || "").trim();
@@ -277,5 +277,4 @@ export function buildProductChatLink({
     productLink,
   };
 }
-
 

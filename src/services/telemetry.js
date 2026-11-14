@@ -6,6 +6,8 @@ const VISITOR_ID_KEY = "hb_visitor_id_v1";
 const SESSION_ID_KEY = "hb_session_id_v1";
 const SESSION_STARTED_KEY = "hb_session_started_at_v1";
 export const TRACKING_OPT_OUT_KEY = "hb_tracking_opt_out_v1";
+export const TRACKING_CONSENT_KEY = "hb_tracking_consent_v1";
+export const TRACKING_CONSENT_EVENT = "hb:tracking-consent-changed";
 const QUEUE_LIMIT = 120;
 const BATCH_LIMIT = 40;
 const FLUSH_DELAY_MS = 1600;
@@ -154,15 +156,29 @@ export function isAdminRuntime() {
 
 export function isTelemetryEnabled() {
   const raw = getConfig(KEYS.ENABLE_VISITOR_TRACKING, "true");
-  return parseBooleanLike(raw, true);
+  return parseBooleanLike(raw, true) && getTrackingConsent() === "accepted";
+}
+
+export function getTrackingConsent() {
+  if (typeof window === "undefined") return "";
+  const value = readStorage(window.localStorage, TRACKING_CONSENT_KEY);
+  return value === "accepted" || value === "declined" ? value : "";
+}
+
+export function setTrackingConsent(value = "") {
+  if (typeof window === "undefined") return;
+  const next = value === "accepted" ? "accepted" : "declined";
+  writeStorage(window.localStorage, TRACKING_CONSENT_KEY, next);
+  if (next !== "accepted") {
+    queue = [];
+    if (flushTimer) window.clearTimeout(flushTimer);
+    flushTimer = 0;
+  }
+  window.dispatchEvent(new CustomEvent(TRACKING_CONSENT_EVENT, { detail: { consent: next } }));
 }
 
 export function isTrackingSuppressed() {
   return isAdminRuntime() || !isTelemetryEnabled() || isTrackingOptedOut();
-}
-
-function getWebAppUrl() {
-  return s(getConfig(KEYS.GS_WEBAPP_URL, ""));
 }
 
 function getVisitorId() {
@@ -472,7 +488,6 @@ export function queueTelemetryEvent(typeOrEvent, payload = {}) {
 
   queue.push(event);
   if (queue.length > QUEUE_LIMIT) queue = queue.slice(-QUEUE_LIMIT);
-  requestBrowserGpsLocation();
   scheduleFlush();
   return event;
 }
@@ -480,24 +495,14 @@ export function queueTelemetryEvent(typeOrEvent, payload = {}) {
 export async function flushTelemetry({ beacon = false, force = false } = {}) {
   if (typeof window === "undefined") return { ok: false, skipped: true };
   if (!queue.length || isTrackingSuppressed()) return { ok: true, skipped: true };
-  if (!force && !beacon && gpsRequestStarted) {
-    scheduleFlush(GPS_PENDING_FLUSH_DELAY_MS);
-    return { ok: true, skipped: true, reason: "gps_pending" };
-  }
   if (flushing) {
     scheduleFlush();
     return { ok: true, skipped: true, reason: "flush_in_flight" };
   }
 
-  const webApp = getWebAppUrl();
-  if (!webApp) {
-    scheduleFlush();
-    return { ok: false, skipped: true, error: "missing_webapp" };
-  }
-
   const batch = queue.slice(0, BATCH_LIMIT);
   queue = queue.slice(BATCH_LIMIT);
-  const body = JSON.stringify({ webApp, events: batch });
+  const body = JSON.stringify({ events: batch });
   flushing = true;
 
   const requeueBatch = () => {

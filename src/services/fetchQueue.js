@@ -4,6 +4,7 @@
 const MAX_CONCURRENT = 4;   // tối đa 4 request cùng lúc
 const MAX_RETRIES = 2;      // retry 2 lần khi fail
 const RETRY_DELAY_MS = 1000; // delay giữa các lần retry (nhân đôi mỗi lần)
+const FETCH_TIMEOUT_MS = 10_000;
 
 let running = 0;
 const queue = [];
@@ -20,8 +21,16 @@ function next() {
 }
 
 async function doFetch(url, options, retriesLeft) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const externalSignal = options?.signal;
+    const onExternalAbort = () => controller.abort(externalSignal?.reason);
+    if (externalSignal) {
+        if (externalSignal.aborted) controller.abort(externalSignal.reason);
+        else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
     try {
-        const res = await fetch(url, options);
+        const res = await fetch(url, { ...options, signal: controller.signal });
         if (!res.ok && res.status === 429 && retriesLeft > 0) {
             // Rate limited → chờ rồi retry
             await delay(RETRY_DELAY_MS * (MAX_RETRIES - retriesLeft + 1));
@@ -43,6 +52,9 @@ async function doFetch(url, options, retriesLeft) {
             return doFetch(url, options, retriesLeft - 1);
         }
         throw e;
+    } finally {
+        clearTimeout(timer);
+        externalSignal?.removeEventListener?.("abort", onExternalAbort);
     }
 }
 

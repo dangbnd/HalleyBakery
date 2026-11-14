@@ -1103,8 +1103,8 @@ export default function AdminOverviewPanel({ onNavigate }) {
   const activeUsers = users.filter((item) => item?.active !== false).length;
 
   const sheetId = String(getConfig(KEYS.SHEET_ID, "") || "").trim();
-  const gsWebAppUrl = String(getConfig(KEYS.GS_WEBAPP_URL, "") || "").trim();
-  const gsToken = String(getConfig(KEYS.GS_WEBAPP_TOKEN, "") || "").trim();
+  const gsWebAppUrl = "server-managed";
+  const gsToken = "server-managed";
   const driveRootId = String(getConfig(KEYS.DRIVE_FOLDER_ID, "") || "").trim();
   const googleClientId = String(getConfig(KEYS.GOOGLE_OAUTH_CLIENT_ID, "") || "").trim();
   const lastSyncAt = String(getConfig(KEYS.LAST_SYNC_AT, "") || "").trim();

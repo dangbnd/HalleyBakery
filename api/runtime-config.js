@@ -1,14 +1,43 @@
 // api/runtime-config.js
 // Central runtime config reader (sheet URL/config tab) with short in-memory cache.
 
-const CACHE_TTL_MS = 2 * 1000; // 2 seconds to prevent stale config F5 loops
+const CACHE_TTL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 7000;
 const CACHE = new Map(); // key => { at, data }
-const SENSITIVE_CONFIG_KEYS = new Set([
-  "ip2location_api_key",
-  "ip2location_key",
-  "ip2location_token",
-  "ip2location_api_token",
+const INFLIGHT = new Map(); // key => Promise<data>
+const PUBLIC_CONFIG_KEYS = new Set([
+  "sheet_id",
+  "drive_folder_id",
+  "feedback_drive_folder_id",
+  "feedback_images",
+  "product_tabs",
+  "sheet_gid_products",
+  "sheet_gid_categories",
+  "sheet_gid_tags",
+  "sheet_gid_menu",
+  "sheet_gid_pages",
+  "sheet_gid_types",
+  "sheet_gid_levels",
+  "sheet_gid_sizes",
+  "sheet_gid_announcements",
+  "messenger_link",
+  "zalo_link",
+  "api_all_url",
+  "google_oauth_client_id",
+  "gemini_models_order",
+  "ai_prompt_template",
+  "enable_visitor_tracking",
+]);
+const OPTIONAL_GID_KEYS = new Set([
+  "sheet_gid_products",
+  "sheet_gid_categories",
+  "sheet_gid_tags",
+  "sheet_gid_menu",
+  "sheet_gid_pages",
+  "sheet_gid_types",
+  "sheet_gid_levels",
+  "sheet_gid_sizes",
+  "sheet_gid_announcements",
 ]);
 
 function normalizeSheetId(input = "") {
@@ -97,13 +126,33 @@ function parseKeyValueTable(text = "") {
   return out;
 }
 
-function redactSensitiveConfig(config = {}) {
+export function publicConfig(config = {}, validGids = new Set()) {
   const out = {};
   for (const [key, value] of Object.entries(config || {})) {
-    if (SENSITIVE_CONFIG_KEYS.has(normalizeCfgKey(key))) continue;
-    out[key] = value;
+    const normalizedKey = normalizeCfgKey(key);
+    if (!PUBLIC_CONFIG_KEYS.has(normalizedKey)) continue;
+    if (OPTIONAL_GID_KEYS.has(normalizedKey)) {
+      const gid = normalizeGid(value);
+      out[normalizedKey] = gid && validGids.has(gid) ? gid : "";
+      continue;
+    }
+    out[normalizedKey] = value;
   }
   return out;
+}
+
+export function resolveRuntimeRequestConfig(query = {}, env = process.env) {
+  const configuredSheetId = normalizeSheetId(env.OG_SHEET_ID || env.VITE_SHEET_ID || "");
+  const requestedSheetId = normalizeSheetId(query.sheetId || "");
+  const allowRequestConfig = env.VERCEL_DEV === "1" && !configuredSheetId;
+  const configuredGid = normalizeGid(env.OG_SHEET_GID_CONFIG || env.VITE_SHEET_GID_CONFIG || "");
+
+  return {
+    configuredSheetId,
+    requestedSheetId,
+    sheetId: configuredSheetId || (allowRequestConfig ? requestedSheetId : ""),
+    gidConfig: configuredGid || (allowRequestConfig ? normalizeGid(query.gidConfig || "") : ""),
+  };
 }
 
 function decodeEscapedText(raw = "") {
@@ -165,6 +214,14 @@ async function inferConfigGid(sheetId = "") {
   return pickConfigTabGid(parseTabsFromEditHtml(html));
 }
 
+async function readSheetTabs(sheetId = "") {
+  const id = normalizeSheetId(sheetId);
+  if (!id) return [];
+  const res = await fetchWithTimeout(`https://docs.google.com/spreadsheets/d/${id}/edit`);
+  if (!res.ok) return [];
+  return parseTabsFromEditHtml(await res.text());
+}
+
 async function readConfigFromSheet({ sheetId = "", gidConfig = "" } = {}) {
   const id = normalizeSheetId(sheetId);
   if (!id) throw new Error("Missing sheetId");
@@ -185,6 +242,52 @@ async function readConfigFromSheet({ sheetId = "", gidConfig = "" } = {}) {
   return { config: parseKeyValueTable(csv), gidConfig: gid };
 }
 
+export async function readPublicRuntimeConfig({
+  sheetId = "",
+  gidConfig = "",
+  force = false,
+} = {}) {
+  const id = normalizeSheetId(sheetId);
+  if (!id) return { sheetId: "", config: {}, gidConfig: "", source: "missing_sheet" };
+
+  const cacheKey = `${id}:${normalizeGid(gidConfig) || "auto"}`;
+  const now = Date.now();
+  const hit = CACHE.get(cacheKey);
+  if (!force && hit && now - hit.at < CACHE_TTL_MS) {
+    return { ...hit.data, cached: true };
+  }
+
+  if (!force && INFLIGHT.has(cacheKey)) {
+    const shared = await INFLIGHT.get(cacheKey);
+    return { ...shared, cached: false };
+  }
+
+  const load = (async () => {
+    const [loaded, tabs] = await Promise.all([
+      readConfigFromSheet({ sheetId: id, gidConfig }),
+      readSheetTabs(id),
+    ]);
+    const validGids = new Set(tabs.map((tab) => normalizeGid(tab.gid)).filter(Boolean));
+    const payload = {
+      sheetId: id,
+      gidConfig: loaded.gidConfig || "",
+      config: publicConfig(loaded.config || {}, validGids),
+      fetchedAt: new Date().toISOString(),
+      source: "sheet",
+    };
+    CACHE.set(cacheKey, { at: Date.now(), data: payload });
+    return payload;
+  })();
+
+  if (!force) INFLIGHT.set(cacheKey, load);
+  try {
+    const payload = await load;
+    return { ...payload, cached: false };
+  } finally {
+    if (!force && INFLIGHT.get(cacheKey) === load) INFLIGHT.delete(cacheKey);
+  }
+}
+
 function json(res, status, body) {
   res.status(status).setHeader("Content-Type", "application/json; charset=utf-8");
   res.send(JSON.stringify(body));
@@ -197,36 +300,26 @@ export default async function handler(req, res) {
 
   try {
     const q = req.query || {};
-    const sheetId = normalizeSheetId(q.sheetId || process.env.OG_SHEET_ID || process.env.VITE_SHEET_ID || "");
-    const gidConfig = normalizeGid(q.gidConfig || process.env.OG_SHEET_GID_CONFIG || process.env.VITE_SHEET_GID_CONFIG || "");
+    const {
+      configuredSheetId,
+      requestedSheetId,
+      sheetId,
+      gidConfig,
+    } = resolveRuntimeRequestConfig(q);
+    if (configuredSheetId && requestedSheetId && requestedSheetId !== configuredSheetId) {
+      return json(res, 403, { ok: false, error: "Sheet is not allowed" });
+    }
     if (!sheetId) {
       return json(res, 400, { ok: false, error: "Missing sheetId" });
     }
 
-    const cacheKey = `${sheetId}:${gidConfig || "auto"}`;
-    const now = Date.now();
-    const hit = CACHE.get(cacheKey);
-    if (hit && now - hit.at < CACHE_TTL_MS) {
-      return json(res, 200, { ok: true, ...hit.data, cached: true });
-    }
-
-    const loaded = await readConfigFromSheet({ sheetId, gidConfig });
-    const payload = {
-      sheetId,
-      gidConfig: loaded.gidConfig || "",
-      config: redactSensitiveConfig(loaded.config || {}),
-      fetchedAt: new Date().toISOString(),
-      source: "sheet",
-    };
-
-    CACHE.set(cacheKey, { at: now, data: payload });
-    return json(res, 200, { ok: true, ...payload, cached: false });
+    const payload = await readPublicRuntimeConfig({ sheetId, gidConfig });
+    return json(res, 200, { ok: true, ...payload });
   } catch (e) {
     // Fail-soft for storefront: return empty config instead of 500 to avoid client fallback storms.
     return json(res, 200, {
       ok: true,
       sheetId: "",
-      gidConfig: "",
       config: {},
       fetchedAt: new Date().toISOString(),
       source: "error_fallback",

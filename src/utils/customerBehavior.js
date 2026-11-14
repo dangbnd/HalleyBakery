@@ -221,10 +221,30 @@ export function getRecentProducts(products = []) {
 export function saveConsultLead(lead = {}) {
   const entry = { id: lead.id || uid(), ...lead, ts: timestampOf(lead.ts || Date.now()) };
   const list = readLS(CUSTOMER_CONSULT_LEADS_KEY, []);
-  const next = [entry, ...(Array.isArray(list) ? list : [])].slice(0, MAX_LEADS);
+  const next = [
+    entry,
+    ...(Array.isArray(list) ? list : []).filter((item) => item?.id !== entry.id),
+  ].slice(0, MAX_LEADS);
   writeLS(CUSTOMER_CONSULT_LEADS_KEY, next);
   emitChanged();
   return entry;
+}
+
+export function updateConsultLead(id, patch = {}) {
+  const leadId = String(id || "").trim();
+  if (!leadId) return null;
+  const list = readLS(CUSTOMER_CONSULT_LEADS_KEY, []);
+  if (!Array.isArray(list)) return null;
+  let updated = null;
+  const next = list.map((lead) => {
+    if (String(lead?.id || "") !== leadId) return lead;
+    updated = { ...lead, ...patch, id: leadId };
+    return updated;
+  });
+  if (!updated) return null;
+  writeLS(CUSTOMER_CONSULT_LEADS_KEY, next);
+  emitChanged();
+  return updated;
 }
 
 export function readConsultLeads() {

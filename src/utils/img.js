@@ -66,7 +66,7 @@ export const prefetchImage = (u) => {
  * srcSet cho responsive images
  */
 export const mkSrcSet = (raw, maxW = 960, h = 0, q = 65) => {
-  const steps = [Math.min(480, maxW), Math.min(720, maxW), maxW];
+  const steps = [...new Set([320, 480, 720, maxW].filter((w) => w > 0 && w <= maxW))];
   return steps.map((w) => `${cdn(raw, { w, h: h ? Math.round((h * w) / maxW) : 0, q })} ${w}w`).join(", ");
 };
 

@@ -1,14 +1,6 @@
 import React, { useMemo, useState } from "react";
-import { LS, authApi, writeLS, audit } from "../../utils.js";
+import { LS, writeLS, audit } from "../../utils.js";
 import { getConfig, KEYS } from "../../utils/config.js";
-import { listAdminUsersFromSheet } from "./shared/sheets.js";
-import {
-  DEFAULT_SUPER_ADMIN_EMAIL,
-  SUPER_ADMIN_NAME,
-  SUPER_ADMIN_USERNAME,
-  isSuperAdminEmail,
-  isSuperAdminPasswordLogin,
-} from "./shared/superAdmin.js";
 
 const GIS_SRC = "https://accounts.google.com/gsi/client";
 const GOOGLE_PROFILE_SCOPE = "openid email profile";
@@ -17,19 +9,6 @@ let gisLoadPromise = null;
 
 function s(v) {
   return v == null ? "" : String(v).trim();
-}
-
-function inferRoleFromPermissions(perms = []) {
-  const set = new Set(Array.isArray(perms) ? perms : []);
-  if (set.has("users.manage")) return "owner";
-  if (set.has("settings.edit")) return "manager";
-  if ([...set].some((p) => p.endsWith(".edit") || p.endsWith(".delete"))) return "editor";
-  if ([...set].some((p) => p.endsWith(".view"))) return "staff";
-  return "staff";
-}
-
-function normalizeEmail(v = "") {
-  return String(v || "").trim().toLowerCase();
 }
 
 function ensureGisLoaded() {
@@ -69,21 +48,7 @@ function ensureGisLoaded() {
   return gisLoadPromise;
 }
 
-async function fetchGoogleUserInfo(accessToken = "") {
-  const token = s(accessToken);
-  if (!token) throw new Error("Thiếu access token Google");
-
-  const res = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(s(data?.error_description || data?.error || `Google userinfo lỗi HTTP ${res.status}`));
-  }
-  return data || {};
-}
-
-async function requestGoogleProfile(clientId = "") {
+async function requestGoogleAccessToken(clientId = "") {
   const normalizedClientId = s(clientId);
   if (!normalizedClientId) throw new Error("Thiếu Google OAuth Client ID");
 
@@ -101,7 +66,7 @@ async function requestGoogleProfile(clientId = "") {
       client_id: normalizedClientId,
       scope: GOOGLE_PROFILE_SCOPE,
       prompt: "select_account",
-      callback: async (resp) => {
+      callback: (resp) => {
         if (done) return;
         if (resp?.error) {
           done = true;
@@ -109,18 +74,9 @@ async function requestGoogleProfile(clientId = "") {
           reject(new Error(s(resp.error_description || resp.error || "Google OAuth bị từ chối")));
           return;
         }
-        try {
-          const profile = await fetchGoogleUserInfo(resp?.access_token);
-          if (done) return;
-          done = true;
-          clearTimeout(timeout);
-          resolve(profile);
-        } catch (e) {
-          if (done) return;
-          done = true;
-          clearTimeout(timeout);
-          reject(e);
-        }
+        done = true;
+        clearTimeout(timeout);
+        resolve(s(resp?.access_token));
       },
     });
 
@@ -128,24 +84,18 @@ async function requestGoogleProfile(clientId = "") {
   });
 }
 
-function findUserByEmail(users = [], email = "") {
-  const target = normalizeEmail(email);
-  if (!target) return null;
-  return (Array.isArray(users) ? users : []).find((x) => {
-    const username = normalizeEmail(x?.username);
-    const userEmail = normalizeEmail(x?.email);
-    return username === target || userEmail === target;
-  }) || null;
-}
-
-async function loadUsersForAuth() {
-  try {
-    const users = await listAdminUsersFromSheet();
-    return Array.isArray(users) ? users : [];
-  } catch {
-    if (import.meta.env.DEV) return authApi.allUsers();
-    return [];
+async function createAdminSession(body = {}) {
+  const res = await fetch("/api/admin-auth", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json;charset=utf-8" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.user) {
+    throw new Error(s(data?.error) || `Đăng nhập lỗi HTTP ${res.status}`);
   }
+  return data.user;
 }
 
 export default function Login() {
@@ -154,42 +104,31 @@ export default function Login() {
   const [err, setErr] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
-  const superAdminEmail = normalizeEmail(getConfig(KEYS.SUPER_ADMIN_EMAIL, DEFAULT_SUPER_ADMIN_EMAIL));
+  const [passwordBusy, setPasswordBusy] = useState(false);
 
   const allowlistHint = useMemo(() => {
     return `Google OAuth dạng Testing: chỉ email nằm trong Test Users của Google mới đăng nhập được.`;
-  }, [superAdminEmail]);
+  }, []);
 
   async function submit(e) {
     e.preventDefault();
     setErr("");
-
-    if (isSuperAdminPasswordLogin(u, p)) {
-      const session = { username: SUPER_ADMIN_USERNAME, role: "owner", name: SUPER_ADMIN_NAME, isSuper: true };
+    if (passwordBusy) return;
+    setPasswordBusy(true);
+    try {
+      const session = await createAdminSession({
+        provider: "password",
+        username: u,
+        password: p,
+      });
       writeLS(LS.AUTH, session);
-      audit("user.login", { username: SUPER_ADMIN_USERNAME, role: "owner" });
+      audit("user.login", { username: session.username, role: session.role });
       window.location.reload();
-      return;
+    } catch (error) {
+      setErr(error?.message || "Sai tài khoản hoặc mật khẩu");
+    } finally {
+      setPasswordBusy(false);
     }
-
-    const users = await loadUsersForAuth();
-    const found = users.find((x) => x.username === u && x.password === p && x.active !== false);
-    if (found) {
-      const role = found.role || inferRoleFromPermissions(found.permissions || []);
-      const session = {
-        username: found.username,
-        name: found.name || found.username,
-        role,
-        permissions: found.permissions || [],
-        isSuper: !!found.isSuper,
-      };
-      writeLS(LS.AUTH, session);
-      audit("user.login", { username: found.username, role });
-      window.location.reload();
-      return;
-    }
-
-    setErr("Sai tài khoản hoặc mật khẩu");
   }
 
   async function submitGoogle() {
@@ -203,34 +142,15 @@ export default function Login() {
         throw new Error("Thiếu Google OAuth Client ID trong Cấu hình.");
       }
 
-      const profile = await requestGoogleProfile(clientId);
-      const email = normalizeEmail(profile?.email);
-      if (!email) throw new Error("Google không trả email hợp lệ.");
-      if (profile?.email_verified === false) throw new Error("Email Google chưa xác minh.");
-      const isGoogleSuperAdmin = isSuperAdminEmail(email, superAdminEmail);
-
-      const users = await loadUsersForAuth();
-      const found = findUserByEmail(users, email);
-      if (!isGoogleSuperAdmin && found?.active === false) {
-        throw new Error("Tài khoản này đã bị khóa.");
-      }
-
-      const role = isGoogleSuperAdmin
-        ? "owner"
-        : (found?.role || (found ? inferRoleFromPermissions(found?.permissions || []) : "viewer"));
-      const session = {
-        username: isGoogleSuperAdmin ? SUPER_ADMIN_USERNAME : (found?.username || email),
-        email,
-        name: isGoogleSuperAdmin ? SUPER_ADMIN_NAME : (found?.name || s(profile?.name) || email),
-        role,
-        permissions: isGoogleSuperAdmin ? [] : (found?.permissions || []),
-        isSuper: isGoogleSuperAdmin || !!found?.isSuper,
-        authProvider: "google",
-        picture: s(profile?.picture),
-      };
-
+      const accessToken = await requestGoogleAccessToken(clientId);
+      if (!accessToken) throw new Error("Google không trả access token hợp lệ.");
+      const session = await createAdminSession({ provider: "google", accessToken });
       writeLS(LS.AUTH, session);
-      audit("user.login.google", { username: session.username, email, role });
+      audit("user.login.google", {
+        username: session.username,
+        email: session.email,
+        role: session.role,
+      });
       window.location.reload();
     } catch (e) {
       setErr(e?.message || "Đăng nhập Google thất bại");
@@ -298,8 +218,11 @@ export default function Login() {
             </button>
           </div>
         </div>
-        <button className="w-full rounded-xl border border-blue-500/70 bg-blue-500 py-2.5 text-sm font-medium text-white shadow-[0_12px_30px_rgba(59,130,246,0.25)] transition-all hover:bg-blue-400 active:scale-[0.98]">
-          Đăng nhập
+        <button
+          disabled={passwordBusy}
+          className="w-full rounded-xl border border-blue-500/70 bg-blue-500 py-2.5 text-sm font-medium text-white shadow-[0_12px_30px_rgba(59,130,246,0.25)] transition-all hover:bg-blue-400 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {passwordBusy ? "Đang xác thực..." : "Đăng nhập"}
         </button>
 
         <div className="relative">

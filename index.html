@@ -9,6 +9,9 @@
   <link rel="icon" type="image/png" href="/brand/logo-mobile.png?v=1">
   <link rel="shortcut icon" type="image/png" href="/brand/logo-mobile.png?v=1">
   <link rel="apple-touch-icon" href="/brand/logo-mobile.png?v=1">
+  <link rel="dns-prefetch" href="//images.weserv.nl">
+  <link rel="preconnect" href="https://images.weserv.nl" crossorigin>
+  <link rel="preload" as="image" href="/hero/halley-watercolor-sky.webp" type="image/webp">
   <meta name="theme-color" content="#f43f5e">
 
   <!-- PWA -->
@@ -185,7 +188,12 @@
     (function () {
       function show(e) {
         var el = document.createElement('div'); el.className = 'hb-err';
-        el.innerHTML = '<b>Lỗi khởi động.</b><br><pre>' + String(e && (e.message || e)).slice(0, 2000) + '</pre>';
+        var title = document.createElement('b');
+        var br = document.createElement('br');
+        var detail = document.createElement('pre');
+        title.textContent = 'Lỗi khởi động.';
+        detail.textContent = String(e && (e.message || e)).slice(0, 2000);
+        el.append(title, br, detail);
         document.body.appendChild(el);
       }
       window.addEventListener('error', function (e) { show(e.error || e.message); });
@@ -200,7 +208,7 @@
       location.hostname === "0.0.0.0"
     ) {
       const refreshPath = "/" + "@react-refresh";
-      import(refreshPath)
+      import(/* @vite-ignore */ refreshPath)
         .then(({ default: RefreshRuntime }) => {
           if (window.__vite_plugin_react_preamble_installed__) return;
           RefreshRuntime.injectIntoGlobalHook(window);
@@ -214,15 +222,6 @@
 
   <script type="module" src="/src/main.jsx"></script>
 
-  <!-- Register Service Worker for PWA -->
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
-          .catch(() => {});
-      });
-    }
-  </script>
 </body>
 
 </html>

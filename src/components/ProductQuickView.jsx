@@ -95,6 +95,9 @@ export default function ProductQuickView({
   const imageFrameRef = useRef(null);
   const relatedScrollRef = useRef(null);
   const relatedSentinelRef = useRef(null);
+  const dialogRef = useRef(null);
+  const closeButtonRef = useRef(null);
+  const previousFocusRef = useRef(null);
   const images = useMemo(() => getImageUrls(product), [product]);
   const sizeRows = useMemo(() => buildSizeRows(product), [product]);
   const hasSizeRows = sizeRows.length > 0;
@@ -150,17 +153,36 @@ export default function ProductQuickView({
   }, [syncRelatedHeight, product?.id, images.length, relatedProducts.length, showConsult, hasSizeRows, tags.length]);
 
   useEffect(() => {
+    previousFocusRef.current = document.activeElement;
+    const focusId = requestAnimationFrame(() => closeButtonRef.current?.focus());
     const onKey = (e) => {
       if (e.key === "Escape") onClose?.();
       if (e.key === "ArrowRight" && images.length) setIdx((i) => (i + 1) % images.length);
       if (e.key === "ArrowLeft" && images.length) setIdx((i) => (i - 1 + images.length) % images.length);
+      if (e.key === "Tab") {
+        const focusable = [...(dialogRef.current?.querySelectorAll(
+          'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ) || [])];
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     };
     document.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
+      cancelAnimationFrame(focusId);
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prev || "";
+      if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus();
     };
   }, [images.length, onClose]);
 
@@ -241,7 +263,7 @@ export default function ProductQuickView({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[1000]" role="dialog" aria-modal="true">
+    <div ref={dialogRef} className="fixed inset-0 z-[1000]" role="dialog" aria-modal="true" aria-label={displayName || "Chi tiết sản phẩm"}>
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="absolute inset-0 p-3 md:p-6 overflow-auto lg:overflow-hidden">
         <div className="mx-auto w-full max-w-6xl bg-white rounded-2xl shadow-xl overflow-hidden lg:h-[calc(100dvh-48px)] lg:max-h-[920px]">
@@ -342,6 +364,7 @@ export default function ProductQuickView({
                 </div>
 
                 <button
+                  ref={closeButtonRef}
                   className="h-9 w-9 rounded-full border grid place-items-center hover:bg-gray-50 shrink-0"
                   onClick={onClose}
                   aria-label="Dong"

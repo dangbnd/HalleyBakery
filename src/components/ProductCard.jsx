@@ -1,9 +1,7 @@
-import React, { useMemo, useCallback, useEffect, useState } from "react";
-import ProductImage, { getImageUrls } from "./ProductImage.jsx";
+import React, { useMemo, useEffect, useState } from "react";
+import ProductImage from "./ProductImage.jsx";
 import { PriceTag } from "./PriceTag.jsx";
 import { pickDefaultSize, priceFor, sizeOptions } from "../lib/pricing.js";
-import { cdn, prefetchImage } from "../utils/img.js";
-import { usePrefetchOnView } from "../hooks/usePrefetchOnView.js";
 import { buildProductChatLink, openChatTarget } from "../utils/chatLink.js";
 import { queueTelemetryEvent } from "../services/telemetry.js";
 import { productSnapshot } from "../utils/customerBehavior.js";
@@ -58,6 +56,7 @@ export default function ProductCard({
   onFavoriteToggle,
   onMessengerClick,
   trackingContext = {},
+  imageSizes = "(max-width: 639px) calc(50vw - 22px), (max-width: 1023px) calc(33.333vw - 24px), 276px",
 }) {
   const displayName = p?.displayName || p?.name || "";
   const defaultSel = useMemo(() => pickDefaultSize(p, filter), [p, filter]);
@@ -90,16 +89,8 @@ export default function ProductCard({
     [p, selectedSizeLabel]
   );
 
-  const srcBase = getImageUrls(p)[0] || "";
-  const trackOnView = useCallback(() => {
-    prefetchImage(cdn(srcBase, { w: 480, h: 480, q: 70 }));
-    prefetchImage(cdn(srcBase, { w: 960, q: 62 }));
-  }, [srcBase]);
-  const prefetchRef = usePrefetchOnView(trackOnView, "600px");
-
   return (
     <article
-      ref={prefetchRef}
       id={`prod-${p?.id}`}
       className="group relative rounded-2xl border bg-white overflow-hidden"
       style={{ contentVisibility: "auto", containIntrinsicSize: "300px 380px" }}
@@ -130,6 +121,7 @@ export default function ProductCard({
           w={600}
           q={70}
           lqip={false}
+          sizes={imageSizes}
         />
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/45 to-transparent p-2 text-left">
           <div className="text-sm font-semibold text-white drop-shadow truncate text-left">{displayName}</div>

@@ -1,10 +1,20 @@
 import React, { useEffect, useRef, useState } from "react";
-import { getAllConfig, setAllConfig, setConfig, resetAllConfig, getGeminiKeys, KEYS } from "../../../utils/config.js";
+import { getAllConfig, setAllConfig, setConfig, resetAllConfig, KEYS } from "../../../utils/config.js";
 import { LS, audit, readLS } from "../../../utils.js";
 import { buildUnifiedApiUrl } from "../../../services/sheets.multi.js";
-import { DEFAULT_SUPER_ADMIN_EMAIL } from "../shared/superAdmin.js";
 import { saveRuntimeConfigToSheet } from "../shared/sheets.js";
 import { Badge, Button, Callout, MetricItem, MetricStrip, PageHeader, Section } from "../ui/primitives.jsx";
+
+const SERVER_ONLY_SETTINGS = new Set([
+  KEYS.SUPER_ADMIN_EMAIL,
+  KEYS.ADMIN_ALLOWED_EMAILS,
+  KEYS.GS_WEBAPP_URL,
+  KEYS.GS_WEBAPP_TOKEN,
+  KEYS.TRACKING_SHEET_ID,
+  KEYS.GEMINI_API_KEY,
+  KEYS.GEMINI_API_KEYS,
+  KEYS.IP2LOCATION_API_KEY,
+]);
 
 const MANUAL_FIELDS = [
   {
@@ -111,11 +121,10 @@ const MANUAL_FIELDS = [
     type: "password",
     span: "sm:col-span-2",
   },
-];
+].filter((field) => !SERVER_ONLY_SETTINGS.has(field.key));
 
 const AUTO_FIELDS = [
   { key: KEYS.SHEET_GID_PRODUCTS, label: "Products GID", placeholder: "541884820", icon: "🧁" },
-  { key: KEYS.SHEET_GID_FB, label: "Facebook Posts", placeholder: "1250492303", icon: "📘" },
   { key: KEYS.SHEET_GID_MENU, label: "Menu", placeholder: "0", icon: "📜" },
   { key: KEYS.SHEET_GID_PAGES, label: "Trang nội dung", placeholder: "993105126", icon: "📄" },
   { key: KEYS.SHEET_GID_ANNOUNCEMENTS, label: "Thông báo", placeholder: "1621494911", icon: "📢" },
@@ -136,13 +145,12 @@ const AUTO_FIELDS = [
     placeholder: "https://script.google.com/.../exec",
     icon: "🔧",
   },
-];
+].filter((field) => !SERVER_ONLY_SETTINGS.has(field.key));
 
 const AUTO_VISIBLE_KEYS = AUTO_FIELDS.map((f) => f.key);
 const AUTO_KEYS = [...AUTO_VISIBLE_KEYS, KEYS.PRODUCT_TABS, KEYS.SHEET_GID_CONFIG];
 const AUTO_REQUIRED_KEYS = [
   KEYS.SHEET_GID_PRODUCTS,
-  KEYS.SHEET_GID_FB,
   KEYS.SHEET_GID_MENU,
   KEYS.SHEET_GID_PAGES,
   KEYS.SHEET_GID_ANNOUNCEMENTS,
@@ -155,7 +163,6 @@ const AUTO_SYNC_SIGNATURE_KEY = "admin.settings.auto_sync_signature_v1";
 
 const SYSTEM_TAB_MATCHERS = {
   menu: [/^menu$/i, /^navigation$/i, /^nav$/i],
-  fb: [/^link\s*fb$/i, /^facebook(\s*posts?)?$/i, /^fb(\s*posts?)?$/i],
   pages: [/^page$/i, /^pages$/i, /^trang(\s*noi\s*dung)?$/i, /^noi\s*dung$/i, /^content$/i],
   announcements: [/^announcements?$/i, /^thong\s*bao$/i, /^notice(s)?$/i],
   config: [/^url$/i, /^config$/i, /^settings?$/i, /^cau\s*hinh$/i, /^configuration$/i],
@@ -308,7 +315,6 @@ async function inferConfigFromSheet(sheetId = "") {
 
   const inferred = {
     [KEYS.SHEET_GID_MENU]: pickGidByMatcher(tabs, SYSTEM_TAB_MATCHERS.menu),
-    [KEYS.SHEET_GID_FB]: pickGidByMatcher(tabs, SYSTEM_TAB_MATCHERS.fb),
     [KEYS.SHEET_GID_PAGES]: pickGidByMatcher(tabs, SYSTEM_TAB_MATCHERS.pages),
     [KEYS.SHEET_GID_ANNOUNCEMENTS]: pickGidByMatcher(tabs, SYSTEM_TAB_MATCHERS.announcements),
     [KEYS.SHEET_GID_CATEGORIES]: pickGidByMatcher(tabs, SYSTEM_TAB_MATCHERS.categories),
@@ -389,11 +395,6 @@ function formatSyncTime(ts = "") {
   return d.toLocaleString("vi-VN");
 }
 
-function geminiStatusLabel() {
-  const count = getGeminiKeys().length;
-  return count > 0 ? `Đã đồng bộ ${count} keys từ AI Tags` : "Chưa cấu hình";
-}
-
 function unifiedParamsFromValues(values = {}) {
   return {
     apiAllUrl: String(values?.[KEYS.API_ALL_URL] || "").trim(),
@@ -409,7 +410,6 @@ function unifiedParamsFromValues(values = {}) {
       types: String(values?.[KEYS.SHEET_GID_TYPES] || "").trim(),
       levels: String(values?.[KEYS.SHEET_GID_LEVELS] || "").trim(),
       sizes: String(values?.[KEYS.SHEET_GID_SIZES] || "").trim(),
-      fb: String(values?.[KEYS.SHEET_GID_FB] || "").trim(),
     },
   };
 }
@@ -531,10 +531,6 @@ export default function SettingsPanel({ canEdit = true }) {
 
   useEffect(() => {
     const vals = getAllConfig();
-    if (!String(vals[KEYS.SUPER_ADMIN_EMAIL] || "").trim()) {
-      vals[KEYS.SUPER_ADMIN_EMAIL] = DEFAULT_SUPER_ADMIN_EMAIL;
-    }
-    vals[KEYS.GEMINI_API_KEY] = geminiStatusLabel();
     setValues(vals);
   }, []);
 
@@ -575,7 +571,7 @@ export default function SettingsPanel({ canEdit = true }) {
   const canSyncNow = !!unifiedApiUrl;
   const manualReady = MANUAL_FIELDS.filter((field) => field.readOnly || String(values[field.key] || "").trim()).length;
   const autoReady = AUTO_FIELDS.filter((field) => String(values[field.key] || "").trim()).length;
-  const criticalReady = [KEYS.SHEET_ID, KEYS.GS_WEBAPP_URL, KEYS.GS_WEBAPP_TOKEN, KEYS.DRIVE_FOLDER_ID].filter((key) =>
+  const criticalReady = [KEYS.SHEET_ID, KEYS.DRIVE_FOLDER_ID].filter((key) =>
     String(values[key] || "").trim()
   ).length;
   const systemRows = [
@@ -594,11 +590,8 @@ export default function SettingsPanel({ canEdit = true }) {
     {
       key: "webapp",
       name: "GS WebApp",
-      status: <StatusCell ok={!!values[KEYS.GS_WEBAPP_URL] && !!values[KEYS.GS_WEBAPP_TOKEN]} label={values[KEYS.GS_WEBAPP_URL] && values[KEYS.GS_WEBAPP_TOKEN] ? "Đủ URL + token" : "Thiếu cấu hình"} />,
-      detail:
-        values[KEYS.GS_WEBAPP_URL] && values[KEYS.GS_WEBAPP_TOKEN]
-          ? "Có thể ghi dữ liệu admin lên Sheet."
-          : "Chưa đủ điều kiện cho thao tác ghi từ admin.",
+      status: <StatusCell ok label="Server env" />,
+      detail: "URL và token chỉ được quản lý trong biến môi trường server.",
     },
     {
       key: "oauth",
@@ -612,8 +605,8 @@ export default function SettingsPanel({ canEdit = true }) {
     {
       key: "gemini",
       name: "Gemini keys",
-      status: <StatusCell ok={getGeminiKeys().length > 0} label={getGeminiKeys().length > 0 ? `${getGeminiKeys().length} key` : "Chưa có"} />,
-      detail: getGeminiKeys().length > 0 ? "Nguồn AI đã được khai báo trong tab AI Tags." : "Chưa có key AI hoạt động.",
+      status: <StatusCell ok label="Server env" />,
+      detail: "Key AI không còn được gửi xuống trình duyệt.",
     },
     {
       key: "tracking",
@@ -722,22 +715,13 @@ export default function SettingsPanel({ canEdit = true }) {
     setSaveBusy(true);
     try {
       const finalValues = await withAutoInferredMissing(values);
-      if (!String(finalValues[KEYS.SUPER_ADMIN_EMAIL] || "").trim()) {
-        finalValues[KEYS.SUPER_ADMIN_EMAIL] = DEFAULT_SUPER_ADMIN_EMAIL;
-      }
       const host = String(window.location?.hostname || "").toLowerCase();
       const isLocal = host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0";
       if (!isLocal && !String(finalValues[KEYS.API_ALL_URL] || "").trim()) finalValues[KEYS.API_ALL_URL] = "/api/all";
-      const geminiKeys = getGeminiKeys();
-      finalValues[KEYS.GEMINI_API_KEYS] = geminiKeys.join("\n");
-      finalValues[KEYS.GEMINI_API_KEY] = geminiKeys[0] || "";
-      const authToken = String(finalValues[KEYS.GS_WEBAPP_TOKEN] || "").trim();
-      const webappUrl = String(finalValues[KEYS.GS_WEBAPP_URL] || "").trim();
-
       let remoteSyncNote = "";
       let remoteSyncOk = false;
       try {
-        const pushed = await saveRuntimeConfigToSheet(finalValues, { authToken, webappUrl });
+        const pushed = await saveRuntimeConfigToSheet(finalValues);
         remoteSyncOk = true;
         remoteSyncNote = `✅ Đã đồng bộ ${pushed.updated + pushed.inserted} mục lên tab ${pushed.sheetName}.`;
       } catch (e) {
@@ -778,8 +762,6 @@ export default function SettingsPanel({ canEdit = true }) {
     resetAllConfig(); clearDataCache();
     window.dispatchEvent(new Event("hb:config-changed"));
     const vals = getAllConfig();
-    vals[KEYS.SUPER_ADMIN_EMAIL] = DEFAULT_SUPER_ADMIN_EMAIL;
-    vals[KEYS.GEMINI_API_KEY] = geminiStatusLabel();
     setValues(vals);
     setHasChanges(false); setSaved(false); setAutoMsg("");
     autoFilledRef.current = {}; autoLastSignatureRef.current = "";
@@ -822,7 +804,7 @@ export default function SettingsPanel({ canEdit = true }) {
       <MetricStrip columnsClassName="xl:grid-cols-4">
         <MetricItem label="Nhập tay" value={`${manualReady}/${MANUAL_FIELDS.length}`} meta="Các trường vận hành chính" tone="blue" />
         <MetricItem label="Tự nhận" value={`${autoReady}/${AUTO_FIELDS.length}`} meta="Tab/GID và API đã suy ra" tone="violet" />
-        <MetricItem label="Điểm trọng yếu" value={`${criticalReady}/4`} meta="Sheet, Drive, WebApp URL, token" tone="amber" />
+        <MetricItem label="Điểm trọng yếu" value={`${criticalReady}/2`} meta="Sheet và Drive" tone="amber" />
         <MetricItem label="Quyền chỉnh sửa" value={canEdit ? "Bật" : "Chỉ xem"} meta="Ghi cấu hình và sync" tone="emerald" />
       </MetricStrip>
 

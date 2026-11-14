@@ -383,8 +383,13 @@ function TopBar({ workspace, tool, user, onMenu }) {
             size="sm"
             onClick={() => {
               if (user?.username) audit("user.logout", { username: user.username });
-              removeLS(LS.AUTH);
-              window.location.reload();
+              fetch("/api/admin-auth", {
+                method: "DELETE",
+                credentials: "same-origin",
+              }).finally(() => {
+                removeLS(LS.AUTH);
+                window.location.reload();
+              });
             }}
           >
             Đăng xuất

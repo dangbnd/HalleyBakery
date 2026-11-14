@@ -1,8 +1,11 @@
-import { KEYS, getConfig } from "../utils/config.js";
 import { buildProductChatLink, buildProductLink } from "../utils/chatLink.js";
-import { productSnapshot, saveConsultLead } from "../utils/customerBehavior.js";
+import {
+  productSnapshot,
+  readConsultLeads,
+  saveConsultLead,
+  updateConsultLead,
+} from "../utils/customerBehavior.js";
 import { getAttributionContext, getCurrentPageContext } from "./attribution.js";
-import { isTrackingSuppressed } from "./telemetry.js";
 
 const clean = (value = "") => String(value || "").trim();
 
@@ -59,29 +62,52 @@ function buildLeadRow({ product, form = {}, leadId, productLink }) {
 }
 
 async function pushLeadToSheet(row) {
-  const webApp = clean(getConfig("gs_webapp_url", ""));
-  if (!/^https:\/\/script\.google(?:usercontent)?\.com\//i.test(webApp)) {
-    return { ok: false, skipped: true, reason: "missing_webapp" };
-  }
-
-  const res = await fetch("/api/gs-proxy", {
+  const res = await fetch("/api/consult", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      webApp,
-      payload: {
-        action: "insert",
-        sheet: "Consults",
-        trackingSheetId: clean(getConfig(KEYS.TRACKING_SHEET_ID, "")),
-        row,
-      },
-    }),
+    body: JSON.stringify({ row }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data?.ok === false) {
-    throw new Error(data?.error || data?.message || `Sheet HTTP ${res.status}`);
+    throw new Error(data?.error || data?.message || `Consult API HTTP ${res.status}`);
   }
   return { ok: true, data };
+}
+
+function storedLead(id = "") {
+  return readConsultLeads().find((lead) => String(lead?.id || "") === String(id || "")) || null;
+}
+
+function remoteLeadRow(lead = {}) {
+  const row = { ...lead };
+  delete row.product;
+  delete row.remoteOk;
+  delete row.remotePending;
+  delete row.remoteError;
+  delete row.remoteUpdatedAt;
+  return row;
+}
+
+export async function retryPendingConsultLeads() {
+  const pending = readConsultLeads()
+    .filter((lead) => lead?.remotePending && !lead?.remoteOk)
+    .slice(0, 20);
+  let sent = 0;
+  for (const lead of pending) {
+    try {
+      await pushLeadToSheet(remoteLeadRow(lead));
+      updateConsultLead(lead.id, {
+        remoteOk: true,
+        remotePending: false,
+        remoteError: "",
+        remoteUpdatedAt: Date.now(),
+      });
+      sent += 1;
+    } catch {
+      break;
+    }
+  }
+  return { ok: true, attempted: pending.length, sent };
 }
 
 export async function submitConsultLead({ product, form = {} } = {}) {
@@ -94,41 +120,47 @@ export async function submitConsultLead({ product, form = {} } = {}) {
     productLink: chatTarget.productLink || buildProductLink(product),
   });
 
-  if (isTrackingSuppressed()) {
-    return {
-      ok: true,
-      local: false,
-      remoteOk: false,
-      remoteSkipped: true,
-      trackingSkipped: true,
-      lead: null,
-      chatTarget,
-    };
-  }
-
   const localLead = saveConsultLead({
     ...row,
     product: productSnapshot(product),
     remoteOk: false,
+    remotePending: true,
   });
+  const localStored = !!storedLead(leadId);
 
   try {
     const remote = await pushLeadToSheet(row);
+    const syncedLead = updateConsultLead(leadId, {
+      remoteOk: true,
+      remotePending: false,
+      remoteError: "",
+      remoteUpdatedAt: Date.now(),
+    }) || { ...localLead, remoteOk: true, remotePending: false };
     return {
       ok: true,
-      local: true,
+      local: localStored,
       remoteOk: !!remote.ok,
       remoteSkipped: !!remote.skipped,
-      lead: { ...localLead, remoteOk: !!remote.ok },
+      lead: syncedLead,
       chatTarget,
     };
   } catch (error) {
-    return {
-      ok: true,
-      local: true,
+    const message = String(error?.message || error || "");
+    const pendingLead = updateConsultLead(leadId, {
       remoteOk: false,
-      remoteError: String(error?.message || error || ""),
-      lead: localLead,
+      remotePending: true,
+      remoteError: message,
+      remoteUpdatedAt: Date.now(),
+    }) || localLead;
+    return {
+      ok: localStored,
+      local: localStored,
+      remoteOk: false,
+      remoteError: message,
+      error: localStored
+        ? ""
+        : "Không thể gửi hoặc lưu yêu cầu. Vui lòng thử lại.",
+      lead: localStored ? pendingLead : null,
       chatTarget,
     };
   }

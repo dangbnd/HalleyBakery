@@ -230,10 +230,8 @@ function doPost(e) {
     if (!raw) throw new Error("No data received");
 
     var data = JSON.parse(raw);
-
-    // ── AUTH CHECK (nếu có token) ──
-    // var authResult = HB_checkAuth_(data);
-    // if (authResult && !authResult.ok) return jsonResp_(authResult);
+    var authResult = HB_requireAdminToken_(data);
+    if (authResult) return jsonResp_(authResult);
 
     // ── CONFIG SYNC (batch save/load — 1 call cho tất cả config) ──
     var cfgHandled = HB_tryHandleConfigActions_(data);
@@ -274,6 +272,9 @@ function doGet(e) {
     }
 
     if (data) {
+      var authResult = HB_requireAdminToken_(data);
+      if (authResult) return jsonResp_(authResult);
+
       var cfgHandled = HB_tryHandleConfigActions_(data);
       if (cfgHandled) return jsonResp_(cfgHandled);
 

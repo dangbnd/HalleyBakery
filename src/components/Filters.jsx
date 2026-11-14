@@ -1,6 +1,11 @@
 // src/components/Filters.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { tagKey } from "../utils/tagKey.js";
+import { normalizeTagLabel, tagKey } from "../utils/tagKey.js";
+import { sizeOptions } from "../lib/pricing.js";
+import {
+  hasReliableCreatedAtMetadata,
+  hasStockMetadata,
+} from "../lib/catalogIntegrity.js";
 
 const foldText = (value = "") =>
   String(value || "")
@@ -15,13 +20,16 @@ const SMART_TAG_GROUPS = [
   { title: "Chủ đề", needles: ["baby", "be trai", "be gai", "hoa", "basic", "cute", "cartoon", "princess", "oto", "gau"] },
 ];
 
-export default function Filters({ products = [], tags = [], onChange, className = "" }) {
+export default function Filters({ products = [], tags = [], value = null, onChange, className = "" }) {
   /* ---------- TAGS ---------- */
   const normTag = (t) => {
-    if (typeof t === "string") return { id: tagKey(t), label: t };
+    if (typeof t === "string") {
+      const label = normalizeTagLabel(t);
+      return { id: tagKey(label), label };
+    }
     const rawId = t?.id ?? t?.key ?? t?.value ?? t?.label ?? JSON.stringify(t);
-    const label = t?.label ?? t?.name ?? String(rawId);
-    return { id: tagKey(rawId), label: String(label) };
+    const label = normalizeTagLabel(t?.label ?? t?.name ?? String(rawId));
+    return { id: tagKey(rawId || label), label };
   };
 
   // Lấy tag từ sản phẩm khi sheet trống hoặc muốn gộp
@@ -29,7 +37,9 @@ export default function Filters({ products = [], tags = [], onChange, className 
     const m = new Map();
     for (const p of products || []) {
       for (const t of p.tags || []) {
-        const raw = typeof t === "string" ? t.trim() : String(t?.id ?? t?.label ?? "").trim();
+        const raw = normalizeTagLabel(
+          typeof t === "string" ? t : String(t?.id ?? t?.label ?? "")
+        );
         if (!raw || raw === "#VALUE!") continue;
         const id = tagKey(raw);
         if (!m.has(id)) m.set(id, { id, label: raw });
@@ -38,17 +48,22 @@ export default function Filters({ products = [], tags = [], onChange, className 
     return Array.from(m.values()).sort((a, b) => a.label.localeCompare(b.label, "vi"));
   }, [products]);
 
-  // Gộp: sheet + từ products, loại trùng và #VALUE!
+  const productTagIds = useMemo(
+    () => new Set(derivedProductTags.map((tag) => tag.id)),
+    [derivedProductTags]
+  );
+
+  // Master tag chỉ cung cấp nhãn cho tag có thật trong tập sản phẩm hiện tại.
   const allTags = useMemo(() => {
     const fromProp = (tags || [])
       .map(normTag)
-      .filter((x) => x.label && x.label !== "#VALUE!");
+      .filter((x) => x.label && x.label !== "#VALUE!" && productTagIds.has(x.id));
     const map = new Map();
     [...fromProp, ...derivedProductTags].forEach((x) => {
       if (x.id && !map.has(x.id)) map.set(x.id, { id: x.id, label: x.label });
     });
     return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, "vi"));
-  }, [tags, derivedProductTags]);
+  }, [tags, derivedProductTags, productTagIds]);
 
   /* ---------- GIÁ (lấy ở mọi nơi) ---------- */
   const prices = useMemo(() => {
@@ -76,19 +91,48 @@ export default function Filters({ products = [], tags = [], onChange, className 
   const priceMin = prices.length ? prices.reduce((a, b) => a < b ? a : b, Infinity) : 0;
   const priceMax = prices.length ? prices.reduce((a, b) => a > b ? a : b, -Infinity) : 0;
 
-  const [minV, setMinV] = useState(priceMin);
-  const [maxV, setMaxV] = useState(priceMax);
-  useEffect(() => { setMinV(priceMin); setMaxV(priceMax); }, [priceMin, priceMax]);
+  const initialPrice = value?.priceActive && Array.isArray(value?.price)
+    ? value.price
+    : [priceMin, priceMax];
+  const hasInteracted = useRef(false);
+  const [minV, setMinV] = useState(() => initialPrice[0]);
+  const [maxV, setMaxV] = useState(() => initialPrice[1]);
+  useEffect(() => {
+    if (!hasInteracted.current) {
+      if (value?.priceActive && Array.isArray(value?.price)) {
+        setMinV(value.price[0]);
+        setMaxV(value.price[1]);
+      } else {
+        setMinV(priceMin);
+        setMaxV(priceMax);
+      }
+      return;
+    }
+    setMinV((current) => Math.max(priceMin, Math.min(current, priceMax)));
+    setMaxV((current) => Math.max(priceMin, Math.min(current, priceMax)));
+  }, [priceMin, priceMax, value?.priceActive]);
 
   /* ---------- FACETS ---------- */
   const [qTag, setQTag] = useState("");
-  const [tagSet, setTagSet] = useState(new Set());
-  const [tagLabels, setTagLabels] = useState({});
-  const [sizeSet, setSizeSet] = useState(new Set());
-  const [lvlSet, setLvlSet] = useState(new Set());
-  const [featured, setFeatured] = useState(false);
-  const [inStock, setInStock] = useState(false);
-  const [sort, setSort] = useState("");
+  const [tagSet, setTagSet] = useState(() => new Set(value?.tags || []));
+  const [tagLabels, setTagLabels] = useState(() => ({ ...(value?.tagLabels || {}) }));
+  const [sizeSet, setSizeSet] = useState(() => new Set(value?.sizes || []));
+  const [lvlSet, setLvlSet] = useState(() => new Set(value?.levels || []));
+  const [featured, setFeatured] = useState(() => !!value?.featured);
+  const [inStock, setInStock] = useState(() => !!value?.inStock);
+  const [sort, setSort] = useState(() => value?.sort || "");
+  const hasStockData = useMemo(() => hasStockMetadata(products), [products]);
+  const hasCreatedAtData = useMemo(() => hasReliableCreatedAtMetadata(products), [products]);
+  const hasFeaturedData = useMemo(
+    () => products.some((product) => !!product?.banner),
+    [products]
+  );
+  useEffect(() => {
+    if (!hasStockData && inStock) setInStock(false);
+  }, [hasStockData, inStock]);
+  useEffect(() => {
+    if (!hasCreatedAtData && sort === "newest") setSort("");
+  }, [hasCreatedAtData, sort]);
 
   const priceActive = useMemo(
     () => !(minV === priceMin && maxV === priceMax),
@@ -96,7 +140,6 @@ export default function Filters({ products = [], tags = [], onChange, className 
   );
 
   // B1: chỉ gọi onChange khi user thực sự thay đổi filter, không fire on mount
-  const hasInteracted = useRef(false);
   const markInteracted = () => { hasInteracted.current = true; };
   useEffect(() => {
     if (!hasInteracted.current) return;
@@ -105,9 +148,16 @@ export default function Filters({ products = [], tags = [], onChange, className 
 
   /* ---------- OPTIONS ---------- */
   const allSizes = useMemo(() => {
-    const s = new Set();
-    for (const p of products) (p.sizes || []).forEach((x) => s.add(String(x)));
-    return Array.from(s).sort((a, b) => a.localeCompare(b, "vi", { numeric: true }));
+    const map = new Map();
+    for (const product of products) {
+      for (const option of sizeOptions(product)) {
+        if (!option.id || map.has(option.id)) continue;
+        map.set(option.id, option.label || option.id);
+      }
+    }
+    return [...map.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "vi", { numeric: true }));
   }, [products]);
 
   const allLevels = useMemo(() => {
@@ -155,6 +205,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
   return (
     <aside className={`p-2 ${className}`}>
       {/* GIÁ */}
+      {prices.length > 0 && (
       <section className="mb-5 rounded-xl border bg-white/80 shadow-sm p-4">
         <div className="flex items-center gap-2 mb-3">
           <div className="h-6 w-6 rounded-md bg-rose-100 grid place-items-center text-rose-600">₫</div>
@@ -260,9 +311,11 @@ export default function Filters({ products = [], tags = [], onChange, className 
           </div>
         </div>
       </section>
+      )}
 
 
       {/* TAGS */}
+      {!!allTags.length && (
       <section className="mb-5 rounded-xl border bg-white/80 shadow-sm p-4">
         <div className="flex items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2">
@@ -325,6 +378,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
           })}
         </div>
       </section>
+      )}
 
       {/* SIZES */}
       {!!allSizes.length && (
@@ -334,18 +388,23 @@ export default function Filters({ products = [], tags = [], onChange, className 
             <h3 className="text-sm font-semibold">Kích thước</h3>
           </div>
           <div className="flex flex-wrap gap-2">
-            {allSizes.map((s) => {
-              const on = sizeSet.has(s);
+            {allSizes.map((size) => {
+              const on = sizeSet.has(size.id);
               return (
                 <button
-                  key={s}
-                  onClick={() => { markInteracted(); const t = new Set(sizeSet); on ? t.delete(s) : t.add(s); setSizeSet(t); }}
+                  key={size.id}
+                  onClick={() => {
+                    markInteracted();
+                    const next = new Set(sizeSet);
+                    on ? next.delete(size.id) : next.add(size.id);
+                    setSizeSet(next);
+                  }}
                   className={
                     "px-3 py-1.5 rounded-full text-xs border transition " +
                     (on ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "border-gray-200 hover:bg-gray-50")
                   }
                 >
-                  {s}
+                  {size.label}
                 </button>
               );
             })}
@@ -354,6 +413,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
       )}
 
       {/* LEVELS + FLAGS */}
+      {(allLevels.length > 0 || hasFeaturedData || hasStockData) && (
       <section className="mb-5 rounded-xl border bg-white/80 shadow-sm p-4 space-y-3">
         {!!allLevels.length && (
           <>
@@ -382,7 +442,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
         )}
 
         <div className="grid grid-cols-2 gap-3 pt-1">
-          <label className="inline-flex items-center gap-2 text-sm">
+          {hasFeaturedData && <label className="inline-flex items-center gap-2 text-sm">
             <input
               type="checkbox"
               className="h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-300"
@@ -390,8 +450,8 @@ export default function Filters({ products = [], tags = [], onChange, className 
               onChange={(e) => { markInteracted(); setFeatured(e.target.checked); }}
             />
             Nổi bật/Banner
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm">
+          </label>}
+          {hasStockData && <label className="inline-flex items-center gap-2 text-sm">
             <input
               type="checkbox"
               className="h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-300"
@@ -399,9 +459,10 @@ export default function Filters({ products = [], tags = [], onChange, className 
               onChange={(e) => { markInteracted(); setInStock(e.target.checked); }}
             />
             Còn hàng
-          </label>
+          </label>}
         </div>
       </section>
+      )}
 
       {/* SORT + RESET */}
       <section className="mb-2 rounded-xl border bg-white/80 shadow-sm p-4">
@@ -412,9 +473,9 @@ export default function Filters({ products = [], tags = [], onChange, className 
           className="w-full rounded-lg border px-3 py-2 text-sm"
         >
           <option value="">Mặc định</option>
-          <option value="price-asc">Giá tăng dần</option>
-          <option value="price-desc">Giá giảm dần</option>
-          <option value="newest">Mới nhất</option>
+          {prices.length > 0 && <option value="price-asc">Giá tăng dần</option>}
+          {prices.length > 0 && <option value="price-desc">Giá giảm dần</option>}
+          {hasCreatedAtData && <option value="newest">Mới nhất</option>}
           <option value="popular">Phổ biến</option>
         </select>
 
@@ -423,7 +484,7 @@ export default function Filters({ products = [], tags = [], onChange, className 
           onClick={() => {
             markInteracted();
             setMinV(priceMin); setMaxV(priceMax);
-            setTagSet(new Set()); setSizeSet(new Set()); setLvlSet(new Set());
+            setTagSet(new Set()); setTagLabels({}); setSizeSet(new Set()); setLvlSet(new Set());
             setFeatured(false); setInStock(false); setSort(""); setQTag("");
           }}
         >

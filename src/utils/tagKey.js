@@ -8,10 +8,28 @@ export function tagKey(s) {
     .replace(/^-+|-+$/g, "");
 }
 
+const TAG_LABEL_FIXES = new Map([
+  ["basicbasic", "Basic"],
+  ["1 tuoituoi", "1 tuổi"],
+  ["phu nunu", "Phụ nữ"],
+  ["sieu nhannhan", "Siêu nhân"],
+  ["de thuong", "Dễ thương"],
+]);
+
+export function normalizeTagLabel(value = "") {
+  const raw = String(value || "").trim().replace(/\s+/g, " ");
+  if (!raw) return "";
+  const folded = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d");
+  return TAG_LABEL_FIXES.get(folded) || raw;
+}
+
 export function toTagArray(v) {
-  if (Array.isArray(v)) return v.filter(Boolean).map(String);
-  return String(v || "")
-    .split(/[|,;\n]+/)
-    .map((x) => x.trim())
+  const values = Array.isArray(v) ? v : String(v || "").split(/[|,;\n]+/);
+  return values
+    .map(normalizeTagLabel)
     .filter(Boolean);
 }

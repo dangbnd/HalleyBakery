@@ -337,8 +337,10 @@ export default function ConsultForm({ product, onSubmit }) {
         <div className={"text-xs " + (result.ok ? "text-emerald-700" : "text-rose-600")}>
           {result.ok
             ? result.remoteOk
-              ? "\u0110\u00e3 l\u01b0u y\u00eau c\u1ea7u v\u00e0o Sheet."
-              : "\u0110\u00e3 l\u01b0u y\u00eau c\u1ea7u tr\u00ean m\u00e1y n\u00e0y."
+              ? "\u0110\u00e3 g\u1eedi y\u00eau c\u1ea7u t\u01b0 v\u1ea5n."
+              : result.local
+                ? "M\u1ea1ng \u0111ang l\u1ed7i. Y\u00eau c\u1ea7u \u0111\u00e3 \u0111\u01b0\u1ee3c l\u01b0u v\u00e0 s\u1ebd t\u1ef1 g\u1eedi l\u1ea1i."
+                : "Kh\u00f4ng th\u1ec3 x\u00e1c nh\u1eadn y\u00eau c\u1ea7u."
             : result.error || "Kh\u00f4ng g\u1eedi \u0111\u01b0\u1ee3c y\u00eau c\u1ea7u."}
         </div>
       ) : null}

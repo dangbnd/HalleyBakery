@@ -2,7 +2,6 @@ export const LS = {
   AUTH: 'auth', USERS: 'users', AUDIT: 'audit',
   PRODUCTS: 'products', CATEGORIES: 'categories', MENU: 'menu', PAGES: 'pages',
   TAGS: 'tags', SCHEMES: 'schemes', TYPES: 'types', LEVELS: 'levels',
-  FB_URLS: 'fb_urls',
   SIZES: 'sizes',
   ANNOUNCEMENTS: "halley_announcements",
 };
@@ -51,7 +50,7 @@ export function removeLS(key) {
 // ⚠️ CẢNH BÁO BẢO MẬT: Đây là auth client-side đơn giản (localStorage).
 // Mật khẩu hiển thị trong source code & DevTools. KHÔNG dùng cho dữ liệu nhạy cảm.
 // Nếu cần bảo mật thật: authenticate qua server (Firebase Auth, Supabase, v.v.)
-const defaultUsers = import.meta.env.DEV
+const defaultUsers = import.meta.env?.DEV
   ? [
       // Seed user chỉ dành cho local dev, tránh tồn tại account mặc định trên production.
       { id: 'u-dev-owner', username: 'dev-owner', password: 'dev-owner', role: 'owner', name: 'Dev Owner' },

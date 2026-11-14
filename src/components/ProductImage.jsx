@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { cdn, candidatesFor, mkSrcSet, getImageUrls, getImageUrl, FALLBACK_IMAGE } from "../utils/img.js";
 
 // Re-export để các file khác vẫn import được từ đây
@@ -13,6 +13,7 @@ export default function ProductImage({
   h = 0,
   q = 65,
   lqip = true,
+  sizes = "(max-width: 1023px) calc(100vw - 32px), 960px",
 }) {
   const urls = getImageUrls(product);
   const primaryRaw = urls[index] || urls[0] || "";
@@ -23,9 +24,19 @@ export default function ProductImage({
 
   const cands = useMemo(() => candidatesFor(primaryRaw, w, h, q), [primaryRaw, w, h, q]);
   const cur = cands[altIdx] || "";
-  const srcset = useMemo(() => (primaryRaw ? mkSrcSet(primaryRaw, w, h, q) : undefined), [primaryRaw, w, h, q]);
+  const srcset = useMemo(
+    () => (altIdx === 0 && primaryRaw ? mkSrcSet(primaryRaw, w, h, q) : undefined),
+    [altIdx, primaryRaw, w, h, q]
+  );
+
+  useEffect(() => {
+    setAltIdx(0);
+    setLoaded(false);
+    loadedRef.current = false;
+  }, [primaryRaw]);
 
   const onErr = (e) => {
+    e.currentTarget.removeAttribute("srcset");
     if (altIdx + 1 < cands.length) setAltIdx((i) => i + 1);
     else {
       e.currentTarget.onerror = null;
@@ -55,7 +66,7 @@ export default function ProductImage({
       <img
         src={cur}
         srcSet={srcset}
-        sizes="(max-width:1024px) 90vw, 960px"
+        sizes={sizes}
         alt={product?.name || ""}
         className={className}
         style={
@@ -64,7 +75,7 @@ export default function ProductImage({
             : undefined
         }
         loading={priority ? "eager" : "lazy"}
-        fetchpriority={priority ? "high" : "low"}
+        fetchpriority={priority ? "high" : "auto"}
         decoding="async"
         referrerPolicy="no-referrer"
         data-next={cur}

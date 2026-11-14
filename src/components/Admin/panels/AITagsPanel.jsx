@@ -1,7 +1,7 @@
 // src/components/Admin/panels/AITagsPanel.jsx
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { LS, audit, parseBooleanLike, readLS, writeLS } from "../../../utils.js";
-import { KEYS, getConfig, getGeminiKeys, setGeminiKeys, setConfig, pushConfigKeyToSheet } from "../../../utils/config.js";
+import { KEYS, getConfig, setConfig, pushConfigKeyToSheet } from "../../../utils/config.js";
 import { listConfiguredProductSheet, updateConfiguredProductRow, saveAITagsConfigToSheet } from "../shared/sheets.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
 import { Badge, Callout, MetricItem, MetricStrip, PageHeader, Section } from "../ui/primitives.jsx";
@@ -45,11 +45,6 @@ const fixThumbUrl = (url, size = 200) => {
     return u.replace(/sz=w\d+/, `sz=w${size}`);
 };
 const firstImg = (p) => Array.isArray(p?.images) && p.images.length ? p.images[0] : s(p?.image) || "";
-const sameStringList = (a = [], b = []) =>
-    Array.isArray(a) &&
-    Array.isArray(b) &&
-    a.length === b.length &&
-    a.every((v, idx) => String(v || "") === String(b[idx] || ""));
 const parseModelOrderRaw = (raw, allowSet) => {
     const text = String(raw || "").trim();
     if (!text) return [];
@@ -164,83 +159,35 @@ Ví dụ: hồng, unicorn, cute, bé gái, tròn, kem bơ`;
 const PAGE_SIZE = 20;
 
 /* ===== Raw Gemini API call (single key + model) ===== */
-async function rawGemini(apiKey, modelId, imageUrl, promptText) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
-    const thumbUrl = fixThumbUrl(imageUrl, 400);
-
-    let parts;
-    try {
-        const imgResp = await fetch(thumbUrl);
-        const blob = await imgResp.blob();
-        const base64 = await new Promise(resolve => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result.split(",")[1]);
-            reader.readAsDataURL(blob);
-        });
-        parts = [{ text: promptText }, { inlineData: { mimeType: blob.type || "image/jpeg", data: base64 } }];
-    } catch {
-        parts = [{ text: promptText + "\n\n(Không thể tải ảnh.)" }];
-    }
-
-    const resp = await fetch(url, {
+async function rawGemini(modelId, imageUrl, promptText) {
+    const resp = await fetch("/api/gemini", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            contents: [{ parts }],
-            generationConfig: { temperature: 0.3, maxOutputTokens: 200 },
-        }),
+        credentials: "same-origin",
+        body: JSON.stringify({ model: modelId, imageUrl: fixThumbUrl(imageUrl, 800), prompt: promptText }),
     });
-
+    const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
-        const status = resp.status;
-        let msg = "";
-        try {
-            const errData = await resp.json();
-            if (status === 429) msg = "Rate limit";
-            else if (status === 400) msg = "API key không hợp lệ";
-            else if (status === 403) msg = "API key bị chặn";
-            else msg = errData?.error?.message?.slice(0, 60) || `Lỗi ${status}`;
-        } catch { msg = `Lỗi ${status}`; }
-        const err = new Error(msg);
-        err.status = status;
+        const err = new Error(data?.error || `Lỗi ${resp.status}`);
+        err.status = resp.status;
         throw err;
     }
-
-    const data = await resp.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    return text
-        .replace(/[\n\r]+/g, ", ")
-        .replace(/^[-•*\d.)\s]+/gm, "")
-        .replace(/["']/g, "")
-        .split(",")
-        .map(t => t.trim().toLowerCase())
-        .filter(t => t && t.length < 30)
-        .join(", ");
+    return s(data?.tags);
 }
 
 /* ===== Smart rotation engine ===== */
 // Tries: model[0]+key[0], model[0]+key[1],..., model[1]+key[0], model[1]+key[1],...
-async function callWithRotation(keys, models, imageUrl, promptText, onStatus) {
+async function callWithRotation(models, imageUrl, promptText, onStatus) {
     for (let mi = 0; mi < models.length; mi++) {
         const model = models[mi];
-        for (let ki = 0; ki < keys.length; ki++) {
-            const key = keys[ki];
-            const label = `${model.name || model.id} · Key ${ki + 1}`;
-            if (onStatus) onStatus(label);
-            try {
-                return await rawGemini(key, model.id, imageUrl, promptText);
-            } catch (err) {
-                if (err.status === 429) {
-                    // Rate limited — try next key
-                    continue;
-                }
-                // Other error (400, 403, etc.) — skip this key entirely for all models
-                continue;
-            }
+        if (onStatus) onStatus(model.name || model.id);
+        try {
+            return await rawGemini(model.id, imageUrl, promptText);
+        } catch {
+            continue;
         }
-        // All keys exhausted for this model — move to next model
     }
-    throw new Error("Hết quota tất cả key & model");
+    throw new Error("Không model AI nào xử lý được ảnh");
 }
 
 /* ====================== MAIN PANEL ====================== */
@@ -261,9 +208,6 @@ export default function AITagsPanel({ canEdit = true }) {
     const [showPrompt, setShowPrompt] = useState(false);
     const [showConfig, setShowConfig] = useState(false);
 
-    // Multi-key management
-    const [keys, setKeys] = useState(() => getGeminiKeys());
-    const [newKey, setNewKey] = useState("");
     const [syncBusy, setSyncBusy] = useState(false);
     const [syncMsg, setSyncMsg] = useState("");
 
@@ -322,7 +266,7 @@ export default function AITagsPanel({ canEdit = true }) {
                 const m = new Map();
                 for (const r of rows) {
                     const slug = s(r.slug ?? r.code ?? r.value ?? r.path ?? r.key).trim();
-                    const name = s(r.name ?? r.title ?? r.label ?? r.ten ?? r["t�n"]).trim();
+                    const name = s(r.name ?? r.title ?? r.label ?? r.ten ?? r["tên"]).trim();
                     if (slug && name) m.set(slug, name);
                 }
                 if (alive) setCatMap(m);
@@ -333,18 +277,10 @@ export default function AITagsPanel({ canEdit = true }) {
     const catLabel = (slug) => catMap.get(slug) || slug;
 
     // ── Chặn ghi đè Sheet khi mount lần đầu (giá trị có thể stale/default) ──
-    const mountedKeys = useRef(false);
     const mountedModels = useRef(false);
     const mountedPrompt = useRef(false);
 
     // Persist local cache + runtime config cache
-    useEffect(() => {
-        writeLS("ai_gemini_keys", keys);
-        setConfig(KEYS.GEMINI_API_KEYS, keys.join("\n"));
-        setConfig(KEYS.GEMINI_API_KEY, keys[0] || "");
-        if (!mountedKeys.current) { mountedKeys.current = true; return; }
-        pushConfigKeyToSheet("gemini_api_keys", keys.join(",")).catch(() => {});
-    }, [keys]);
     useEffect(() => {
         writeLS("ai_models_order", enabledModels);
         const joinedStr = enabledModels.join(",");
@@ -358,17 +294,6 @@ export default function AITagsPanel({ canEdit = true }) {
         if (!mountedPrompt.current) { mountedPrompt.current = true; return; }
         pushConfigKeyToSheet("ai_prompt_template", prompt).catch(() => {});
     }, [prompt]);
-
-    useEffect(() => {
-        const onConfigChanged = () => {
-            // Chỉ sync API keys từ remote (do config system quản lý)
-            // KHÔNG sync prompt và models ở đây vì sẽ ghi đè local edits
-            const latest = getGeminiKeys();
-            setKeys((prev) => (sameStringList(prev, latest) ? prev : latest));
-        };
-        window.addEventListener("hb:config-changed", onConfigChanged);
-        return () => window.removeEventListener("hb:config-changed", onConfigChanged);
-    }, []);
 
     // AI state
     const [suggestions, setSuggestions] = useState({});
@@ -385,25 +310,19 @@ export default function AITagsPanel({ canEdit = true }) {
     const [imgModal, setImgModal] = useState(null);
     const syncTimerRef = useRef(null);
     const lastSyncFingerprintRef = useRef("");
-    const hasAdminToken = !!s(getConfig(KEYS.GS_WEBAPP_TOKEN, ""));
+    const hasAdminSession = !!readLS(LS.AUTH);
 
     useEffect(() => {
         if (!canEdit) return;
-        const fingerprint = JSON.stringify({ keys, models: enabledModels, prompt });
+        const fingerprint = JSON.stringify({ models: enabledModels, prompt });
         if (fingerprint === lastSyncFingerprintRef.current) return;
 
         if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
         syncTimerRef.current = setTimeout(async () => {
-            if (!s(getConfig(KEYS.GS_WEBAPP_TOKEN, ""))) {
-                setSyncMsg("⚠ Chưa cấu hình GS WebApp Admin Token nên chưa lưu đồng bộ.");
-                return;
-            }
             setSyncBusy(true);
             try {
-                const authToken = s(getConfig(KEYS.GS_WEBAPP_TOKEN, ""));
                 const result = await saveAITagsConfigToSheet(
-                    { keys, models: enabledModels, prompt },
-                    { authToken }
+                    { models: enabledModels, prompt }
                 );
                 lastSyncFingerprintRef.current = fingerprint;
                 setSyncMsg(`✅ Đã lưu AI config lên tab ${result.sheetName}`);
@@ -417,7 +336,7 @@ export default function AITagsPanel({ canEdit = true }) {
         return () => {
             if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
         };
-    }, [canEdit, keys, enabledModels, prompt]);
+    }, [canEdit, enabledModels, prompt]);
 
     const activeModels = useMemo(() =>
         enabledModels.map(id => ALL_MODELS.find(m => m.id === id)).filter(Boolean),
@@ -451,7 +370,7 @@ export default function AITagsPanel({ canEdit = true }) {
 
     /* Tag single product with rotation */
     const tagOne = useCallback(async (product) => {
-        if (!canEdit || !keys.length || !activeModels.length) return;
+        if (!canEdit || !activeModels.length) return;
         const img = firstImg(product);
         if (!img) { setErrors(e => ({ ...e, [product.id]: "Không có ảnh" })); return; }
         setLoading(l => ({ ...l, [product.id]: true }));
@@ -461,7 +380,7 @@ export default function AITagsPanel({ canEdit = true }) {
         const finalPrompt = `${prompt.trim()}\n\n[THÔNG TIN SẢN PHẨM HIỆN TẠI]\n- Tên sản phẩm: ${product.name}\n- Danh mục (category): ${product.category || "Không rõ"}`;
         
         try {
-            const tags = await callWithRotation(keys, activeModels, img, finalPrompt,
+            const tags = await callWithRotation(activeModels, img, finalPrompt,
                 (label) => setStatusMsg(s => ({ ...s, [product.id]: label }))
             );
             const mergedTags = mergeWithMandatoryTags(product, tags);
@@ -472,10 +391,10 @@ export default function AITagsPanel({ canEdit = true }) {
         } finally {
             setLoading(l => { const n = { ...l }; delete n[product.id]; return n; });
         }
-    }, [activeModels, canEdit, keys, prompt, mergeWithMandatoryTags]);
+    }, [activeModels, canEdit, prompt, mergeWithMandatoryTags]);
 
     const applyTags = useCallback(async (product, tags) => {
-        if (!canEdit || !hasAdminToken) return;
+        if (!canEdit || !hasAdminSession) return;
         if (applying[product.id]) return;
         setApplying((state) => ({ ...state, [product.id]: true }));
         const finalTags = mergeTagLists(tagsArr(tags)).join(", ");
@@ -499,9 +418,9 @@ export default function AITagsPanel({ canEdit = true }) {
                 return next;
             });
         }
-    }, [canEdit, hasAdminToken, applying]);
+    }, [canEdit, hasAdminSession, applying]);
     const openEditor = useCallback((product) => {
-        if (!canEdit || !hasAdminToken) return;
+        if (!canEdit || !hasAdminSession) return;
         setSuggestions((state) => ({
             ...state,
             [product.id]: Object.prototype.hasOwnProperty.call(state, product.id) ? state[product.id] : s(product.tags),
@@ -511,10 +430,10 @@ export default function AITagsPanel({ canEdit = true }) {
             delete next[product.id];
             return next;
         });
-    }, [canEdit, hasAdminToken]);
+    }, [canEdit, hasAdminSession]);
 
     const runBatch = useCallback(async () => {
-        if (!canEdit || !keys.length || !activeModels.length) return;
+        if (!canEdit || !activeModels.length) return;
         const targets = paged.filter((p) => firstImg(p) && !Object.prototype.hasOwnProperty.call(suggestions, p.id) && !loading[p.id]);
         if (!targets.length) return;
         setBatchRunning(true);
@@ -527,9 +446,9 @@ export default function AITagsPanel({ canEdit = true }) {
             if (i < targets.length - 1) await new Promise(r => setTimeout(r, 2000));
         }
         setBatchRunning(false);
-    }, [activeModels, canEdit, keys, loading, paged, suggestions, tagOne]);
+    }, [activeModels, canEdit, loading, paged, suggestions, tagOne]);
     const runApplyAll = useCallback(async () => {
-        if (!canEdit || !hasAdminToken || applyAllRunning) return;
+        if (!canEdit || !hasAdminSession || applyAllRunning) return;
         const targets = paged.filter((p) => Object.prototype.hasOwnProperty.call(suggestions, p.id) && !applying[p.id]);
         if (!targets.length) return;
         setApplyAllRunning(true);
@@ -543,28 +462,10 @@ export default function AITagsPanel({ canEdit = true }) {
             setApplyAllProgress({ done: i + 1, total: targets.length });
         }
         setApplyAllRunning(false);
-    }, [applyAllRunning, applying, canEdit, hasAdminToken, paged, suggestions, applyTags]);
+    }, [applyAllRunning, applying, canEdit, hasAdminSession, paged, suggestions, applyTags]);
 
     const stopBatch = () => { batchAbort.current = true; };
     const stopApplyAll = () => { applyAllAbort.current = true; };
-
-    // Key management functions
-    const addKey = () => {
-        if (!canEdit) return;
-        const incoming = String(newKey || "")
-            .split(/[\r\n,;|]+/)
-            .map((x) => x.trim())
-            .filter(Boolean);
-        if (!incoming.length) return;
-        const normalized = setGeminiKeys([...keys, ...incoming]);
-        setKeys(normalized);
-        setNewKey("");
-    };
-    const removeKey = (i) => {
-        if (!canEdit) return;
-        const normalized = setGeminiKeys(keys.filter((_, idx) => idx !== i));
-        setKeys(normalized);
-    };
 
     // Model order management — drag & drop
     const [dragId, setDragId] = useState(null);
@@ -589,34 +490,6 @@ export default function AITagsPanel({ canEdit = true }) {
     const onDragEnd = () => setDragId(null);
 
     /* ===== RENDER ===== */
-    if (!keys.length) {
-        return (
-            <div className="space-y-4">
-                <PageHeader
-                    title="Gắn tag AI"
-                    description="Gợi ý tag hàng loạt từ ảnh sản phẩm."
-                    compact
-                    chips={<Badge variant="warning">Chưa có Gemini API key</Badge>}
-                />
-                <Section title="Khởi tạo nguồn AI" compact>
-                    <div className="space-y-3">
-                        <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-sm leading-6 text-blue-300">
-                            <div>1. Truy cập <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="underline font-medium">aistudio.google.com/apikey</a></div>
-                            <div>2. Tạo nhiều API key để xoay vòng quota</div>
-                            <div>3. Dán key vào ô dưới để bắt đầu</div>
-                        </div>
-                        <div className="flex flex-col gap-2 sm:flex-row">
-                            <input className="h-10 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 text-sm text-slate-100 outline-none transition focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/20 sm:w-80"
-                                value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="AIzaSy..." onKeyDown={e => e.key === "Enter" && addKey()} />
-                            <button disabled={!canEdit || syncBusy} onClick={addKey} className="h-10 rounded-xl bg-blue-600 px-4 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50">Thêm key</button>
-                        </div>
-                        {syncMsg && <p className={`text-xs ${syncMsg.startsWith("⚠") ? "text-amber-300" : "text-emerald-300"}`}>{syncMsg}</p>}
-                    </div>
-                </Section>
-            </div>
-        );
-    }
-
     const missingProducts = products.filter((p) => !s(p.tags).trim()).length;
     const suggestionCount = Object.keys(suggestions).length;
     const pendingOnPage = paged.filter((p) => firstImg(p) && !Object.prototype.hasOwnProperty.call(suggestions, p.id)).length;
@@ -629,10 +502,10 @@ export default function AITagsPanel({ canEdit = true }) {
                 compact
                 chips={
                     <>
-                        <Badge variant="info">{keys.length} key</Badge>
+                        <Badge variant="info">Key server</Badge>
                         <Badge variant="violet">{activeModels.length} model</Badge>
-                        <Badge variant={hasAdminToken ? "success" : "warning"}>
-                            {hasAdminToken ? "Có quyền ghi Sheet" : "Chưa có token ghi Sheet"}
+                        <Badge variant={hasAdminSession ? "success" : "warning"}>
+                            {hasAdminSession ? "Phiên admin hợp lệ" : "Phiên admin hết hạn"}
                         </Badge>
                     </>
                 }
@@ -650,9 +523,9 @@ export default function AITagsPanel({ canEdit = true }) {
                     Tài khoản này chỉ được xem tag hiện tại. Chạy AI và áp dụng tag đã bị khóa.
                 </Callout>
             )}
-            {canEdit && !hasAdminToken && (
-                <Callout tone="warning" title="Chưa có token ghi Sheet">
-                    Có thể chạy AI gợi ý nhưng chưa lưu được lên Sheet.
+            {canEdit && !hasAdminSession && (
+                <Callout tone="warning" title="Phiên đăng nhập hết hạn">
+                    Đăng nhập lại để chạy AI và lưu tag.
                 </Callout>
             )}
 
@@ -676,24 +549,10 @@ export default function AITagsPanel({ canEdit = true }) {
                 {showConfig && (
                     <Section title="Cấu hình AI" compact className="!shadow-none">
                     <div className="space-y-3">
-                        {/* Keys - compact badges */}
-                        <div>
-                            <div className="mb-1.5 text-[11px] font-semibold text-slate-300">API Keys ({keys.length})</div>
-                            <div className="flex flex-wrap gap-1 mb-2">
-                                {keys.map((k, i) => (
-                                    <span key={i} className="inline-flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-[10px]">
-                                        <span className="font-mono text-slate-400">{k.slice(0, 6)}…{k.slice(-3)}</span>
-                                        <button onClick={() => removeKey(i)} className="text-red-400 hover:text-red-600 leading-none">✕</button>
-                                    </span>
-                                ))}
-                            </div>
-                            <div className="flex gap-1 items-center">
-                                <input className="flex-1 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-300"
-                                    value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="Dán API key mới..." onKeyDown={e => e.key === "Enter" && addKey()} />
-                                <button disabled={!canEdit || syncBusy} onClick={addKey} className="h-9 shrink-0 rounded-xl bg-blue-600 px-3 text-xs text-white transition hover:bg-blue-500 disabled:opacity-50">+ Thêm</button>
-                            </div>
-                            {syncMsg && <p className={`mt-1 text-[10px] ${syncMsg.startsWith("⚠") ? "text-amber-300" : "text-emerald-300"}`}>{syncMsg}</p>}
+                        <div className="text-xs text-slate-400">
+                            Gemini key được quản lý trên server. Browser không đọc hoặc lưu key.
                         </div>
+                        {syncMsg && <p className={`text-[10px] ${syncMsg.startsWith("⚠") ? "text-amber-300" : "text-emerald-300"}`}>{syncMsg}</p>}
                         {/* Models */}
                         <div>
                             <div className="mb-1.5 text-[11px] font-semibold text-slate-300">Model <span className="font-normal text-slate-500">(tick bật · kéo thả)</span></div>
@@ -782,7 +641,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                         </div>
                                     ) : (
                                         <button onClick={runApplyAll}
-                                            disabled={!canEdit || !hasAdminToken || batchRunning || !suggestedCount}
+                                            disabled={!canEdit || !hasAdminSession || batchRunning || !suggestedCount}
                                             className="h-8 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-40">
                                             Áp dụng {suggestedCount}
                                         </button>
@@ -848,7 +707,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                 <div className="shrink-0 flex items-center gap-1">
                                     <button
                                         onClick={() => openEditor(p)}
-                                        disabled={!canEdit || !hasAdminToken || applyAllRunning || isLoading || isApplying}
+                                        disabled={!canEdit || !hasAdminSession || applyAllRunning || isLoading || isApplying}
                                         className="h-8 w-8 rounded-lg bg-gray-50 border border-gray-200 text-gray-500 hover:text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition disabled:opacity-30 flex items-center justify-center"
                                         title="Sửa tag"
                                     >
@@ -873,7 +732,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                 ) : hasSuggestion ? (
                                     <div className="space-y-1.5">
                                         <div className="text-[9px] text-purple-600 font-semibold uppercase tracking-wider">✨ AI gợi ý:</div>
-                                        <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken} isApplying={isApplying || applyAllRunning}
+                                        <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminSession} isApplying={isApplying || applyAllRunning}
                                             onApply={(tags) => applyTags(p, tags)}
                                             onChange={(tags) => setSuggestions((s) => ({ ...s, [p.id]: tags }))}
                                             onDismiss={() => setSuggestions(s => { const n = { ...s }; delete n[p.id]; return n; })} />
@@ -957,7 +816,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                         ) : error ? (
                                             <span className="text-[10px] text-red-500 font-medium">{error}</span>
                                         ) : hasSuggestion ? (
-                                            <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminToken} isApplying={isApplying || applyAllRunning} onApply={(tags) => applyTags(p, tags)}
+                                            <AITagEditor tags={aiTags} canEdit={canEdit && hasAdminSession} isApplying={isApplying || applyAllRunning} onApply={(tags) => applyTags(p, tags)}
                                                 onChange={(tags) => setSuggestions((s) => ({ ...s, [p.id]: tags }))}
                                                 onDismiss={() => setSuggestions(s => { const n = { ...s }; delete n[p.id]; return n; })} />
                                         ) : (
@@ -968,7 +827,7 @@ export default function AITagsPanel({ canEdit = true }) {
                                         <div className="flex items-center justify-center gap-1">
                                             <button
                                                 onClick={() => openEditor(p)}
-                                                disabled={!canEdit || !hasAdminToken || applyAllRunning || isLoading || isApplying}
+                                                disabled={!canEdit || !hasAdminSession || applyAllRunning || isLoading || isApplying}
                                                 className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition disabled:opacity-30"
                                                 title="Sửa tag"
                                             >

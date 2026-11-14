@@ -60,6 +60,23 @@ export function parseFeedbackImagesConfig(raw = "") {
   return out;
 }
 
+export function buildFeedbackDisplayItems(entries = [], limit = 60) {
+  return (Array.isArray(entries) ? entries : [])
+    .map((entry, index) => {
+      const image = s(entry?.image);
+      if (!image) return null;
+
+      return {
+        id: s(entry?.id || entry?.key) || `feedback-${index}`,
+        image,
+        productName: s(entry?.productName || entry?.name) || `Feedback ${index + 1}`,
+        categoryLabel: s(entry?.categoryLabel) || "Feedback khach hang",
+      };
+    })
+    .filter(Boolean)
+    .slice(0, Math.max(0, Number(limit) || 0));
+}
+
 export function serializeFeedbackImagesConfig(items = []) {
   return JSON.stringify(
     (Array.isArray(items) ? items : [])

@@ -2,22 +2,11 @@
 
 export default function LoadingSkeleton({ count = 8, message = "Bạn chờ chút chút nhé..." }) {
   return (
-    <section className="relative max-w-6xl mx-auto px-4 py-8 min-h-[60vh]">
-      {/* Centered Logo Overlay - positioned in top third */}
-      <div className="absolute inset-0 z-10 flex flex-col items-center pointer-events-none" style={{ paddingTop: "28%" }}>
-        <div className="bg-white/80 backdrop-blur-sm px-8 py-6 rounded-3xl shadow-sm border border-white/50 flex flex-col items-center gap-4">
-          <div className="relative">
-            <div className="absolute inset-0 bg-rose-100 rounded-full blur-xl opacity-40 animate-pulse-slow"></div>
-            <img src="/brand/logo-mobile.png" alt="Halley Bakery" className="relative w-14 h-14 object-contain animate-float" />
-          </div>
-          <div className="h-0.5 w-16 bg-gray-100 rounded-full overflow-hidden">
-            <div className="h-full bg-rose-400 w-full animate-progress-indeterminate origin-left"></div>
-          </div>
-          <p className="text-xs text-gray-400 animate-pulse">{message}</p>
-        </div>
+    <section className="relative max-w-6xl mx-auto px-4 py-6" aria-busy="true">
+      <div className="mb-3 flex items-center gap-2 text-xs text-gray-400">
+        <div className="h-3 w-3 rounded-full border-2 border-rose-300 border-t-transparent animate-spin" />
+        <span>{message}</span>
       </div>
-
-      {/* Classic Grid Skeleton */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 opacity-75">
         {Array.from({ length: count }).map((_, i) => (
           <div key={i} className="rounded-xl border border-gray-100 bg-white overflow-hidden shadow-sm">
@@ -44,22 +33,6 @@ export default function LoadingSkeleton({ count = 8, message = "Bạn chờ chú
       </div>
 
       <style>{`
-        @keyframes pulse-slow {
-          0%, 100% { transform: scale(0.9); opacity: 0.3; }
-          50% { transform: scale(1.1); opacity: 0.6; }
-        }
-        .animate-pulse-slow {
-          animation: pulse-slow 3s ease-in-out infinite;
-        }
-
-        @keyframes float {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-3px); }
-        }
-        .animate-float {
-          animation: float 4s ease-in-out infinite;
-        }
-
         @keyframes shimmer-slide {
           0% { transform: translateX(-100%); }
           100% { transform: translateX(100%); }
@@ -71,14 +44,6 @@ export default function LoadingSkeleton({ count = 8, message = "Bạn chờ chú
           animation: shimmer-slide 1.5s infinite cubic-bezier(0.4, 0, 0.2, 1);
         }
 
-        @keyframes progress-indeterminate {
-          0% { transform: translateX(-100%) scaleX(0.2); }
-          50% { transform: translateX(0%) scaleX(0.5); }
-          100% { transform: translateX(100%) scaleX(0.2); }
-        }
-        .animate-progress-indeterminate {
-          animation: progress-indeterminate 1.5s infinite linear;
-        }
       `}</style>
     </section>
   );

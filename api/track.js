@@ -431,7 +431,7 @@ function pickConfigValue(config = {}, aliases = []) {
   return "";
 }
 
-async function loadTrackingConfig(webApp = "") {
+async function loadTrackingConfig(webApp = "", authToken = "") {
   const key = s(webApp);
   if (!key) return {};
 
@@ -440,7 +440,10 @@ async function loadTrackingConfig(webApp = "") {
   if (cached && now - cached.at <= TRACKING_CONFIG_CACHE_TTL_MS) return cached.config || {};
 
   try {
-    const data = await postToAppsScript(key, { action: "config.load" });
+    const data = await postToAppsScript(key, {
+      action: "config.load",
+      _auth: authPayload(authToken),
+    });
     const config = data?.config && typeof data.config === "object" ? data.config : {};
     trackingConfigCache.set(key, { at: now, config });
     return config;
@@ -453,14 +456,14 @@ async function loadTrackingConfig(webApp = "") {
 async function ip2LocationApiKey(options = {}) {
   const envKey = s(process.env.IP2LOCATION_API_KEY);
   if (envKey) return envKey;
-  const config = await loadTrackingConfig(options.webApp);
+  const config = await loadTrackingConfig(options.webApp, options.authToken);
   return pickConfigValue(config, IP2LOCATION_API_KEY_CONFIG_ALIASES);
 }
 
 async function trackingSheetId(options = {}) {
   const envId = normalizeSpreadsheetId(process.env.TRACKING_SHEET_ID || process.env.TRACKING_SPREADSHEET_ID || "");
   if (envId) return envId;
-  const config = await loadTrackingConfig(options.webApp);
+  const config = await loadTrackingConfig(options.webApp, options.authToken);
   return normalizeSpreadsheetId(pickConfigValue(config, TRACKING_SHEET_ID_CONFIG_ALIASES));
 }
 
@@ -602,30 +605,6 @@ function clientIpFromRequest(req) {
     req.connection?.remoteAddress ||
     ""
   );
-}
-
-async function parseRequestBody(req) {
-  const raw = req.body;
-  if (raw && typeof raw === "object") return raw;
-  if (typeof raw === "string" && raw.trim()) {
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return {};
-    }
-  }
-
-  const chunks = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-  }
-  const text = Buffer.concat(chunks).toString("utf8");
-  if (!text.trim()) return {};
-  try {
-    return JSON.parse(text);
-  } catch {
-    return {};
-  }
 }
 
 async function requestWithInit(webApp = "", init = {}) {
@@ -839,7 +818,7 @@ function authPayload(token = "") {
   };
 }
 
-async function trackEvents({ webApp = "", events = [] } = {}) {
+async function trackEvents({ webApp = "", authToken = "", events = [] } = {}) {
   const rows = uniqueEvents(
     events
       .map(normalizeEvent)
@@ -847,7 +826,8 @@ async function trackEvents({ webApp = "", events = [] } = {}) {
   );
   if (!rows.length) return { ok: true, accepted: 0, inserted: 0 };
 
-  const targetTrackingSheetId = await trackingSheetId({ webApp });
+  const targetTrackingSheetId = await trackingSheetId({ webApp, authToken });
+  const auth = authPayload(authToken);
   let trackingError = "";
 
   try {
@@ -857,6 +837,7 @@ async function trackEvents({ webApp = "", events = [] } = {}) {
       trackingSheetId: targetTrackingSheetId,
       headers: EVENT_HEADERS,
       events: rows,
+      _auth: auth,
     });
     if (data?.ok !== false) return { ok: true, accepted: rows.length, inserted: data?.inserted ?? rows.length, mode: "tracking.track", data };
     trackingError = responseMessage(data) || "tracking.track failed";
@@ -873,6 +854,7 @@ async function trackEvents({ webApp = "", events = [] } = {}) {
         sheet: "Events",
         trackingSheetId: targetTrackingSheetId,
         row,
+        _auth: auth,
       });
       if (data?.ok === false) {
         lastError = responseMessage(data) || "insert_failed";
@@ -958,22 +940,29 @@ export default async function handler(req, res) {
   }
 
   try {
-    const body = req.method === "POST" ? await parseRequestBody(req) : {};
+    const body = req.method === "POST"
+      ? await readJsonBody(req, { maxBytes: 256 * 1024 })
+      : {};
     const q = req.query || {};
-    const webApp = s(body.webApp || q.webApp);
-    if (!webApp) return json(res, 400, { ok: false, error: "Missing webApp URL" });
+    const webApp = configuredWebAppUrl();
+    const authToken = configuredAdminToken();
+    if (!webApp) return json(res, 503, { ok: false, error: "Tracking service is not configured" });
     if (!isAllowedWebApp(webApp)) return json(res, 400, { ok: false, error: "Invalid webApp URL" });
+    if (!authToken) return json(res, 503, { ok: false, error: "Tracking service is not configured" });
 
     const op = s(body.op || q.op || body.action || q.action).toLowerCase();
     if (req.method === "GET" || op === "list" || op === "tracking.list") {
+      if (!readAdminSession(req)) return json(res, 401, { ok: false, error: "Unauthorized" });
+      if (!enforceRateLimit(req, res, { scope: "tracking-list", limit: 30, windowMs: 60_000 })) return;
       const data = await listTelemetry({
         webApp,
-        authToken: body.authToken || q.authToken,
+        authToken,
         limit: Number(body.limit || q.limit || 5000),
       });
       return json(res, data.ok ? 200 : 502, data);
     }
 
+    if (!enforceRateLimit(req, res, { scope: "tracking-events", limit: 60, windowMs: 60_000 })) return;
     if (isStaffOptOutRequest(req)) {
       return json(res, 200, { ok: true, accepted: 0, inserted: 0, ignored: true, reason: "staff_opt_out" });
     }
@@ -988,10 +977,11 @@ export default async function handler(req, res) {
     }));
     const gpsEnrichedEvents = await enrichEventsWithGpsAddress(eventsWithRequestContext);
     const needsIpLookup = gpsEnrichedEvents.some((event) => !s(event.address));
-    const ipLookupLocation = needsIpLookup ? await lookupIpLocation(ipAddress, { webApp }) : null;
+    const ipLookupLocation = needsIpLookup ? await lookupIpLocation(ipAddress, { webApp, authToken }) : null;
     const ipLookupAddress = s(ipLookupLocation?.address);
     const data = await trackEvents({
       webApp,
+      authToken,
       events: gpsEnrichedEvents.map((event) => {
         var eventAddress = s(event.address);
         return {
@@ -1005,6 +995,12 @@ export default async function handler(req, res) {
     });
     return json(res, 200, data);
   } catch (error) {
-    return json(res, 500, { ok: false, error: s(error?.message || "track_failed") });
+    return json(res, error?.statusCode || 500, { ok: false, error: s(error?.message || "track_failed") });
   }
 }
+import {
+  configuredAdminToken,
+  configuredWebAppUrl,
+  readAdminSession,
+} from "./_admin-auth.js";
+import { enforceRateLimit, readJsonBody } from "./_http.js";

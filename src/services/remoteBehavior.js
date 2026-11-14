@@ -282,20 +282,12 @@ export async function loadRemoteCustomerBehavior({ force = false, ttlMs = REMOTE
   const cached = readRemoteCustomerBehaviorCache({ ttlMs });
   if (!force && cached?.fresh) return fromCache(cached, { stale: false });
 
-  const webApp = s(getConfig(KEYS.GS_WEBAPP_URL, ""));
-  const authToken = s(getConfig(KEYS.GS_WEBAPP_TOKEN, ""));
-  if (!webApp) {
-    if (cached) return fromCache(cached, { error: "missing_webapp" });
-    return { ok: false, events: [], leads: [], source: "missing_webapp", error: "missing_webapp" };
-  }
-
   const res = await fetch("/api/track", {
     method: "POST",
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json;charset=utf-8" },
     body: JSON.stringify({
       op: "list",
-      webApp,
-      authToken,
       limit: EVENT_LIMIT,
     }),
   });

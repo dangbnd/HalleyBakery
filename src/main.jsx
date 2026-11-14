@@ -4,8 +4,11 @@ import App from "./App.jsx";
 import "./index.css";
 import ErrorBoundary from "./components/system/ErrorBoundary.jsx";
 import LoadingSkeleton from "./components/LoadingSkeleton.jsx";
-import { LS, readLS } from "./utils.js";
-import { syncConfigFromRemote } from "./utils/config.js";
+import TrackingConsent from "./components/TrackingConsent.jsx";
+import { LS, removeLS, writeLS } from "./utils.js";
+import { clearLegacyClientSecrets, syncConfigFromRemote } from "./utils/config.js";
+
+clearLegacyClientSecrets();
 
 const Login = lazy(() => import("./components/Admin/Login.jsx"));
 const AdminIndex = lazy(() => import("./components/Admin/index.jsx"));
@@ -18,23 +21,60 @@ function FullscreenLoading() {
   );
 }
 
+function isSystemAdminRuntime() {
+  const hostname = window.location.hostname;
+  const path = window.location.pathname || "/";
+  return (
+    hostname.startsWith("admin.") ||
+    hostname.includes("-admin") ||
+    path === "/admin" ||
+    path.startsWith("/admin/")
+  );
+}
+
 function Root() {
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(() => !isSystemAdminRuntime());
+  const [sessionUser, setSessionUser] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const isAdminDomain = window.location.hostname.startsWith("admin.");
-      const timeoutMs = isAdminDomain ? 6000 : 400;
+      const path = window.location.pathname || "/";
+      const isAdminPath = path === "/admin" || path.startsWith("/admin/");
+      const isSystemAdminMode = isAdminDomain || isAdminPath;
+      const timeoutMs = isAdminDomain ? 6000 : 3000;
       const params = new URLSearchParams(window.location.search || "");
       const forceConfigSync =
-        !isAdminDomain || params.has("hb_config_sync") || params.has("hb_refresh_config");
+        params.has("hb_config_sync") || params.has("hb_refresh_config");
+
+      if (!isSystemAdminMode) {
+        syncConfigFromRemote({ force: forceConfigSync }).catch(() => {});
+        return;
+      }
+
       try {
         await Promise.race([
           syncConfigFromRemote({ force: forceConfigSync }),
           new Promise((resolve) => setTimeout(resolve, timeoutMs)),
         ]);
       } catch {}
+      try {
+        const res = await fetch("/api/admin-auth", {
+          method: "GET",
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data?.user) {
+          writeLS(LS.AUTH, data.user);
+          if (!cancelled) setSessionUser(data.user);
+        } else {
+          removeLS(LS.AUTH);
+        }
+      } catch {
+        removeLS(LS.AUTH);
+      }
       if (!cancelled) setReady(true);
       if (!cancelled && isAdminDomain) {
         setTimeout(() => {
@@ -56,7 +96,7 @@ function Root() {
   const isAdminPath = path === "/admin" || path.startsWith("/admin/");
 
   const isSystemAdminMode = isAdminDomain || isAdminPath;
-  const user = readLS(LS.AUTH, null);
+  const user = sessionUser;
 
   if (!isLocal && !isAdminDomain && isAdminPath) {
     window.location.replace("https://admin.halleybakery.io.vn");
@@ -68,18 +108,6 @@ function Root() {
     return null;
   }
 
-  if (
-    !isSystemAdminMode &&
-    path === "/" &&
-    user &&
-    window.matchMedia("(display-mode: standalone)").matches &&
-    !sessionStorage.getItem("visited_home")
-  ) {
-    sessionStorage.setItem("visited_home", "1");
-    window.location.replace(isLocal ? "/admin" : "https://admin.halleybakery.io.vn");
-    return null;
-  }
-
   if (isSystemAdminMode) {
     return (
       <Suspense fallback={<FullscreenLoading />}>
@@ -88,7 +116,12 @@ function Root() {
     );
   }
 
-  return <App />;
+  return (
+    <>
+      <App />
+      <TrackingConsent />
+    </>
+  );
 }
 
 createRoot(document.getElementById("root")).render(

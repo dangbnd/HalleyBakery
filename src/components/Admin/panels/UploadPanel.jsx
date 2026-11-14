@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LS, audit, readLS } from "../../../utils.js";
-import { KEYS, getConfig, getGeminiKeys, setConfig, pushConfigKeyToSheet } from "../../../utils/config.js";
+import { KEYS, getConfig, setConfig, pushConfigKeyToSheet } from "../../../utils/config.js";
 import { fetchTabAsObjects } from "../../../services/sheets.js";
 import { listDriveFileHashes, listDriveLeafFolders, saveConfigEntriesToSheet, uploadDriveFile } from "../shared/sheets.js";
 import { isTokenExpired, requestGoogleDriveToken, uploadFileDirectToDrive, saveHashesToSheet, loadHashesFromSheet } from "../shared/driveDirect.js";
@@ -102,14 +102,6 @@ function mergeFeedbackLibrary(existing = [], incoming = []) {
     next = upsertFeedbackImageRecord(next, record);
   }
   return next;
-}
-
-// Đọc keys từ ai_gemini_keys localStorage (do AITagsPanel quản lý)
-function readAllGeminiKeys() {
-  const multi = getGeminiKeys();
-  if (Array.isArray(multi) && multi.length) return multi;
-  const single = s(getConfig(KEYS.GEMINI_API_KEY, ""));
-  return single ? [single] : [];
 }
 
 // Đọc models từ ai_models_order localStorage - chỉ lấy models stable (skip 3.x preview chưa tồn tại)
@@ -290,9 +282,7 @@ function normalizeTagsInput(raw = "") {
 
 /* ====== AI Engine - giống AITagsPanel ====== */
 // Gọi Gemini với 1 key + 1 model, nhận File object trực tiếp (resize trước)
-async function rawGeminiFile(apiKey, modelId, file, promptText) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
-  
+async function rawGeminiFile(modelId, file, promptText) {
   // Resize ảnh xuống 400px trước khi gửi (giống AITagsPanel)
   const srcUrl = URL.createObjectURL(file);
   let base64, mimeType;
@@ -308,44 +298,40 @@ async function rawGeminiFile(apiKey, modelId, file, promptText) {
     base64 = canvas.toDataURL(mimeType, 0.82).split(",")[1];
   } finally { URL.revokeObjectURL(srcUrl); }
 
-  const resp = await fetch(url, {
+  const resp = await fetch("/api/gemini", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
     body: JSON.stringify({
-      contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType, data: base64 } }] }],
-      // Không dùng responseMimeType vì nhiều model không hỗ trợ (giống AITagsPanel)
-      generationConfig: { temperature: 0.2, maxOutputTokens: 800 },
+      model: modelId,
+      prompt: promptText,
+      imageData: base64,
+      mimeType,
+      responseMode: "raw",
+      maxOutputTokens: 800,
     }),
   });
 
+  const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
-    const errData = await resp.json().catch(() => ({}));
-    const err = new Error(s(errData?.error?.message || `Lỗi ${resp.status}`));
+    const err = new Error(s(data?.error || `Lỗi ${resp.status}`));
     err.status = resp.status;
     throw err;
   }
-
-  const data = await resp.json();
-  return s(data?.candidates?.[0]?.content?.parts?.[0]?.text);
+  return s(data?.text);
 }
 
-// Rotate qua tất cả keys và models, giống AITagsPanel.callWithRotation
-async function callAiWithRotation(keys, modelIds, file, promptText, onStatus) {
+async function callAiWithRotation(modelIds, file, promptText, onStatus) {
   for (const modelId of modelIds) {
-    for (let ki = 0; ki < keys.length; ki++) {
-      if (onStatus) onStatus(`${modelId} · Key ${ki + 1}`);
-      try {
-        const text = await rawGeminiFile(keys[ki], modelId, file, promptText);
-        return { text, modelId, keyIndex: ki };
-      } catch (err) {
-        // 429 hoặc quota -> thử key tiếp
-        if (err.status === 429 || s(err.message).toLowerCase().includes("quota")) continue;
-        // Lỗi khác -> thử key tiếp nhưng ghi nhớ
-        continue;
-      }
+    if (onStatus) onStatus(modelId);
+    try {
+      const text = await rawGeminiFile(modelId, file, promptText);
+      return { text, modelId };
+    } catch {
+      continue;
     }
   }
-  throw new Error("Hết quota tất cả key & model. Vui lòng thêm key mới trong tab AI Tags.");
+  throw new Error("Không model AI nào xử lý được ảnh.");
 }
 
 function buildUploadPrompt(categories, tagOptions, customCatPrompt, customTagsPrompt) {
@@ -383,7 +369,7 @@ Cấu trúc JSON bắt buộc:
 }
 
 // Gọi AI chỉ để lấy tags khi JSON chính không có tags
-async function fetchTagsOnly(keys, modelIds, file, tagOptions) {
+async function fetchTagsOnly(modelIds, file, tagOptions) {
   const tagHint = tagOptions.length > 0 
     ? `ưu tiên từ: ${tagOptions.slice(0, 30).join(", ")}` 
     : "màu sắc, phong cách, nhân vật, hình dáng";
@@ -391,7 +377,7 @@ async function fetchTagsOnly(keys, modelIds, file, tagOptions) {
 Chỉ trả về các từ phân cách bằng dấu phẩy, tiếng Việt, ngắn gọn. Không giải thích.
 Ví dụ: đỏ, mèo, cute, bé gái, kem bơ`;
   try {
-    const { text } = await callAiWithRotation(keys, modelIds, file, prompt, null);
+    const { text } = await callAiWithRotation(modelIds, file, prompt, null);
     return String(text).split(/[,;\n]/).map(t => t.trim().replace(/[."'()]/g,'').replace(/^[-*]+/,'')).filter(t => t.length > 0 && t.length < 30).slice(0, 8);
   } catch { return []; }
 }
@@ -672,16 +658,14 @@ export default function UploadPanel({ canEdit = true }) {
       updateItem(id, { error: "Ảnh feedback không cần AI phân loại." });
       return;
     }
-    const keys = readAllGeminiKeys();
     const modelIds = readActiveModels();
     if (!item) return;
-    if (!keys.length) { updateItem(id, { error: "Không có Gemini key. Vui lòng thêm trong tab AI Tags." }); return; }
     if (!categories.length) { updateItem(id, { error: "Chưa tải danh mục. Bấm 'Tải dữ liệu Sheet'." }); return; }
     
     updateItem(id, { aiLoading: true, error: "" });
     try {
       const prompt = buildUploadPrompt(categories, tagOptions, aiCategoryPrompt, aiTagsPrompt);
-      const { text } = await callAiWithRotation(keys, modelIds, item.file, prompt,
+      const { text } = await callAiWithRotation(modelIds, item.file, prompt,
         (label) => updateItem(id, { aiStatus: label })
       );
       
@@ -720,7 +704,7 @@ export default function UploadPanel({ canEdit = true }) {
       // Fallback 2: nếu vẫn rỗng -> gọi AI request riêng chỉ để lấy tags
       if (!finalTags.length) {
         updateItem(id, { aiStatus: "Lấy tags..." });
-        finalTags = await fetchTagsOnly(keys, modelIds, item.file, tagOptions);
+        finalTags = await fetchTagsOnly(modelIds, item.file, tagOptions);
       }
       
       const cleanTags = mapTagsToKnownList(finalTags, tagOptions);

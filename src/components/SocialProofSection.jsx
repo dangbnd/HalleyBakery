@@ -1,36 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import ProductImage from "./ProductImage.jsx";
-import { FALLBACK_IMAGE, candidatesFor, firstImg } from "../utils/img.js";
-import { pidOf } from "../utils/pid.js";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FALLBACK_IMAGE, candidatesFor } from "../utils/img.js";
 import { KEYS, getConfig } from "../utils/config.js";
-import { parseFeedbackImagesConfig } from "../utils/feedback.js";
-
-const DEFAULT_ENTRIES = [
-  { key: "than-tai" },
-  { key: "be-trai" },
-  { key: "3d" },
-  { key: "basic" },
-];
-
-const CATEGORY_LABEL_FALLBACKS = {
-  "than-tai": "Banh than tai",
-  "be-trai": "Banh be trai",
-  "be-gai": "Banh be gai",
-  "tre-em": "Banh tre em",
-  "thu-noi": "Banh thoi noi",
-  "3d": "Banh tao hinh 3D",
-  basic: "Banh basic",
-  "100k": "Banh 100K",
-};
+import { buildFeedbackDisplayItems, parseFeedbackImagesConfig } from "../utils/feedback.js";
 
 const DEMO_COUNT = 60;
-const DESKTOP_CARD_COUNT = 32;
+const DESKTOP_CARD_COUNT = 36;
 const MOBILE_CARD_COUNT = 16;
 const FEEDBACK_CARD_IMAGE_WIDTH = 480;
 const FEEDBACK_CARD_IMAGE_QUALITY = 62;
 const FEEDBACK_HOVER_IMAGE_WIDTH = 860;
 const FEEDBACK_HOVER_IMAGE_QUALITY = 68;
 const FEEDBACK_LIGHTBOX_IMAGE_WIDTH = 1600;
+const TRANSPARENT_IMAGE =
+  "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
 const ROTATIONS = [-12, -9, -7, -5, -3, 3, 5, 7, 9, 11, -6, 4];
 
 function clamp(value, min, max) {
@@ -72,140 +54,6 @@ function halton(index, base) {
   }
 
   return result;
-}
-
-function normalize(value = "") {
-  return String(value || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/đ/g, "d")
-    .replace(/[^a-z0-9]+/g, "");
-}
-
-function humanizeKey(value = "") {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  if (/^\d+d$/i.test(raw)) return raw.toUpperCase();
-  if (/^\d+k$/i.test(raw)) return raw.toUpperCase();
-  return raw
-    .split(/[-_]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function categoryLabelOf(product, categoryTitleMap = {}) {
-  const key = String(product?.category || "").trim();
-  if (!key) return "";
-  return String(categoryTitleMap[key] || CATEGORY_LABEL_FALLBACKS[key] || humanizeKey(key) || "").trim();
-}
-
-function buildIndexes(products = []) {
-  const byPid = new Map();
-  const byId = new Map();
-  const byCategory = new Map();
-  const byName = [];
-
-  (products || []).forEach((product) => {
-    if (!firstImg(product)) return;
-
-    const pid = String(pidOf(product) || "").trim();
-    const id = String(product?.id || "").trim();
-    const category = String(product?.category || "").trim();
-    const name = String(product?.name || product?.title || "").trim();
-
-    if (pid) byPid.set(normalize(pid), product);
-    if (id) byId.set(normalize(id), product);
-    if (category && !byCategory.has(normalize(category))) byCategory.set(normalize(category), product);
-    if (name) byName.push({ key: normalize(name), product });
-  });
-
-  return { byPid, byId, byCategory, byName };
-}
-
-function resolveProduct(entry = {}, indexes) {
-  const pid = normalize(entry.pid);
-  if (pid && indexes.byPid.has(pid)) return indexes.byPid.get(pid);
-
-  const id = normalize(entry.id);
-  if (id && indexes.byId.has(id)) return indexes.byId.get(id);
-
-  const key = normalize(entry.key || entry.category);
-  if (key && indexes.byCategory.has(key)) return indexes.byCategory.get(key);
-
-  const nameHint = normalize(entry.productName || entry.name);
-  if (nameHint) {
-    const exact = indexes.byName.find((item) => item.key === nameHint);
-    if (exact?.product) return exact.product;
-
-    const partial = indexes.byName.find((item) => item.key.includes(nameHint) || nameHint.includes(item.key));
-    if (partial?.product) return partial.product;
-  }
-
-  return null;
-}
-
-function buildAutoEntries(products = [], categoryTitleMap = {}, usedPids = new Set(), limit = DEMO_COUNT) {
-  const out = [];
-
-  for (const product of products || []) {
-    const pid = String(pidOf(product) || "").trim();
-    const image = firstImg(product);
-    if (!pid || !image || usedPids.has(pid)) continue;
-
-    const categoryLabel = categoryLabelOf(product, categoryTitleMap) || String(product?.name || "").trim();
-    out.push({
-      id: `auto-${pid}`,
-      product,
-      image,
-      productName: String(product?.name || categoryLabel || "Mau da giao").trim(),
-      categoryLabel,
-    });
-
-    usedPids.add(pid);
-    if (out.length >= limit) break;
-  }
-
-  return out;
-}
-
-function buildDisplayItems(entries = [], products = [], categoryTitleMap = {}, { fillWithProducts = true } = {}) {
-  const indexes = buildIndexes(products);
-  const usedPids = new Set();
-  const configured = (Array.isArray(entries) && entries.length ? entries : DEFAULT_ENTRIES)
-    .map((entry, index) => {
-      const product = resolveProduct(entry, indexes);
-      const image = String(entry?.image || (product ? firstImg(product) : "") || "").trim();
-      if (!image) return null;
-
-      const pid = product ? String(pidOf(product) || "").trim() : "";
-      if (pid) usedPids.add(pid);
-
-      const categoryLabel =
-        String(
-          entry?.categoryLabel ||
-            categoryLabelOf(product, categoryTitleMap) ||
-            CATEGORY_LABEL_FALLBACKS[String(entry?.key || entry?.category || "").trim()] ||
-            humanizeKey(entry?.key || entry?.category) ||
-            ""
-        ).trim() || "Mau noi bat";
-
-      return {
-        id: String(entry?.id || entry?.key || `proof-${index}`),
-        product,
-        image,
-        productName: String(entry?.productName || product?.name || categoryLabel).trim(),
-        categoryLabel,
-      };
-    })
-    .filter(Boolean);
-
-  if (!fillWithProducts) return configured.slice(0, DEMO_COUNT);
-
-  const limit = configured.length >= DEMO_COUNT ? DEMO_COUNT : DEMO_COUNT - configured.length;
-  const auto = limit > 0 ? buildAutoEntries(products, categoryTitleMap, usedPids, limit) : [];
-  return [...configured, ...auto].slice(0, DEMO_COUNT);
 }
 
 function buildCollageItems(items = [], count = 0, variantSeed = 0) {
@@ -265,6 +113,19 @@ function createArtCollageLayouts(count, mobile = false, variantSeed = 0) {
         [3, 0, 2, 4, 1, 5],
       ];
   const layouts = [];
+  const addLayout = ({ centerX, centerY, width, height, rotate, z, frame }) => {
+    const safeWidth = clamp(width, mobile ? 22 : 15, mobile ? 42 : 34);
+    const safeHeight = clamp(height, mobile ? 24 : 17, mobile ? 48 : 40);
+    layouts.push({
+      top: `${centerY - safeHeight / 2}%`,
+      left: `${centerX - safeWidth / 2}%`,
+      width: `${safeWidth}%`,
+      height: `${safeHeight}%`,
+      rotate,
+      z,
+      frame,
+    });
+  };
 
   for (let index = 0; index < baseCount; index++) {
     const row = Math.floor(index / baseCols);
@@ -300,15 +161,7 @@ function createArtCollageLayouts(count, mobile = false, variantSeed = 0) {
 
     rotate = clamp(rotate, mobile ? -15 : -22, mobile ? 15 : 22);
 
-    layouts.push({
-      top: `${centerY - height / 2}%`,
-      left: `${centerX - width / 2}%`,
-      width: `${width}%`,
-      height: `${height}%`,
-      rotate,
-      z,
-      frame,
-    });
+    addLayout({ centerX, centerY, width, height, rotate, z, frame });
   }
 
   for (let accentIndex = 0; accentIndex < accentCount; accentIndex++) {
@@ -344,15 +197,7 @@ function createArtCollageLayouts(count, mobile = false, variantSeed = 0) {
 
     rotate = clamp(rotate, mobile ? -17 : -24, mobile ? 17 : 24);
 
-    layouts.push({
-      top: `${centerY - height / 2}%`,
-      left: `${centerX - width / 2}%`,
-      width: `${width}%`,
-      height: `${height}%`,
-      rotate,
-      z,
-      frame,
-    });
+    addLayout({ centerX, centerY, width, height, rotate, z, frame });
   }
 
   return layouts;
@@ -360,196 +205,6 @@ function createArtCollageLayouts(count, mobile = false, variantSeed = 0) {
 
 function createCollageLayouts(count, mobile = false, variantSeed = 0) {
   return createArtCollageLayouts(count, mobile, variantSeed);
-  const cols = mobile ? 4 : 6;
-  const rows = Math.ceil(count / cols);
-
-  if (mobile) {
-    const xCenters = Array.from({ length: cols }, (_, index) =>
-      cols === 1 ? 50 : 11 + (index / (cols - 1)) * 78
-    );
-    const yCenters = Array.from({ length: rows }, (_, index) =>
-      rows === 1 ? 50 : 8 + (index / (rows - 1)) * 84
-    );
-    const orders = [
-      [0, 2, 1, 3],
-      [1, 3, 0, 2],
-      [2, 0, 3, 1],
-      [3, 1, 2, 0],
-    ];
-    const sizePattern = [
-      [28.5, 33, 29.5, 31.5],
-      [31.5, 28.5, 33, 29.5],
-      [29.5, 31.5, 28.5, 33],
-      [33, 29.5, 31.5, 28.5],
-    ];
-    const layouts = [];
-
-    for (let index = 0; index < count; index++) {
-      const row = Math.floor(index / cols);
-      const slot = index % cols;
-      const order = orders[row % orders.length];
-      const col = order[slot];
-      const baseWidth = sizePattern[row % sizePattern.length][col];
-      const width = baseWidth + (noise(index, 1) - 0.5) * 2.4;
-      const height = width * (1.08 + noise(index, 2) * 0.13);
-      let centerX = xCenters[col] + (noise(index, 3) - 0.5) * 5.5 + (row % 2 === 0 ? -1.4 : 1.4);
-      let centerY = yCenters[row] + (noise(index, 4) - 0.5) * 4.5 + (col % 2 === 0 ? -1.2 : 1.2);
-      let rotate = ROTATIONS[index % ROTATIONS.length] * 0.62 + (noise(index, 5) - 0.5) * 7;
-      const frame = noise(index, 6) > 0.38 ? "polaroid" : "card";
-      let z = 18 + row * 3 + ((row + col) % 4);
-
-      if ((row + col) % 5 === 0) {
-        centerY -= 1.8;
-        rotate *= 0.78;
-        z += 12;
-      }
-
-      if ((row + col) % 4 === 2) {
-        centerX += col < cols / 2 ? -1.4 : 1.4;
-        centerY += row % 2 === 0 ? 1.2 : -1.2;
-      }
-
-      if (row === 0) centerY -= 4;
-      if (row === rows - 1) centerY += 4;
-      if (col === 0) centerX -= 5;
-      if (col === cols - 1) centerX += 5;
-
-      rotate = clamp(rotate, -14, 14);
-
-      layouts.push({
-        top: `${centerY - height / 2}%`,
-        left: `${centerX - width / 2}%`,
-        width: `${width}%`,
-        height: `${height}%`,
-        rotate,
-        z,
-        frame,
-      });
-    }
-
-    return layouts;
-  }
-
-  const spreadX = mobile ? 88 : 100;
-  const spreadY = mobile ? 82 : 100;
-  const startX = (100 - spreadX) / 2;
-  const startY = (100 - spreadY) / 2;
-  const xCenters = Array.from({ length: cols }, (_, index) =>
-    cols === 1 ? 50 : startX + (index / (cols - 1)) * spreadX
-  );
-  const yCenters = Array.from({ length: rows }, (_, index) =>
-    rows === 1 ? 50 : startY + (index / (rows - 1)) * spreadY
-  );
-  const orders = mobile
-    ? [
-        [0, 2, 3, 1],
-        [3, 1, 0, 2],
-        [1, 3, 2, 0],
-      ]
-    : [
-        [0, 3, 5, 2, 4, 1],
-        [4, 1, 3, 0, 5, 2],
-        [2, 5, 1, 4, 0, 3],
-        [5, 2, 4, 1, 3, 0],
-      ];
-  const layouts = [];
-
-  for (let index = 0; index < count; index++) {
-    const row = Math.floor(index / cols);
-    const order = orders[row % orders.length];
-    const col = order[index % cols];
-    const jitterX = (noise(index, 1) - 0.5) * (mobile ? 15 : 14);
-    const jitterY = (noise(index, 2) - 0.5) * (mobile ? 12 : 13);
-    const sizeNoise = noise(index, 3);
-    const aspectNoise = noise(index, 4);
-    const frameNoise = noise(index, 5);
-    const zNoise = noise(index, 6);
-    const offsetNoise = noise(index, 7);
-    const edgeNoise = noise(index, 8);
-    const rotationBias = ROTATIONS[index % ROTATIONS.length];
-    const driftNoise = noise(index, 13);
-
-    let width;
-    if (sizeNoise > 0.82) width = mobile ? 36 + noise(index, 9) * 6 : 30 + noise(index, 9) * 6;
-    else if (sizeNoise > 0.45) width = mobile ? 29 + noise(index, 10) * 5 : 23 + noise(index, 10) * 5;
-    else width = mobile ? 23 + noise(index, 11) * 4.5 : 18 + noise(index, 11) * 4;
-
-    let height = width * (mobile ? 1.08 + aspectNoise * 0.18 : 1.02 + aspectNoise * 0.22);
-    let centerX = xCenters[col] + jitterX + (row % 2 === 0 ? -5 : 5) + (driftNoise - 0.5) * (mobile ? 8 : 10);
-    let centerY = yCenters[row] + jitterY + (col % 2 === 0 ? -3.5 : 3.5) + (driftNoise - 0.5) * (mobile ? 7 : 8);
-    let rotate = rotationBias + (noise(index, 12) - 0.5) * (mobile ? 10 : 16);
-    let frame = frameNoise > 0.35 ? "polaroid" : "card";
-    let z = 10 + Math.floor(zNoise * 18) + row * 2;
-
-    if (!mobile && index % 9 === 2) {
-      width += 7;
-      height += 8;
-      centerX -= 4;
-      centerY -= 3;
-      rotate = rotationBias * 0.55 + (offsetNoise - 0.5) * 18;
-      z += 24;
-      frame = "card";
-    }
-
-    if (!mobile && index % 11 === 7) {
-      width += 5;
-      height += 6;
-      centerX += 4;
-      centerY += 3;
-      rotate += rotationBias > 0 ? 8 : -8;
-      z += 18;
-    }
-
-    if (mobile && index % 6 === 1) {
-      width += 6;
-      height += 7;
-      rotate = rotationBias * 0.6 + (offsetNoise - 0.5) * 12;
-      centerX += index % 12 === 1 ? -3 : 3;
-      centerY -= 3;
-      z += 16;
-    }
-
-    if (mobile && index % 8 === 4) {
-      width += 4;
-      height += 5;
-      centerY += 3;
-      rotate += rotate > 0 ? 5 : -5;
-      z += 10;
-    }
-
-    if (row === 0) centerY -= mobile ? 6 : 6;
-    if (row === rows - 1) centerY += mobile ? 6 : 6;
-    if (col === 0) centerX -= mobile ? 7 : 6;
-    if (col === cols - 1) centerX += mobile ? 7 : 6;
-
-    if (edgeNoise > 0.76) centerX += col < cols / 2 ? -(mobile ? 7 : 6) : mobile ? 7 : 6;
-    if (edgeNoise < 0.24) centerY += row < rows / 2 ? -(mobile ? 7 : 6) : mobile ? 7 : 6;
-
-    if (index % 5 === 0) rotate *= 1.18;
-    if (index % 7 === 3) rotate += mobile ? -5 : -7;
-    if (index % 8 === 6) rotate += mobile ? 4 : 6;
-    if (Math.abs(rotate) > (mobile ? 11 : 14)) {
-      centerX += rotate > 0 ? 2.5 : -2.5;
-      centerY += index % 2 === 0 ? -1.8 : 1.8;
-    }
-
-    rotate = clamp(rotate, mobile ? -18 : -24, mobile ? 18 : 24);
-
-    const left = centerX - width / 2;
-    const top = centerY - height / 2;
-
-    layouts.push({
-      top: `${top}%`,
-      left: `${left}%`,
-      width: `${width}%`,
-      height: `${height}%`,
-      rotate,
-      z,
-      frame,
-    });
-  }
-
-  return layouts;
 }
 
 function feedbackImageCandidates(raw, width, quality) {
@@ -557,21 +212,52 @@ function feedbackImageCandidates(raw, width, quality) {
   const drive = candidates.filter((url) => /drive\.google\.com\/thumbnail/i.test(url));
   const cdn = candidates.filter((url) => /images\.weserv\.nl/i.test(url));
   const rest = candidates.filter((url) => !drive.includes(url) && !cdn.includes(url));
-  return [...new Set([...drive, ...cdn, ...rest])];
+  return [...new Set([...cdn, ...drive, ...rest])];
 }
 
 function FeedbackProofImage({ item, priority = false, className = "", width, quality }) {
   const raw = String(item?.image || "").trim();
   const candidates = useMemo(() => feedbackImageCandidates(raw, width, quality), [raw, width, quality]);
   const [altIndex, setAltIndex] = useState(0);
+  const [shouldLoad, setShouldLoad] = useState(priority);
+  const [loaded, setLoaded] = useState(false);
+  const imageRef = useRef(null);
   const current = candidates[altIndex] || raw || FALLBACK_IMAGE;
 
   useEffect(() => {
     setAltIndex(0);
+    setLoaded(false);
   }, [raw, width, quality]);
 
+  useEffect(() => {
+    if (priority) {
+      setShouldLoad(true);
+      return undefined;
+    }
+
+    const node = imageRef.current;
+    if (!node || typeof IntersectionObserver !== "function") {
+      setShouldLoad(true);
+      return undefined;
+    }
+
+    setShouldLoad(false);
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        setShouldLoad(true);
+        observer.disconnect();
+      },
+      { rootMargin: "320px 0px", threshold: 0.01 }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [priority, raw]);
+
   const onError = (event) => {
+    if (!shouldLoad) return;
     if (altIndex + 1 < candidates.length) {
+      setLoaded(false);
       setAltIndex((index) => index + 1);
       return;
     }
@@ -581,37 +267,31 @@ function FeedbackProofImage({ item, priority = false, className = "", width, qua
   };
 
   return (
-    <img
-      src={current}
-      alt={item?.productName || item?.categoryLabel || "Feedback khach hang"}
-      className={className}
-      loading={priority ? "eager" : "lazy"}
-      fetchpriority={priority ? "high" : "low"}
-      decoding="async"
-      referrerPolicy="no-referrer"
-      width={width}
-      height={width}
-      onError={onError}
-    />
+    <div className="relative h-full w-full overflow-hidden">
+      {!loaded ? <div className="skeleton absolute inset-0" aria-hidden="true" /> : null}
+      <img
+        ref={imageRef}
+        src={shouldLoad ? current : TRANSPARENT_IMAGE}
+        alt={item?.productName || item?.categoryLabel || "Feedback khach hang"}
+        className={`${className} transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
+        loading={shouldLoad ? "eager" : "lazy"}
+        fetchpriority={priority ? "high" : "low"}
+        decoding="async"
+        referrerPolicy="no-referrer"
+        width={width}
+        height={width}
+        onLoad={() => {
+          if (shouldLoad) setLoaded(true);
+        }}
+        onError={onError}
+      />
+    </div>
   );
 }
 
 function ProofImage({ item, priority = false, className = "", variant = "card" }) {
   const imageWidth = variant === "hover" ? FEEDBACK_HOVER_IMAGE_WIDTH : FEEDBACK_CARD_IMAGE_WIDTH;
   const imageQuality = variant === "hover" ? FEEDBACK_HOVER_IMAGE_QUALITY : FEEDBACK_CARD_IMAGE_QUALITY;
-
-  if (item?.product) {
-    return (
-      <ProductImage
-        product={item.product}
-        priority={priority}
-        lqip={false}
-        className={className}
-        w={imageWidth}
-        q={imageQuality}
-      />
-    );
-  }
 
   return (
     <FeedbackProofImage
@@ -625,7 +305,7 @@ function ProofImage({ item, priority = false, className = "", variant = "card" }
 }
 
 function PopupProofImage({ item, imageHint }) {
-  const raw = String(item?.image || (item?.product ? firstImg(item.product) : "") || "").trim();
+  const raw = String(item?.image || "").trim();
   const candidates = useMemo(() => {
     const hinted = String(imageHint?.src || "").trim();
     return [...new Set([...feedbackImageCandidates(raw, FEEDBACK_LIGHTBOX_IMAGE_WIDTH, 74), hinted].filter(Boolean))];
@@ -717,7 +397,16 @@ function previewStyleFor(layout, mobile = false) {
   };
 }
 
-function CollageCard({ item, layout, index, hoveredIndex, setHoveredIndex, onOpen, enableHover = true }) {
+function CollageCard({
+  item,
+  layout,
+  index,
+  hoveredIndex,
+  setHoveredIndex,
+  onOpen,
+  enableHover = true,
+  priority = false,
+}) {
   const isHovered = enableHover && hoveredIndex === index;
   const isDimmed = enableHover && hoveredIndex !== null && !isHovered;
   const frame = buildFrameClasses(layout.frame);
@@ -727,6 +416,7 @@ function CollageCard({ item, layout, index, hoveredIndex, setHoveredIndex, onOpe
 
   return (
     <button
+      data-feedback-card=""
       type="button"
       onClick={(event) => {
         const image = event.currentTarget.querySelector("img");
@@ -759,7 +449,7 @@ function CollageCard({ item, layout, index, hoveredIndex, setHoveredIndex, onOpe
       aria-label={`Mo anh feedback ${index + 1}`}
     >
       <div className={`relative h-full w-full overflow-hidden bg-slate-100 ${frame.inner}`}>
-        <ProofImage item={item} className="h-full w-full object-cover" />
+        <ProofImage item={item} priority={priority} className="h-full w-full object-cover" />
       </div>
     </button>
   );
@@ -786,8 +476,13 @@ function HoverPreview({ item, layout, mobile = false }) {
 
 function Lightbox({ item, imageHint, canNavigate, onClose, onPrev, onNext }) {
   const swipeStartRef = useRef(null);
+  const dialogRef = useRef(null);
+  const closeButtonRef = useRef(null);
+  const previousFocusRef = useRef(null);
 
   useEffect(() => {
+    previousFocusRef.current = document.activeElement;
+    const focusId = requestAnimationFrame(() => closeButtonRef.current?.focus());
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
@@ -795,12 +490,29 @@ function Lightbox({ item, imageHint, canNavigate, onClose, onPrev, onNext }) {
       if (event.key === "Escape") onClose();
       if (canNavigate && event.key === "ArrowLeft") onPrev();
       if (canNavigate && event.key === "ArrowRight") onNext();
+      if (event.key === "Tab") {
+        const focusable = [...(dialogRef.current?.querySelectorAll(
+          'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+        ) || [])];
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => {
+      cancelAnimationFrame(focusId);
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKeyDown);
+      if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus();
     };
   }, [canNavigate, onClose, onPrev, onNext]);
 
@@ -837,10 +549,12 @@ function Lightbox({ item, imageHint, canNavigate, onClose, onPrev, onNext }) {
 
   return (
     <div
+      ref={dialogRef}
       className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/82 p-3 backdrop-blur-sm"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
+      aria-label="Ảnh feedback khách hàng"
     >
       <div
         data-feedback-lightbox-frame=""
@@ -850,6 +564,7 @@ function Lightbox({ item, imageHint, canNavigate, onClose, onPrev, onNext }) {
         onTouchEnd={onTouchEnd}
       >
         <button
+          ref={closeButtonRef}
           type="button"
           onClick={onClose}
           className="absolute -right-3 -top-3 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-white/95 text-xl text-slate-700 shadow-[0_12px_28px_rgba(15,23,42,0.2)] transition hover:text-slate-950"
@@ -910,10 +625,33 @@ function useCanHover() {
   return canHover;
 }
 
+function useDesktopLayout() {
+  const [desktop, setDesktop] = useState(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return true;
+    return window.matchMedia("(min-width: 768px)").matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return undefined;
+
+    const media = window.matchMedia("(min-width: 768px)");
+    const update = () => setDesktop(media.matches);
+    update();
+
+    if (media.addEventListener) {
+      media.addEventListener("change", update);
+      return () => media.removeEventListener("change", update);
+    }
+
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, []);
+
+  return desktop;
+}
+
 export default function SocialProofSection({
   entries = [],
-  products = [],
-  categoryTitleMap = {},
 }) {
   const [visitSeed] = useState(makeVisitSeed);
   const [runtimeFeedbackEntries, setRuntimeFeedbackEntries] = useState(() => readRuntimeFeedbackEntries());
@@ -925,25 +663,36 @@ export default function SocialProofSection({
 
   const sourceEntries = runtimeFeedbackEntries.length ? runtimeFeedbackEntries : entries;
   const items = useMemo(
-    () => buildDisplayItems(sourceEntries, products, categoryTitleMap, { fillWithProducts: runtimeFeedbackEntries.length === 0 }),
-    [sourceEntries, products, categoryTitleMap, runtimeFeedbackEntries.length]
+    () => buildFeedbackDisplayItems(sourceEntries, DEMO_COUNT),
+    [sourceEntries]
   );
   const [hoveredDesktopIndex, setHoveredDesktopIndex] = useState(null);
   const [selectedIndex, setSelectedIndex] = useState(null);
   const [selectedPool, setSelectedPool] = useState("desktop");
   const [selectedImageHint, setSelectedImageHint] = useState(null);
   const canHover = useCanHover();
+  const desktopLayout = useDesktopLayout();
 
-  const desktopItems = useMemo(() => buildCollageItems(items, DESKTOP_CARD_COUNT, visitSeed + 101), [items, visitSeed]);
-  const mobileItems = useMemo(() => buildCollageItems(items, MOBILE_CARD_COUNT, visitSeed + 202), [items, visitSeed]);
-  const desktopLayouts = useMemo(() => createCollageLayouts(DESKTOP_CARD_COUNT, false, visitSeed + 303), [visitSeed]);
-  const mobileLayouts = useMemo(() => createCollageLayouts(MOBILE_CARD_COUNT, true, visitSeed + 404), [visitSeed]);
+  const desktopItems = useMemo(
+    () => desktopLayout ? buildCollageItems(items, DESKTOP_CARD_COUNT, visitSeed + 101) : [],
+    [desktopLayout, items, visitSeed]
+  );
+  const mobileItems = useMemo(
+    () => desktopLayout ? [] : buildCollageItems(items, MOBILE_CARD_COUNT, visitSeed + 202),
+    [desktopLayout, items, visitSeed]
+  );
+  const desktopLayouts = useMemo(
+    () => desktopLayout ? createCollageLayouts(DESKTOP_CARD_COUNT, false, visitSeed + 303) : [],
+    [desktopLayout, visitSeed]
+  );
+  const mobileLayouts = useMemo(
+    () => desktopLayout ? [] : createCollageLayouts(MOBILE_CARD_COUNT, true, visitSeed + 404),
+    [desktopLayout, visitSeed]
+  );
   const hoveredDesktopItem = hoveredDesktopIndex === null ? null : desktopItems[hoveredDesktopIndex] || null;
   const hoveredDesktopLayout = hoveredDesktopIndex === null ? null : desktopLayouts[hoveredDesktopIndex] || null;
   const selectedItems = selectedPool === "mobile" ? mobileItems : desktopItems;
   const selectedItem = selectedIndex === null ? null : selectedItems[selectedIndex] || null;
-
-  if (!items.length) return null;
 
   const openDesktopLightbox = (index, imageHint = null) => {
     setSelectedPool("desktop");
@@ -955,18 +704,20 @@ export default function SocialProofSection({
     setSelectedImageHint(imageHint);
     setSelectedIndex(index);
   };
-  const closeLightbox = () => {
+  const closeLightbox = useCallback(() => {
     setSelectedIndex(null);
     setSelectedImageHint(null);
-  };
-  const showPrev = () => {
+  }, []);
+  const showPrev = useCallback(() => {
     setSelectedImageHint(null);
     setSelectedIndex((current) => (current === null ? null : (current - 1 + selectedItems.length) % selectedItems.length));
-  };
-  const showNext = () => {
+  }, [selectedItems.length]);
+  const showNext = useCallback(() => {
     setSelectedImageHint(null);
     setSelectedIndex((current) => (current === null ? null : (current + 1) % selectedItems.length));
-  };
+  }, [selectedItems.length]);
+
+  if (!items.length) return null;
 
   return (
     <section className="max-w-6xl mx-auto px-4 py-6 md:py-8">
@@ -975,12 +726,6 @@ export default function SocialProofSection({
       </div>
 
       <div className="relative z-0 isolate overflow-hidden rounded-[34px] border border-slate-200/70 bg-[radial-gradient(circle_at_top,#ffffff_0%,#f4fbff_58%,#eef7fb_100%)] px-4 py-5 shadow-[0_18px_48px_rgba(148,163,184,0.08)] sm:px-6 md:px-8 md:py-7">
-        <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          <div className="absolute left-[-7rem] top-10 h-36 w-36 rounded-full bg-white/70 blur-3xl md:h-52 md:w-52" />
-          <div className="absolute right-[-5rem] top-20 h-40 w-40 rounded-full bg-sky-100/60 blur-3xl md:h-56 md:w-56" />
-          <div className="absolute bottom-8 left-1/2 h-28 w-[56%] -translate-x-1/2 rounded-full bg-white/80 blur-3xl" />
-        </div>
-
         <div className="relative hidden md:block">
           <div className="relative mx-auto aspect-square w-full max-w-[980px]">
             {desktopItems.map((item, index) => (
@@ -993,6 +738,7 @@ export default function SocialProofSection({
                 setHoveredIndex={setHoveredDesktopIndex}
                 onOpen={openDesktopLightbox}
                 enableHover={canHover}
+                priority={index < 6}
               />
             ))}
             {canHover && hoveredDesktopItem && hoveredDesktopLayout ? (
@@ -1013,6 +759,7 @@ export default function SocialProofSection({
                 setHoveredIndex={() => {}}
                 onOpen={openMobileLightbox}
                 enableHover={false}
+                priority={index < 4}
               />
             ))}
           </div>

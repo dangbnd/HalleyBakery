@@ -74,6 +74,225 @@
   .skeleton { animation: none; }
 }
 
+.storefront-watercolor {
+  position: relative;
+  isolation: isolate;
+  background-color: rgb(158, 159, 172);
+}
+
+.storefront-watercolor::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-color: rgb(158, 159, 172);
+  background-image: url("/hero/halley-watercolor-sky.webp");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  pointer-events: none;
+}
+
+/* ----- Homepage five-card diagonal ribbon ----- */
+.hero-ribbon-shell {
+  width: 100%;
+  max-width: 72rem;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+
+.hero-ribbon {
+  position: relative;
+  width: 100%;
+  height: clamp(560px, calc(100svh - 148px), 820px);
+  min-height: 560px;
+  overflow: hidden;
+  isolation: isolate;
+  background: transparent;
+}
+
+.hero-ribbon-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: transparent;
+  pointer-events: none;
+}
+
+.hero-ribbon-backdrop::before,
+.hero-ribbon-backdrop::after {
+  display: none;
+}
+
+.hero-ribbon-backdrop::before {
+  background: rgba(239, 204, 217, 0.72);
+  clip-path: polygon(0 0, 61% 0, 34% 100%, 0 100%);
+}
+
+.hero-ribbon-backdrop::after {
+  background: rgba(199, 231, 233, 0.72);
+  clip-path: polygon(55% 0, 100% 0, 100% 100%, 78% 100%);
+}
+
+.hero-ribbon-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.hero-ribbon-scene,
+.hero-ribbon-track {
+  position: absolute;
+  inset: 0;
+}
+
+.hero-ribbon-scene {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.hero-ribbon-scene.is-pending {
+  z-index: 3;
+}
+
+.hero-ribbon-track {
+  left: 50%;
+  width: min(100%, 1700px);
+  transform: translateX(-50%);
+}
+
+.hero-ribbon-card {
+  position: absolute;
+  top: var(--hero-card-y);
+  left: var(--hero-card-x);
+  z-index: var(--hero-card-z);
+  display: block;
+  width: min(var(--hero-card-width), var(--hero-card-max));
+  aspect-ratio: var(--hero-card-ratio, 0.8);
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow:
+    0 25px 48px rgba(65, 53, 60, 0.2),
+    0 7px 16px rgba(65, 53, 60, 0.11);
+  transform: translate3d(0, 0, 0) rotate(var(--hero-card-rotation));
+  transform-origin: center;
+  transition:
+    opacity 420ms ease-out,
+    transform 900ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 180ms ease;
+  transition-delay: var(--hero-card-delay);
+  backface-visibility: hidden;
+  will-change: transform, opacity;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.hero-ribbon-card:hover {
+  z-index: 20;
+  box-shadow:
+    0 30px 58px rgba(65, 53, 60, 0.24),
+    0 9px 18px rgba(65, 53, 60, 0.13);
+  transform: translate3d(0, -5px, 0) rotate(var(--hero-card-rotation)) scale(1.012);
+}
+
+.hero-ribbon-card:focus-visible {
+  z-index: 21;
+  outline: 3px solid #e11d48;
+  outline-offset: 4px;
+}
+
+.hero-ribbon-image,
+.hero-ribbon-card-skeleton {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.hero-ribbon-card-skeleton {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.hero-ribbon-image {
+  object-fit: fill;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 260ms ease;
+  user-select: none;
+}
+
+.hero-ribbon-image.is-loaded {
+  opacity: 1;
+}
+
+.hero-ribbon-scene.is-pending .hero-ribbon-card {
+  opacity: 0;
+  transform:
+    translate3d(-42%, -30%, 0)
+    rotate(calc(var(--hero-card-rotation) - 8deg))
+    scale(0.92);
+  pointer-events: none;
+}
+
+.hero-ribbon-scene.is-pending.is-entering .hero-ribbon-card {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) rotate(var(--hero-card-rotation)) scale(1);
+}
+
+.hero-ribbon.is-transitioning .hero-ribbon-scene.is-current .hero-ribbon-card {
+  opacity: 0;
+  transform:
+    translate3d(38%, 28%, 0)
+    rotate(calc(var(--hero-card-rotation) + 6deg))
+    scale(0.96);
+  transition-delay: var(--hero-card-exit-delay);
+  pointer-events: none;
+}
+
+@media (max-width: 767px) {
+  .hero-ribbon {
+    height: clamp(520px, calc(100svh - 118px), 720px);
+    min-height: 520px;
+  }
+
+  .hero-ribbon-track {
+    width: 100%;
+  }
+
+  .hero-ribbon-card {
+    width: var(--hero-card-width);
+    box-shadow:
+      0 18px 34px rgba(65, 53, 60, 0.19),
+      0 5px 12px rgba(65, 53, 60, 0.1);
+  }
+}
+
+@media (max-width: 767px) and (orientation: landscape) {
+  .hero-ribbon {
+    height: 500px;
+    min-height: 500px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-ribbon-card,
+  .hero-ribbon-image {
+    animation: none !important;
+    transition-duration: 80ms !important;
+    transition-delay: 0ms !important;
+  }
+
+  .hero-ribbon-card:hover {
+    transform: translate3d(0, 0, 0) rotate(var(--hero-card-rotation));
+  }
+}
+
 /* ----- Dark bridge cho các panel admin legacy chưa refactor sâu ----- */
 .legacy-admin-dark {
   color: #e2e8f0;
