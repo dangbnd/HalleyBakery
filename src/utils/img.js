@@ -1,3 +1,19 @@
+const MEDIA_CACHE_BASE = (
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_MEDIA_CACHE_URL) ||
+  "https://img.halley.io.vn"
+).replace(/\/+$/, "");
+
+export function driveIdOf(raw = "") {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  const m =
+    s.match(/\/file\/d\/([A-Za-z0-9_-]+)/) ||
+    s.match(/\/d\/([A-Za-z0-9_-]+)/) ||
+    s.match(/[?&]id=([A-Za-z0-9_-]+)/) ||
+    s.match(/uc\?[^#?]*id=([A-Za-z0-9_-]+)/);
+  return m ? m[1] : "";
+}
+
 // src/utils/img.js — Hàm xử lý ảnh tập trung (gom từ ProductImage, ProductQuickView, sheets.js, sheets.multi.js)
 
 /**
@@ -67,6 +83,10 @@ export const prefetchImage = (u) => {
  */
 export const mkSrcSet = (raw, maxW = 960, h = 0, q = 65) => {
   const steps = [...new Set([320, 480, 720, maxW].filter((w) => w > 0 && w <= maxW))];
+  const driveId = driveIdOf(raw);
+  if (driveId && MEDIA_CACHE_BASE) {
+    return steps.map((w) => `${MEDIA_CACHE_BASE}/img/${driveId}?w=${w} ${w}w`).join(", ");
+  }
   return steps.map((w) => `${cdn(raw, { w, h: h ? Math.round((h * w) / maxW) : 0, q })} ${w}w`).join(", ");
 };
 
@@ -77,11 +97,13 @@ export const candidatesFor = (raw = "", w = 600, h = 0, q = 65) => {
   const out = [];
   if (!raw) return out;
   const https = raw.replace(/^http:\/\//i, "https://");
+  const driveId = driveIdOf(https);
+  if (driveId) {
+    if (MEDIA_CACHE_BASE) out.push(`${MEDIA_CACHE_BASE}/img/${driveId}?w=${w}`);
+    out.push(`https://drive.google.com/thumbnail?id=${driveId}&sz=w${w}`);
+    out.push(`https://lh3.googleusercontent.com/d/${driveId}=w${w}`);
+  }
   out.push(cdn(https, { w, h, q }));
-  const m1 = https.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-  if (m1) out.push(`https://drive.google.com/thumbnail?id=${m1[1]}&sz=w${w}`);
-  const m2 = https.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  if (m2) out.push(`https://drive.google.com/thumbnail?id=${m2[1]}&sz=w${w}`);
   out.push(https);
   return [...new Set(out)];
 };

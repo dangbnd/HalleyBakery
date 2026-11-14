@@ -17,15 +17,16 @@ export default function ProductList({
   trackingContext = {},
   initialCount = PAGE_SIZE,
   pageSize = PAGE_SIZE,
+  resetKey,
 }) {
   const firstPageSize = Math.max(1, Number(initialCount) || PAGE_SIZE);
   const nextPageSize = Math.max(1, Number(pageSize) || PAGE_SIZE);
   const [visibleCount, setVisibleCount] = useState(firstPageSize);
   const sentinelRef = useRef(null);
 
-  // P2: chỉ reset visibleCount khi danh sách sản phẩm thực sự thay đổi (so IDs)
   const prodKey = useMemo(() => (products || []).map(pidOf).join(","), [products]);
-  useEffect(() => { setVisibleCount(firstPageSize); }, [prodKey, firstPageSize]);
+  const effectiveResetKey = resetKey !== undefined ? resetKey : prodKey;
+  useEffect(() => { setVisibleCount(firstPageSize); }, [effectiveResetKey, firstPageSize]);
 
   const visible = products.slice(0, visibleCount);
   const hasMore = visibleCount < products.length;

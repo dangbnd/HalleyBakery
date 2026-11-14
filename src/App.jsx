@@ -2114,6 +2114,7 @@ export default function App() {
           {list.length > 0 ? (
             <ProductList
               products={list}
+              resetKey={listKey}
               onImageClick={openQuick}
               filter={filterState}
               isFavorite={isFavorite}

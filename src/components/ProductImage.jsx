@@ -20,6 +20,7 @@ export default function ProductImage({
   const [altIdx, setAltIdx] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const loadedRef = useRef(false);
+  const imgRef = useRef(null);
   const handleLoad = () => { if (!loadedRef.current) { loadedRef.current = true; setLoaded(true); } };
 
   const cands = useMemo(() => candidatesFor(primaryRaw, w, h, q), [primaryRaw, w, h, q]);
@@ -31,8 +32,9 @@ export default function ProductImage({
 
   useEffect(() => {
     setAltIdx(0);
-    setLoaded(false);
-    loadedRef.current = false;
+    const ready = !!(imgRef.current?.complete && imgRef.current.naturalWidth > 0);
+    loadedRef.current = ready;
+    setLoaded(ready);
   }, [primaryRaw]);
 
   const onErr = (e) => {
@@ -64,6 +66,7 @@ export default function ProductImage({
     <div className={"relative w-full h-full"}>
       {!loaded && <div className="absolute inset-0 bg-gray-100" aria-hidden="true" />}
       <img
+        ref={imgRef}
         src={cur}
         srcSet={srcset}
         sizes={sizes}

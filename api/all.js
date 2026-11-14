@@ -8,8 +8,8 @@ import { coercePriceBySizeMap, normalizeSizeKey } from "../src/lib/pricing.js";
 import { tagKey, toTagArray } from "../src/utils/tagKey.js";
 import { readPublicRuntimeConfig } from "./runtime-config.js";
 
-const CACHE_TTL_MS = 30 * 1000; // fresh 30s
-const STALE_MS = 0; // do not serve stale catalog data during normal refreshes
+const CACHE_TTL_MS = 60 * 1000; // fresh 60s
+const STALE_MS = 5 * 60 * 1000; // serve stale immediately while refreshing in background
 const MAX_ERROR_STALE_MS = 2 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 7000;
 const CACHE_ROOT =
@@ -673,10 +673,17 @@ function refreshCache(key, cfg) {
 }
 
 export default async function handler(req, res) {
+  const reqUrl = new URL(req?.url || "/api/all", "http://localhost");
+  const isForced = isTruthy(reqUrl.searchParams.get("force"));
+  const isMeta = isTruthy(reqUrl.searchParams.get("meta"));
   res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Cache-Control", "no-store, no-cache, max-age=0, must-revalidate");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
+  if (!isForced && !isMeta) {
+    res.setHeader("Cache-Control", "public, s-maxage=60, stale-while-revalidate=300");
+  } else {
+    res.setHeader("Cache-Control", "no-store, no-cache, max-age=0, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
 
   let cfg = cfgFromRequest(req);
   try {
