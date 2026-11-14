@@ -1377,8 +1377,8 @@ export default function App() {
     if (!sort) out = [...out].sort(cmpDefault);
     else if (sort === "price-asc") out = [...out].sort((a, b) => (priceMinOf(a) ?? Infinity) - (priceMinOf(b) ?? Infinity));
     else if (sort === "price-desc") out = [...out].sort((a, b) => (priceMinOf(b) ?? -Infinity) - (priceMinOf(a) ?? -Infinity));
-    else if (sort === "name-asc") out = [...out].sort((a, b) => cmpNameNatural(a.name, b.name));
-    else if (sort === "name-desc") out = [...out].sort((a, b) => cmpNameNatural(b.name, a.name));
+    else if (sort === "name-asc") out = [...out].sort((a, b) => cmpNameNatural(a.displayName || a.name, b.displayName || b.name));
+    else if (sort === "name-desc") out = [...out].sort((a, b) => cmpNameNatural(b.displayName || b.name, a.displayName || a.name));
     else if (sort === "newest") out = [...out].sort((a, b) => productCreatedTime(b) - productCreatedTime(a) || cmpGrid(a, b));
     else if (sort === "popular") out = [...out].sort((a, b) => (b.popular || 0) - (a.popular || 0));
     return out;
