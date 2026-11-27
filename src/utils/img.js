@@ -6,12 +6,23 @@ const MEDIA_CACHE_BASE = (
 export function driveIdOf(raw = "") {
   const s = String(raw || "").trim();
   if (!s) return "";
+  // Do not treat local Ubuntu media IDs (loc_*) as Google Drive file IDs
+  if (/\/img\/loc_[A-Za-z0-9_-]+/.test(s)) return "";
   const m =
     s.match(/\/file\/d\/([A-Za-z0-9_-]+)/) ||
     s.match(/\/d\/([A-Za-z0-9_-]+)/) ||
     s.match(/[?&]id=([A-Za-z0-9_-]+)/) ||
     s.match(/uc\?[^#?]*id=([A-Za-z0-9_-]+)/);
+  if (m && m[1].startsWith("loc_")) return "";
   return m ? m[1] : "";
+}
+
+export function mediaCacheIdOf(raw = "") {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  const localMatch = s.match(/\/img\/([A-Za-z0-9_-]{4,80})(?:[/?#]|$)/);
+  if (localMatch) return localMatch[1];
+  return driveIdOf(s);
 }
 
 // src/utils/img.js — Hàm xử lý ảnh tập trung (gom từ ProductImage, ProductQuickView, sheets.js, sheets.multi.js)
@@ -39,17 +50,22 @@ export const cdn = (raw = "", { w = 600, h = 0, q = 65 } = {}) => {
  * CDN thumbnail nhỏ (cho danh sách gợi ý, grid thumbnail)
  */
 export const cdnThumb = (raw = "", w = 96, h = 96, q = 65) => {
-  const driveId = driveIdOf(raw);
-  if (driveId && MEDIA_CACHE_BASE) return `${MEDIA_CACHE_BASE}/img/${driveId}?w=${Math.max(320, Number(w) || 320)}`;
+  const mediaId = mediaCacheIdOf(raw);
+  if (mediaId && MEDIA_CACHE_BASE) return `${MEDIA_CACHE_BASE}/img/${mediaId}?w=${Math.max(320, Number(w) || 320)}`;
   return cdn(raw, { w, h, q });
 };
 
 /**
- * Chuẩn hoá URL ảnh từ Google Drive / đường dẫn tương đối
+ * Chuẩn hoá URL ảnh từ Ubuntu Media / Google Drive / đường dẫn tương đối
  */
 export function normalizeImageUrl(u, maxWidth = 2048) {
   if (!u) return "";
-  const s = String(u).trim();
+  const s = String(u).trim().replace(/^\[\s*"?|"+\s*\]$/g, "").replace(/^"+|"+$/g, "").trim();
+  if (!s) return "";
+  const localMatch = s.match(/\/img\/([A-Za-z0-9_-]{4,80})(?:[/?#]|$)/);
+  if (localMatch && MEDIA_CACHE_BASE) {
+    return `${MEDIA_CACHE_BASE}/img/${localMatch[1]}?w=${Math.min(1200, Math.max(320, Number(maxWidth) || 720))}`;
+  }
   const m =
     s.match(/\/file\/d\/([A-Za-z0-9_-]+)/) ||
     s.match(/\/d\/([A-Za-z0-9_-]+)/) ||
@@ -86,23 +102,26 @@ export const prefetchImage = (u) => {
  */
 export const mkSrcSet = (raw, maxW = 960, h = 0, q = 65) => {
   const steps = [...new Set([320, 480, 720, maxW].filter((w) => w > 0 && w <= maxW))];
-  const driveId = driveIdOf(raw);
-  if (driveId && MEDIA_CACHE_BASE) {
-    return steps.map((w) => `${MEDIA_CACHE_BASE}/img/${driveId}?w=${w} ${w}w`).join(", ");
+  const mediaId = mediaCacheIdOf(raw);
+  if (mediaId && MEDIA_CACHE_BASE) {
+    return steps.map((w) => `${MEDIA_CACHE_BASE}/img/${mediaId}?w=${w} ${w}w`).join(", ");
   }
   return steps.map((w) => `${cdn(raw, { w, h: h ? Math.round((h * w) / maxW) : 0, q })} ${w}w`).join(", ");
 };
 
 /**
- * Danh sách URL dự phòng khi CDN lỗi (CDN → Drive thumbnail → gốc)
+ * Danh sách URL dự phòng khi CDN lỗi (Ubuntu SSD → Drive thumbnail → CDN → gốc)
  */
 export const candidatesFor = (raw = "", w = 600, h = 0, q = 65) => {
   const out = [];
   if (!raw) return out;
-  const https = raw.replace(/^http:\/\//i, "https://");
+  const https = String(raw).trim().replace(/^http:\/\//i, "https://");
   const driveId = driveIdOf(https);
+  const mediaId = mediaCacheIdOf(https);
+  if (mediaId && MEDIA_CACHE_BASE) {
+    out.push(`${MEDIA_CACHE_BASE}/img/${mediaId}?w=${w}`);
+  }
   if (driveId) {
-    if (MEDIA_CACHE_BASE) out.push(`${MEDIA_CACHE_BASE}/img/${driveId}?w=${w}`);
     out.push(`https://drive.google.com/thumbnail?id=${driveId}&sz=w${w}`);
     out.push(`https://lh3.googleusercontent.com/d/${driveId}=w${w}`);
   }

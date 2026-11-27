@@ -8,10 +8,13 @@ import { coercePriceBySizeMap, normalizeSizeKey } from "../src/lib/pricing.js";
 import { tagKey, toTagArray } from "../src/utils/tagKey.js";
 import { readPublicRuntimeConfig } from "./runtime-config.js";
 
-const CACHE_TTL_MS = 60 * 1000; // fresh 60s
-const STALE_MS = 5 * 60 * 1000; // serve stale immediately while refreshing in background
+const CACHE_TTL_MS = 15 * 1000; // fresh 15s (Ubuntu master is < 5ms)
+const STALE_MS = 60 * 1000; // serve stale immediately while refreshing in background
 const MAX_ERROR_STALE_MS = 2 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 7000;
+const UBUNTU_CATALOG_URL = String(
+  process.env.UBUNTU_CATALOG_URL || "https://img.halley.io.vn/catalog/all"
+).trim();
 const CACHE_ROOT =
   process.env.VERCEL_DEV === "1"
     ? join(process.cwd(), ".cache")
@@ -645,9 +648,49 @@ export function preserveFailedSections(nextData = {}, previousData = {}) {
   return next;
 }
 
-function refreshCache(key, cfg) {
+async function loadUnifiedFromUbuntu({ force = false } = {}) {
+  if (!UBUNTU_CATALOG_URL) throw new Error("Missing UBUNTU_CATALOG_URL");
+  const u = new URL(UBUNTU_CATALOG_URL);
+  if (force) {
+    u.searchParams.set("force", "1");
+    u.searchParams.set("_hb", String(Date.now()));
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4500);
+  try {
+    const res = await fetch(u.toString(), {
+      signal: controller.signal,
+      headers: { Accept: "application/json", "User-Agent": "HalleyBakeryVercel/2.0" },
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`Ubuntu catalog HTTP ${res.status}`);
+    const payload = await res.json();
+    if (!payload?.ok || !Array.isArray(payload.products) || payload.products.length === 0) {
+      throw new Error("Ubuntu catalog empty");
+    }
+    const { ok: _ok, _meta, ...data } = payload;
+    return deriveCatalogMetadata({ ...data, _source: _meta?.source || "ubuntu-sqlite" });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function loadPrimaryUnifiedData(cfg, { force = false } = {}) {
+  const useCustomLocalSheet = cfg.requestedSheetId && cfg.requestedSheetId !== cfg.configuredSheetId;
+  if (!useCustomLocalSheet && UBUNTU_CATALOG_URL) {
+    try {
+      return await loadUnifiedFromUbuntu({ force });
+    } catch (ubuntuErr) {
+      if (!cfg.sheetId) throw ubuntuErr;
+      console.warn("[api/all] Ubuntu primary unreachable, falling back to Google Sheet backup:", ubuntuErr?.message || ubuntuErr);
+    }
+  }
+  return loadUnifiedFromSheet(cfg);
+}
+
+function refreshCache(key, cfg, opts = {}) {
   if (INFLIGHT.has(key)) return INFLIGHT.get(key);
-  const p = loadUnifiedFromSheet(cfg)
+  const p = loadPrimaryUnifiedData(cfg, opts)
     .then((data) => {
       const current = CACHE.get(key);
       if (shouldRejectRefresh(data, current)) {
@@ -678,7 +721,7 @@ export default async function handler(req, res) {
   const isMeta = isTruthy(reqUrl.searchParams.get("meta"));
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   if (!isForced && !isMeta) {
-    res.setHeader("Cache-Control", "public, s-maxage=60, stale-while-revalidate=300");
+    res.setHeader("Cache-Control", "public, s-maxage=15, stale-while-revalidate=60");
   } else {
     res.setHeader("Cache-Control", "no-store, no-cache, max-age=0, must-revalidate");
     res.setHeader("Pragma", "no-cache");
@@ -687,17 +730,16 @@ export default async function handler(req, res) {
 
   let cfg = cfgFromRequest(req);
   try {
-    cfg = await cfgWithRuntime(req);
     if (cfg.configuredSheetId && cfg.requestedSheetId && cfg.requestedSheetId !== cfg.configuredSheetId) {
       return res.status(403).json({ ok: false, error: "Sheet is not allowed" });
     }
-    const key = cacheKey(cfg);
+    const key = UBUNTU_CATALOG_URL ? `ubuntu-master:${cfg.sheetId || "default"}` : cacheKey(cfg);
     const now = Date.now();
 
     const force = shouldForceRefresh(req.query || {});
     const metaOnly = isTruthy(req.query?.meta);
 
-    if (!cfg.sheetId) {
+    if (!cfg.sheetId && !UBUNTU_CATALOG_URL) {
       return res.status(400).json({ ok: false, error: "Missing sheetId" });
     }
 
@@ -715,12 +757,13 @@ export default async function handler(req, res) {
         return res.status(200).json(withMeta(hit, { fromCache: true, metaOnly }));
       }
       if (STALE_MS > 0 && age <= CACHE_TTL_MS + STALE_MS) {
-        refreshCache(key, cfg).catch(() => {});
+        refreshCache(key, cfg, { force: false }).catch(() => {});
         return res.status(200).json(withMeta(hit, { fromCache: true, stale: true, metaOnly }));
       }
     }
 
-    const refreshed = await refreshCache(key, cfg);
+    if (!UBUNTU_CATALOG_URL) cfg = await cfgWithRuntime(req);
+    const refreshed = await refreshCache(key, cfg, { force });
     return res.status(200).json(withMeta(refreshed, { fromCache: false, metaOnly }));
   } catch (e) {
     const key = cacheKey(cfg);

@@ -108,9 +108,37 @@ function parseProductTabs(raw = "", gidFallback = "") {
     return dedup;
 }
 
+const UBUNTU_CATALOG_URL = String(process.env.UBUNTU_CATALOG_URL || "https://img.halley.io.vn/catalog/all").trim();
+
 async function loadData() {
     const now = Date.now();
-    if (cachedProducts && now - cacheTime < CACHE_TTL) return;
+    if (cachedProducts && now - cacheTime < 60 * 1000) return;
+
+    // 1. Primary: Ubuntu Master Catalog
+    if (UBUNTU_CATALOG_URL) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4000);
+        try {
+            const res = await fetch(UBUNTU_CATALOG_URL, {
+                signal: controller.signal,
+                headers: { Accept: "application/json", "User-Agent": "HalleyBakeryOG/2.0" },
+            });
+            if (res.ok) {
+                const payload = await res.json();
+                if (Array.isArray(payload?.products) && payload.products.length > 0) {
+                    cachedProducts = payload.products;
+                    cachedMenu = Array.isArray(payload.menu) ? payload.menu : [];
+                    cacheTime = now;
+                    return;
+                }
+            }
+        } catch {
+            // Fall through to Google Sheet backup
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
     if (!SHEET_ID) {
         cachedProducts = [];
         cachedMenu = [];
@@ -118,7 +146,7 @@ async function loadData() {
         return;
     }
 
-    // Fetch sÃ¡ÂºÂ£n phÃ¡ÂºÂ©m tÃ¡Â»Â« tÃ¡ÂºÂ¥t cÃ¡ÂºÂ£ tab
+    // 2. Fallback: Google Sheet backup
     const tabs = parseProductTabs(PRODUCT_TABS, PRODUCTS_GID_FALLBACK);
 
     const results = await Promise.allSettled(
@@ -141,10 +169,12 @@ async function loadData() {
 function imgOf(p) {
     if (!p) return DEFAULT_IMAGE;
     const raw = p.images || p.image || p.hinh || p.hinhanh || "";
-    const first = String(raw).split(/[|,\n]/)[0]?.trim();
+    const first = String(raw).split(/[|,\n]/)[0]?.trim().replace(/^\[\s*"?|"+\s*\]$/g, "");
     if (!first) return DEFAULT_IMAGE;
+    const lm = first.match(/\/img\/([a-zA-Z0-9_-]{4,80})(?:[/?#]|$)/);
+    if (lm) return `https://img.halley.io.vn/img/${lm[1]}?w=1200`;
     const dm = first.match(/(?:file\/d\/|open\?id=|id=)([a-zA-Z0-9_-]{10,})/);
-    if (dm) return `https://lh3.googleusercontent.com/d/${dm[1]}=w1200`;
+    if (dm) return `https://img.halley.io.vn/img/${dm[1]}?w=1200`;
     if (first.includes("lh3.googleusercontent.com") && !first.includes("=w")) return first + "=w1200";
     return first;
 }
