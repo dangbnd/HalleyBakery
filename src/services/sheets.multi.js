@@ -278,13 +278,24 @@ export async function fetchUnifiedData(apiUrl, { force = false } = {}) {
 
     const read = async (urlToRead, forceRead = false) => JSON.parse(await cachedText(urlToRead, {
       force: forceRead,
-      ttlMs: 30 * 1000,
+      ttlMs: 15 * 1000,
     }));
 
-    let data = await read(url, force);
-    if (data?._meta?.stale && !force) {
-      const freshUrl = buildUnifiedApiUrl({ apiAllUrl: url, force: true });
-      data = await read(freshUrl || url, true);
+    let data = null;
+    if (url.startsWith("/api/all")) {
+      const ubuntuUrl = `https://img.halley.io.vn/catalog/all${force ? `?force=1&_hb=${Date.now()}` : ""}`;
+      try {
+        data = await read(ubuntuUrl, force);
+      } catch {
+        data = null;
+      }
+    }
+    if (!data) {
+      data = await read(url, force);
+      if (data?._meta?.stale && !force) {
+        const freshUrl = buildUnifiedApiUrl({ apiAllUrl: url, force: true });
+        data = await read(freshUrl || url, true);
+      }
     }
 
     // Chuẩn hoá sơ bộ products

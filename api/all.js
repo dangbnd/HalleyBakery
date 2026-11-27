@@ -660,7 +660,10 @@ async function loadUnifiedFromUbuntu({ force = false } = {}) {
   try {
     const res = await fetch(u.toString(), {
       signal: controller.signal,
-      headers: { Accept: "application/json", "User-Agent": "HalleyBakeryVercel/2.0" },
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+      },
       cache: "no-store",
     });
     if (!res.ok) throw new Error(`Ubuntu catalog HTTP ${res.status}`);
