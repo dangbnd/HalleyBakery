@@ -7,12 +7,12 @@ export function driveIdOf(raw = "") {
   const s = String(raw || "").trim();
   if (!s) return "";
   // Do not treat local Ubuntu media IDs (loc_*) as Google Drive file IDs
-  if (/\/img\/loc_[A-Za-z0-9_-]+/.test(s)) return "";
   const m =
     s.match(/\/file\/d\/([A-Za-z0-9_-]+)/) ||
     s.match(/\/d\/([A-Za-z0-9_-]+)/) ||
     s.match(/[?&]id=([A-Za-z0-9_-]+)/) ||
-    s.match(/uc\?[^#?]*id=([A-Za-z0-9_-]+)/);
+    s.match(/uc\?[^#?]*id=([A-Za-z0-9_-]+)/) ||
+    s.match(/img\.halley\.io\.vn\/img\/([A-Za-z0-9_-]{20,})(?:[/?#]|$)/);
   if (m && m[1].startsWith("loc_")) return "";
   return m ? m[1] : "";
 }
@@ -64,7 +64,9 @@ export function normalizeImageUrl(u, maxWidth = 2048) {
   if (!s) return "";
   const localMatch = s.match(/\/img\/([A-Za-z0-9_-]{4,80})(?:[/?#]|$)/);
   if (localMatch && MEDIA_CACHE_BASE) {
-    return `${MEDIA_CACHE_BASE}/img/${localMatch[1]}?w=${Math.min(1200, Math.max(320, Number(maxWidth) || 720))}`;
+    const gdMatch = s.match(/[?&]id=([A-Za-z0-9_-]{20,})/);
+    const gdSuffix = gdMatch && !gdMatch[1].startsWith("loc_") ? `&id=${gdMatch[1]}` : "";
+    return `${MEDIA_CACHE_BASE}/img/${localMatch[1]}?w=${Math.min(1200, Math.max(320, Number(maxWidth) || 720))}${gdSuffix}`;
   }
   const m =
     s.match(/\/file\/d\/([A-Za-z0-9_-]+)/) ||

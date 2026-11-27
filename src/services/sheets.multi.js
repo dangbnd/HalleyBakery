@@ -283,9 +283,25 @@ export async function fetchUnifiedData(apiUrl, { force = false } = {}) {
 
     let data = null;
     if (url.startsWith("/api/all")) {
-      const ubuntuUrl = `https://img.halley.io.vn/catalog/all${force ? `?force=1&_hb=${Date.now()}` : ""}`;
+      const ubuntuBase = "https://img.halley.io.vn/catalog/all";
+      const ubuntuUrl = `${ubuntuBase}${force ? `?force=1&_hb=${Date.now()}` : ""}`;
       try {
-        data = await read(ubuntuUrl, force);
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 2800);
+        try {
+          const r = await fetch(ubuntuUrl, {
+            signal: ctl.signal,
+            cache: force ? "no-store" : "default",
+          });
+          if (r.ok) {
+            const parsed = JSON.parse(await r.text());
+            if (Array.isArray(parsed?.products) && parsed.products.length > 0) {
+              data = parsed;
+            }
+          }
+        } finally {
+          clearTimeout(timer);
+        }
       } catch {
         data = null;
       }
