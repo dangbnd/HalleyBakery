@@ -2,8 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import CascadingMenu from "./CascadingMenu.jsx";
-import { cdn } from "../utils/img.js";
-import { prefetchImage } from "../utils/img.js";
+import { cdn, cdnThumb, candidatesFor, prefetchImage } from "../utils/img.js";
 
 export default function Header({
   currentKey = "home",
