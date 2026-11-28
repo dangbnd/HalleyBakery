@@ -76,45 +76,77 @@ const fold = (s = "") =>
 const hasDiacritics = (s = "") => lower(s) !== fold(s);
 
 const SEARCH_SYNONYM_GROUPS = [
-  ["baby", "em be", "be", "tre em", "kid", "kids"],
-  ["be trai", "trai", "con trai", "boy"],
-  ["be gai", "gai", "con gai", "girl"],
-  ["sinh nhat", "birthday", "sn", "happy birthday"],
-  ["thoi noi", "day thang", "baby shower"],
+  ["doraemon", "doremon", "đô rê mon", "mèo máy"],
+  ["capybara", "capy", "chuột lang", "chuột lang nước"],
+  ["bóng đá", "đá bóng", "soccer", "football"],
+  ["cầu lông", "badminton"],
+  ["spiderman", "người nhện", "spider man"],
+  ["hello kitty", "kitty"],
+  ["cinnamoroll", "cinamoroll"],
+  ["gấu dâu", "lotso"],
+  ["elsa", "frozen", "nữ hoàng băng giá"],
+  ["unicorn", "kỳ lân"],
+  ["khủng long", "dino", "dinosaur"],
+  ["cún", "chó"],
+  ["heo", "lợn"],
+  ["hoa quả", "trái cây"],
+  ["baby", "em bé", "trẻ em", "kid", "kids"],
+  ["bé trai", "con trai", "boy"],
+  ["bé gái", "con gái", "girl"],
+  ["sinh nhật", "birthday", "happy birthday"],
+  ["thôi nôi", "đầy tháng", "baby shower"],
   ["hoa", "flower", "floral"],
   ["xanh", "blue", "green"],
-  ["hong", "pink"],
-  ["do", "red"],
-  ["vang", "yellow"],
-  ["trang", "white"],
-  ["den", "black"],
-  ["tim", "purple"],
-  ["noel", "christmas"],
-  ["cuoi", "wedding"],
+  ["hồng", "pink"],
+  ["đỏ", "red"],
+  ["vàng", "yellow"],
+  ["trắng", "white"],
+  ["đen", "black"],
+  ["tím", "purple"],
+  ["noel", "giáng sinh", "christmas"],
+  ["cưới", "wedding"],
   ["valentine", "love"],
 ];
 
 const splitFoldedWords = (value = "") => words(fold(value));
+const padWords = (list = []) => (list.length ? ` ${list.join(" ")} ` : "");
 
-function searchGroupsForQuery(query = "") {
-  const raw = fold(query).trim();
-  const tokens = splitFoldedWords(raw);
-  const groups = tokens.map((token) => new Set([token]));
+// Word-boundary phrase match (prevents "da" matching inside "dau" or "do" matching inside "doremon")
+function hasWordPhrase(paddedHay, phraseWords) {
+  if (!paddedHay || !phraseWords.length) return false;
+  return paddedHay.includes(` ${phraseWords.join(" ")} `);
+}
 
-  SEARCH_SYNONYM_GROUPS.forEach((group) => {
-    const folded = group.map(fold).filter(Boolean);
-    const groupWords = new Set(folded.flatMap(splitFoldedWords));
-    const hit = folded.some((phrase) => raw.includes(phrase)) || tokens.some((token) => groupWords.has(token));
-    if (!hit) return;
-    const expanded = [...new Set([...groupWords, ...folded])];
-    const targetIndex = groups.findIndex((set) => [...set].some((token) => groupWords.has(token)));
-    if (targetIndex >= 0) expanded.forEach((token) => groups[targetIndex].add(token));
-    else groups.push(new Set(expanded));
-  });
+function getMatchedSynonymGroups(query = "") {
+  const qFoldWords = splitFoldedWords(query);
+  const qFoldPad = padWords(qFoldWords);
+  if (!qFoldWords.length) return [];
+  const qAccentPad = padWords(words(query));
+  const useAccent = hasDiacritics(query);
 
-  return groups
-    .map((set) => [...set].filter((token) => token && token.length >= 2))
-    .filter((group) => group.length > 0);
+  return SEARCH_SYNONYM_GROUPS.filter((group) =>
+    group.some((item) => {
+      const iWords = splitFoldedWords(item);
+      if (!iWords.length) return false;
+      if (useAccent && hasDiacritics(item)) {
+        const iAcc = words(item);
+        if (hasWordPhrase(qAccentPad, iAcc)) return true;
+      }
+      // Whole-word match only (NEVER match "do" inside "doremon")
+      return hasWordPhrase(qFoldPad, iWords) || (qFoldWords.length === 1 && qFoldWords[0].length >= 3 && iWords[0].startsWith(qFoldWords[0]));
+    })
+  );
+}
+
+function expandQueryPhrases(query = "") {
+  const qAcc = lower(query).trim();
+  const qFold = fold(query).trim();
+  const phrases = new Set([qFold]);
+  const matchedGroups = getMatchedSynonymGroups(query);
+  for (const g of matchedGroups) {
+    for (const item of g) phrases.add(fold(item));
+  }
+  return { qAcc, qFold, phrases: [...phrases].filter(Boolean), matchedGroups };
 }
 
 function productSearchText(product = {}, categoryTitle = "") {
@@ -132,26 +164,72 @@ function productSearchText(product = {}, categoryTitle = "") {
 }
 
 function scoreSearchProduct(product, query, categoryTitle = "") {
-  const qRaw = fold(query).trim();
-  const groups = searchGroupsForQuery(query);
-  if (!qRaw || !groups.length) return 1;
+  const qClean = String(query || "").trim();
+  const qFold = fold(qClean);
+  const qFoldWords = splitFoldedWords(qClean);
+  if (!qFold || !qFoldWords.length) return 1;
 
-  const nameText = fold(product?.name || "");
-  const hay = fold(productSearchText(product, categoryTitle));
-  const tagText = fold(Array.isArray(product?.tags) ? product.tags.join(" ") : String(product?.tags || ""));
+  const qHasAccent = hasDiacritics(qClean);
+  const qAccWords = words(qClean);
+
+  const rawText = productSearchText(product, categoryTitle);
+  const accPad = padWords(words(rawText));
+  const foldPad = padWords(splitFoldedWords(rawText));
+  const nameFoldPad = padWords(splitFoldedWords(product?.name || ""));
+  const tagFoldPad = padWords(splitFoldedWords(Array.isArray(product?.tags) ? product.tags.join(" ") : String(product?.tags || "")));
+
+  const { phrases } = expandQueryPhrases(qClean);
 
   let score = 0;
-  if (nameText.includes(qRaw)) score += 80;
-  if (hay.includes(qRaw)) score += 40;
 
-  for (const group of groups) {
-    const matched = group.filter((needle) => hay.includes(needle));
-    if (!matched.length) return 0;
-    score += 10 + matched.length * 3;
-    if (matched.some((needle) => nameText.includes(needle))) score += 10;
-    if (matched.some((needle) => tagText.includes(needle))) score += 6;
+  // 1. Exact accented phrase match (highest priority when user typed Vietnamese diacritics!)
+  if (qHasAccent && hasWordPhrase(accPad, qAccWords)) {
+    score += 200;
   }
 
+  // 2. Exact folded phrase match (or synonym phrase match) on whole-word boundaries
+  let matchedPhrase = false;
+  for (const ph of phrases) {
+    const phWords = splitFoldedWords(ph);
+    if (!phWords.length) continue;
+    // If user explicitly typed diacritics (e.g. "bóng đá"), do NOT match unrelated accent words via folded phrase unless it's a synonym
+    if (qHasAccent && ph === qFold) {
+      if (hasWordPhrase(accPad, qAccWords)) matchedPhrase = true;
+      continue;
+    }
+    if (hasWordPhrase(foldPad, phWords)) {
+      matchedPhrase = true;
+      score += 120;
+      if (hasWordPhrase(nameFoldPad, phWords)) score += 60;
+      if (hasWordPhrase(tagFoldPad, phWords)) score += 40;
+      break;
+    }
+  }
+
+  // 3. Multi-word all-tokens whole-word match (e.g. "doraemon be trai", respecting diacritics if typed!)
+  if (!matchedPhrase && score === 0) {
+    if (qHasAccent) {
+      const allAccWords = qAccWords.every((w) => accPad.includes(` ${w} `));
+      if (!allAccWords) return 0;
+      score += 80;
+    } else {
+      // Allow prefix match on the last word while typing (length >= 3), whole-word match on earlier words
+      const hayWordsList = splitFoldedWords(rawText);
+      const allOk = qFoldWords.every((tok, idx) => {
+        if (foldPad.includes(` ${tok} `)) return true;
+        if (idx === qFoldWords.length - 1 && tok.length >= 3) {
+          return hayWordsList.some((hw) => hw.startsWith(tok));
+        }
+        return false;
+      });
+      if (!allOk) return 0;
+      score += 60;
+    }
+  }
+
+  if (score <= 0) return 0;
+  if (hasWordPhrase(nameFoldPad, qFoldWords)) score += 30;
+  if (hasWordPhrase(tagFoldPad, qFoldWords)) score += 20;
   return score + Number(product?.popular || 0);
 }
 
@@ -1760,19 +1838,40 @@ export default function App() {
     const query = qDeb.trim().toLowerCase();
     if (!query) return [];
 
-    const queryFold = fold(query);
-    const includesQuery = (value = "") => fold(value).includes(queryFold);
-    const queryHints = SEARCH_SYNONYM_GROUPS
-      .filter((group) => group.some((item) => fold(item).includes(queryFold) || queryFold.includes(fold(item))))
-      .flatMap((group) => group.slice(0, 3))
+    const { phrases, matchedGroups } = expandQueryPhrases(query);
+    const qHasAccent = hasDiacritics(query);
+    const qAccLower = lower(query);
+    const matchesTagOrCat = (value = "") => {
+      const vAcc = lower(value);
+      const vFoldPad = padWords(splitFoldedWords(value));
+      if (qHasAccent && vAcc.includes(qAccLower)) return true;
+      for (const ph of phrases) {
+        if (qHasAccent && ph === fold(query)) continue;
+        const phWords = splitFoldedWords(ph);
+        if (phWords.length && (hasWordPhrase(vFoldPad, phWords) || (phWords.length === 1 && phWords[0].length >= 3 && splitFoldedWords(value).some((w) => w.startsWith(phWords[0]))))) {
+          return true;
+        }
+      }
+      if (!qHasAccent) {
+        const qWords = splitFoldedWords(query);
+        if (qWords.length === 1 && qWords[0].length >= 3 && splitFoldedWords(value).some((w) => w.startsWith(qWords[0]))) return true;
+        if (hasWordPhrase(vFoldPad, qWords)) return true;
+      }
+      return false;
+    };
+    const includesQuery = matchesTagOrCat;
+
+    const queryHints = matchedGroups
+      .map((group) => group[0])
+      .filter((label) => fold(label) !== fold(query))
       .map((label) => ({ type: "query", label }))
-      .slice(0, 6);
+      .slice(0, 4);
 
     const tagSuggestions = [...new Map((products || [])
       .flatMap((p) => Array.isArray(p.tags) ? p.tags : String(p.tags || "").split(","))
       .map((tag) => String(tag || "").trim())
       .filter(Boolean)
-      .filter((tag) => includesQuery(tag))
+      .filter((tag) => matchesTagOrCat(tag))
       .map((tag) => [tagKey(tag), { type: "tag", label: `#${tag}`, tag }])
     ).values()].slice(0, 12);
 
